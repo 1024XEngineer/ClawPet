@@ -37,10 +37,11 @@ func main() {
 	manager.RegisterTool(&agent.CalculatorTool{})
 	manager.RegisterTool(&agent.ReadFileTool{})
 	manager.RegisterTool(&agent.WriteFileTool{})
+	manager.RegisterTool(&agent.BashExecTool{})
 
 	// 启动 Agent 执行循环
 	ctx := context.Background()
-	userQuery := "请在 workspace 下创建一个名为 test.txt 的文件，内容是 'Hello from DeepSeek Agent!'，然后读取这个文件的内容并告诉我。"
+	userQuery := "请先列出当前目录的文件，然后计算 1024 的 10 次方等于多少（请使用 go run 一个临时文件来计算），最后把结果告诉我。"
 	model := "deepseek-chat" // 替换为 DeepSeek 的具体模型名称
 
 	fmt.Printf("User: %s\n", userQuery)

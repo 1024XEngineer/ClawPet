@@ -8,7 +8,7 @@ import (
 	"strings"
 )
 
-// resolveAndValidatePath 确保路径在指定的工作目录下，防止路径逃逸
+// resolveAndValidatePath (严格模式) 确保路径在指定的工作目录下，防止任何形式的路径逃逸
 func resolveAndValidatePath(workspace string, inputPath string) (string, error) {
 	// 1. 获取 workspace 的绝对路径
 	absWorkspace, err := filepath.Abs(workspace)
@@ -16,29 +16,33 @@ func resolveAndValidatePath(workspace string, inputPath string) (string, error) 
 		return "", fmt.Errorf("failed to get absolute workspace path: %v", err)
 	}
 
-	// 2. 规范化 absWorkspace，确保以分隔符结尾，防止前缀匹配绕过
+	// 2. 确保以分隔符结尾，防止 "C:\workspace" 和 "C:\workspace_hacked" 的前缀匹配漏洞
 	sep := string(filepath.Separator)
 	if !strings.HasSuffix(absWorkspace, sep) {
 		absWorkspace += sep
 	}
 
-	// 3. 处理输入路径，剥离可能的卷名或根路径标识，强制视为相对路径
+	// 3. 清理输入的路径 (解决包含 ./ 和 ../ 的情况)
 	cleanInput := filepath.Clean(inputPath)
+
+	var targetPath string
+	// 4. 核心逻辑：区分绝对路径和相对路径的处理方式
 	if filepath.IsAbs(cleanInput) {
-		vol := filepath.VolumeName(cleanInput)
-		cleanInput = cleanInput[len(vol):]
-		cleanInput = strings.TrimPrefix(cleanInput, string(filepath.Separator))
-		cleanInput = strings.TrimPrefix(cleanInput, "/")
+		// 如果 AI 显式提供了一个绝对路径，我们直接采用它，不做任何拼装！
+		// 这样在第 5 步时，如果它不是以 workspace 开头，就会被无情拦截。
+		targetPath = cleanInput
+	} else {
+		// 如果是相对路径，安全地拼接到 workspace 后面
+		targetPath = filepath.Join(absWorkspace, cleanInput)
 	}
 
-	// 4. 拼接并获取绝对路径
-	joinedPath := filepath.Join(absWorkspace, cleanInput)
-	absPath, err := filepath.Abs(joinedPath)
+	// 统一获取最终的绝对路径
+	absPath, err := filepath.Abs(targetPath)
 	if err != nil {
-		return "", fmt.Errorf("failed to get absolute path: %v", err)
+		return "", fmt.Errorf("failed to resolve absolute path: %v", err)
 	}
 
-	// 5. 最终校验：必须以 absWorkspace 为前缀
+	// 5. 最终死亡校验：最终的绝对路径，必须老老实实在 absWorkspace 的管辖范围内！
 	if !strings.HasPrefix(absPath, absWorkspace) {
 		return "", fmt.Errorf("security error: path traversal detected: %s", inputPath)
 	}
