@@ -1,0 +1,101 @@
+# ============================================
+# 小龙虾桌宠项目 .gitignore 文件
+# ============================================
+
+# Go 编译输出和二进制文件
+*.exe
+*.exe~
+*.test
+*.test.exe
+*.out
+*.prof
+/bin/
+/pkg/
+shrimp-demo.exe
+
+# Go 模块和依赖
+vendor/
+go.work
+go.work.sum
+
+# 开发环境文件
+.env
+.env.local
+.env.*.local
+env.txt
+
+# Windows 批处理文件
+*.bat
+*.cmd
+set_api_key.bat
+start.bat
+start_basic.bat
+start_llm.bat
+test_api.bat
+
+# Shell 脚本
+test.sh
+
+# IDE 和编辑器文件
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# 操作系统文件
+.DS_Store
+Thumbs.db
+
+# 日志和临时文件
+*.log
+logs/
+tmp/
+temp/
+
+# 备份文件
+*.bak
+*.backup
+
+# 其他不需要的文件
+*.zip
+*.tar.gz
+*.rar
+*.db
+*.sqlite
+*.sqlite3
+.cache/
+build/
+dist/
+
+# ============================================
+# 需要保留的文件（明确包含）
+# ============================================
+
+# Go 源代码
+!*.go
+
+# Go 模块文件
+!go.mod
+!go.sum
+
+# 项目文档
+!README.md
+!USAGE.md
+!ARCHITECTURE.md
+!ARCHITECTURE_LLM.md
+!*.md
+
+# 环境配置示例
+!.env.example
+
+# 许可证文件（如果有）
+!LICENSE
+
+# ============================================
+# 说明：
+# 1. 所有 .go 文件都会被跟踪
+# 2. 所有 .md 文档文件都会被跟踪  
+# 3. 批处理文件、可执行文件、环境文件会被忽略
+# 4. IDE 配置和临时文件会被忽略
+# ============================================
