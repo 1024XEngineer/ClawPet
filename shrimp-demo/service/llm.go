@@ -130,3 +130,32 @@ func (l *LLMService) ThinkWithLLM(ctx context.Context, question string) (string,
 
 	return l.Chat(ctx, prompt)
 }
+
+// ChatWithSystemPrompt 使用自定义系统提示词与 LLM 对话
+func (l *LLMService) ChatWithSystemPrompt(ctx context.Context, systemPrompt, userMessage string) (string, error) {
+	req := openai.ChatCompletionRequest{
+		Model: l.model,
+		Messages: []openai.ChatCompletionMessage{
+			{
+				Role:    openai.ChatMessageRoleSystem,
+				Content: systemPrompt,
+			},
+			{
+				Role:    openai.ChatMessageRoleUser,
+				Content: userMessage,
+			},
+		},
+		MaxTokens:   1000,
+		Temperature: 0.7,
+	}
+
+	resp, err := l.client.CreateChatCompletion(ctx, req)
+	if err != nil {
+		return "", fmt.Errorf("LLM 调用失败: %w", err)
+	}
+
+	if len(resp.Choices) == 0 {
+		return "", fmt.Errorf("LLM 返回空响应")
+	}
+	return resp.Choices[0].Message.Content, nil
+}
