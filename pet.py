@@ -91,6 +91,11 @@ class AIManager(QObject):
 
     def __init__(self, memory=None):
         super().__init__()
+        
+        # AI 后端配置
+        self.ai_backend = "zhipu"  # "zhipu" 或 "picoclaw"
+        self.picoclaw_url = "http://localhost:18790"
+        
         # 智谱 AI (BigModel) - GLM-4-Flash 免费模型
         self.client = OpenAI(
             api_key="5d39d0bfe2c2460e9e6582b7491adb98.gxG35KpkMEaGFW6s",
@@ -129,42 +134,84 @@ class AIManager(QObject):
             if memory_context:
                 system_prompt += f"\n\n【主人相关记忆】\n{memory_context}"
             
-            messages = [
-                {"role": "system", "content": system_prompt},
-            ]
-            messages.extend(self.chat_history[-6:])
-            messages.append({"role": "user", "content": text})
-
-            response = self.client.chat.completions.create(
-                model="glm-4-flash",
-                messages=messages,
-                max_tokens=150,
-                temperature=0.8,
-            )
-            
-            # 安全提取内容
-            if response.choices and len(response.choices) > 0:
-                content = response.choices[0].message.content
-                if content:
-                    reply = content.strip()
-                else:
-                    reply = "回复为空"
-                    is_error = True
+            if self.ai_backend == "picoclaw":
+                reply = self._ask_picoclaw(text, system_prompt)
             else:
-                reply = "回复格式异常"
-                is_error = True
-                
-            # 只有正常回复才存入历史
-            if not is_error:
+                reply = self._ask_zhipu(text, system_prompt)
+            
+            if reply:
                 self.chat_history.append({"role": "user", "content": text})
                 self.chat_history.append({"role": "assistant", "content": reply})
-            
+            else:
+                is_error = True
+                reply = "AI回复为空"
+                
         except Exception as e:
             reply = f"出错了: {str(e)[:80]}"
             is_error = True
         finally:
             self.is_thinking = False
             self.reply_signal.emit(reply, is_error)
+    
+    def _ask_zhipu(self, text, system_prompt):
+        """调用智谱 AI"""
+        messages = [
+            {"role": "system", "content": system_prompt},
+        ]
+        messages.extend(self.chat_history[-6:])
+        messages.append({"role": "user", "content": text})
+
+        response = self.client.chat.completions.create(
+            model="glm-4-flash",
+            messages=messages,
+            max_tokens=150,
+            temperature=0.8,
+        )
+        
+        if response.choices and len(response.choices) > 0:
+            content = response.choices[0].message.content
+            if content:
+                return content.strip()
+        return None
+    
+    def _ask_picoclaw(self, text, system_prompt):
+        """调用 PicoClaw Gateway"""
+        import requests
+        
+        # 构造 PicoClaw 格式的消息
+        messages = [
+            {"role": "system", "content": system_prompt},
+        ]
+        messages.extend(self.chat_history[-6:])
+        messages.append({"role": "user", "content": text})
+        
+        try:
+            response = requests.post(
+                f"{self.picoclaw_url}/v1/chat/completions",
+                json={
+                    "model": "auto",
+                    "messages": messages,
+                    "max_tokens": 150,
+                    "temperature": 0.8,
+                },
+                timeout=30,
+            )
+            
+            if response.status_code == 200:
+                data = response.json()
+                if data.get("choices"):
+                    return data["choices"][0]["message"]["content"].strip()
+            else:
+                log(f"PicoClaw error: {response.status_code} - {response.text[:100]}")
+                
+        except requests.exceptions.ConnectionError:
+            log("PicoClaw Gateway 未连接，尝试本地 AI...")
+            # 回退到智谱 AI
+            return self._ask_zhipu(text, system_prompt)
+        except Exception as e:
+            log(f"PicoClaw 请求失败: {e}")
+            
+        return None
 
 class MonitorManager:
     def __init__(self):
