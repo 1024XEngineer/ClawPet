@@ -131,21 +131,26 @@ func (s *DeepSeekService) buildPrompt(
 	prompt.WriteString(fmt.Sprintf("- 沮丧程度：%d/100\n", state.Frustration))
 	prompt.WriteString(fmt.Sprintf("- 开心程度：%d/100\n", state.Happiness))
 	prompt.WriteString("\n")
-
+	prompt.WriteString("可用动作列表：\n")
 	if len(actions) > 0 {
-		prompt.WriteString("可用动作列表：\n")
 		for _, action := range actions {
 			prompt.WriteString(fmt.Sprintf("- %s：%s\n", action.Name, action.Description))
+			utils.GetLogger().Info("Action added",
+				zap.String("name", action.Name),
+				zap.String("description", action.Description))
 		}
 		prompt.WriteString("\n")
+	} else {
+		prompt.WriteString("没有可选动作(无需填写)\n")
 	}
-
+	prompt.WriteString("最近对话上下文：\n")
 	if len(contextMessages) > 0 {
-		prompt.WriteString("最近对话上下文：\n")
 		for _, msg := range contextMessages {
 			prompt.WriteString(fmt.Sprintf("%s：%s\n", msg.Role, msg.Content))
 		}
 		prompt.WriteString("\n")
+	} else {
+		prompt.WriteString("没有最近对话上下文\n")
 	}
 
 	prompt.WriteString("用户消息：")
@@ -155,12 +160,12 @@ func (s *DeepSeekService) buildPrompt(
 	prompt.WriteString("请根据以上信息，严格按照以下格式回复：\n")
 	prompt.WriteString("text: [你的温暖贴心回复内容]\n")
 	prompt.WriteString("state: [状态变化建议，格式：亲密度±N，沮丧度±N，开心度±N，N范围0-10]\n")
-	prompt.WriteString("action: [可选动作名称(没有可选动作就不要随便填写)，如果没有则留空]\n")
+	prompt.WriteString("action: [必须从可选动作列表中选择合适的动作名称，如果没有则留空，不能填写其他内容]\n")
 	prompt.WriteString("\n")
 	prompt.WriteString("示例：\n")
-	prompt.WriteString("text: 我最喜欢和你一起玩啦！如果能让你开心的话，我还会高兴地转圈圈呢～\n")
-	prompt.WriteString("state: 亲密度+6，沮丧度-4，开心度+7\n")
-	prompt.WriteString("action: 播放音乐\n")
+	prompt.WriteString("text: ...\n")
+	prompt.WriteString("state: ...\n")
+	prompt.WriteString("action: ...\n")
 	prompt.WriteString("\n")
 	prompt.WriteString("要求：\n")
 	prompt.WriteString("1. text部分必须是温暖、贴心的自然对话\n")
