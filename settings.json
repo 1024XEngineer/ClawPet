@@ -1,0 +1,20 @@
+{
+  "pet_size": 150,
+  "pet_opacity": 1.0,
+  "bubble_opacity": 0.9,
+  "speech_enabled": true,
+  "proactive_enabled": true,
+  "proactive_interval": 120,
+  "touch_enabled": true,
+  "auto_start": true,
+  "voice_speed": 0,
+  "voice_pitch": 0,
+  "bubble_max_width": 260,
+  "bubble_font_size": 10,
+  "bubble_duration": 8,
+  "show_cpu": true,
+  "theme_color": "#4CAF50",
+  "show_status": true,
+  "show_input": true,
+  "show_ghost_btn": true
+}

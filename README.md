@@ -20,29 +20,25 @@ pet/
 ├── character_system.py  # 角色系统
 ├── pet_system.py       # 行为与记忆系统
 ├── tts_manager.py      # 语音管理
+├── picoclaw.exe       # PicoClaw AI 后端
+├── picoclaw_data/     # PicoClaw 配置
 ├── characters/         # 角色配置
 └── png/               # 动画资源
 ```
 
-## 运行
+## 快速开始
 
-```bash
-python pet.py
-```
+1. 配置 API Key：编辑 `picoclaw_data/config.json`，替换 `YOUR_ZHIPU_API_KEY_HERE` 为你的智谱 AI Key
+2. 运行：`python pet.py`
 
 ## AI 后端配置
 
-支持两种 AI 后端：
+### 方式一：智谱 AI（默认）
+修改 `pet.py` 中 `self.ai_backend = "zhipu"`
 
-### 方案一：智谱 AI（默认）
-- 注册地址：https://open.bigmodel.cn/
-- 修改 `pet.py` 中的 `api_key`
-
-### 方案二：PicoClaw Gateway
-1. 安装 PicoClaw：https://picoclaw.io
-2. 启动 Gateway：`picoclaw gateway`
-3. 修改 `pet.py`：`self.ai_backend = "picoclaw"`
-4. 如需修改地址：`self.picoclaw_url = "http://localhost:18790"`
+### 方式二：PicoClaw
+1. 编辑 `picoclaw_data/config.json`，填入 API Key
+2. 修改 `pet.py` 中 `self.ai_backend = "picoclaw"`
 
 ## 技术栈
 

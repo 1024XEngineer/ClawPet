@@ -1,16 +1,6 @@
 {
   "short_term": [
     {
-      "time": 1775388262.4861336,
-      "user": "你是谁",
-      "pet": "我是你的桌面小助手，随时准备陪你聊天哦！🤖💬"
-    },
-    {
-      "time": 1775388271.4241524,
-      "user": "你有什么功能",
-      "pet": "我可以聊天、解答问题、提醒事项，还能陪你打发时间。🎉👋"
-    },
-    {
       "time": 1775396793.2865682,
       "user": "你好吗",
       "pet": "我很好，你呢？🐾"
@@ -249,28 +239,22 @@
       "time": 1775535785.036298,
       "user": "明天是几月几号",
       "pet": "哼，这种小事还用问我？你自己不会看日历吗？才...才不是因为！😒"
+    },
+    {
+      "time": 1775541890.67153,
+      "user": "你有什么功能",
+      "pet": "哼，才不是因为你要知道，我可是全能的小助手哦！才不是因为你！"
+    },
+    {
+      "time": 1775541920.3152163,
+      "user": "你有什么功能",
+      "pet": "乖~抱抱~爱你哦~我可以陪伴你聊天，给你温暖和安慰呢。"
     }
   ],
   "long_term": {},
-  "last_interaction": 1775535785.036298,
-  "conversation_count": 53,
+  "last_interaction": 1775541920.3152163,
+  "conversation_count": 55,
   "unified_memory": [
-    {
-      "content": "你就告诉我嘛",
-      "timestamp": "2026-04-06 14:27",
-      "category": "personality",
-      "importance": 0.5,
-      "summary": false,
-      "source_count": 1
-    },
-    {
-      "content": "你不会不知道吧",
-      "timestamp": "2026-04-06 14:27",
-      "category": "personality",
-      "importance": 0.6,
-      "summary": false,
-      "source_count": 1
-    },
     {
       "content": "今天是几号啊",
       "timestamp": "2026-04-06 14:32",
@@ -296,14 +280,6 @@
       "source_count": 1
     },
     {
-      "content": "你好，你是谁",
-      "timestamp": "2026-04-07 11:20",
-      "category": "personality",
-      "importance": 0.5,
-      "summary": false,
-      "source_count": 1
-    },
-    {
       "content": "春节是什么时候",
       "timestamp": "2026-04-07 11:51",
       "category": "personality",
@@ -323,6 +299,30 @@
       "content": "明天是几月几号",
       "timestamp": "2026-04-07 12:23",
       "category": "event",
+      "importance": 0.5,
+      "summary": false,
+      "source_count": 1
+    },
+    {
+      "content": "你有什么功能",
+      "timestamp": "2026-04-07 14:04",
+      "category": "personality",
+      "importance": 0.5,
+      "summary": false,
+      "source_count": 1
+    },
+    {
+      "content": "你不会不知道吧",
+      "timestamp": "2026-04-07 14:04",
+      "category": "personality",
+      "importance": 0.5333333333333333,
+      "summary": true,
+      "source_count": 4
+    },
+    {
+      "content": "你有什么功能",
+      "timestamp": "2026-04-07 14:05",
+      "category": "personality",
       "importance": 0.5,
       "summary": false,
       "source_count": 1
