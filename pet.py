@@ -93,7 +93,7 @@ class AIManager(QObject):
         super().__init__()
         
         # AI 后端配置
-        self.ai_backend = "zhipu"  # "zhipu" 或 "picoclaw"
+        self.ai_backend = "picoclaw"  # "zhipu" 或 "picoclaw"
         self.picoclaw_url = "http://localhost:18790"
         
         # 智谱 AI (BigModel) - GLM-4-Flash 免费模型
@@ -175,43 +175,63 @@ class AIManager(QObject):
         return None
     
     def _ask_picoclaw(self, text, system_prompt):
-        """调用 PicoClaw Gateway"""
-        import requests
+        """通过 picoclaw agent 命令调用"""
+        import subprocess
         
-        # 构造 PicoClaw 格式的消息
-        messages = [
-            {"role": "system", "content": system_prompt},
-        ]
-        messages.extend(self.chat_history[-6:])
-        messages.append({"role": "user", "content": text})
+        picoclaw_path = r".\picoclaw.exe"
+        picoclaw_home = r".\picoclaw_data"
+        
+        # 构造完整上下文
+        context = f"{system_prompt}\n\n# 对话历史\n"
+        for msg in self.chat_history[-6:]:
+            role = "用户" if msg["role"] == "user" else "助手"
+            context += f"{role}: {msg['content']}\n"
+        context += f"\n用户: {text}\n助手:"
         
         try:
-            response = requests.post(
-                f"{self.picoclaw_url}/v1/chat/completions",
-                json={
-                    "model": "auto",
-                    "messages": messages,
-                    "max_tokens": 150,
-                    "temperature": 0.8,
-                },
-                timeout=30,
+            log("调用 picoclaw agent...")
+            
+            # 使用正确的命令格式
+            cmd = f'cmd /c "set \\"PICOCLAW_HOME={picoclaw_home}\\" && \\"{picoclaw_path}\\" agent -m {context}"'
+            
+            result = subprocess.run(
+                cmd,
+                shell=True,
+                capture_output=True,
+                timeout=60,
             )
             
-            if response.status_code == 200:
-                data = response.json()
-                if data.get("choices"):
-                    return data["choices"][0]["message"]["content"].strip()
-            else:
-                log(f"PicoClaw error: {response.status_code} - {response.text[:100]}")
-                
-        except requests.exceptions.ConnectionError:
-            log("PicoClaw Gateway 未连接，尝试本地 AI...")
-            # 回退到智谱 AI
-            return self._ask_zhipu(text, system_prompt)
-        except Exception as e:
-            log(f"PicoClaw 请求失败: {e}")
+            # 获取输出
+            output = result.stdout.decode('utf-8', errors='ignore') if result.stdout else ""
             
-        return None
+            # 提取回复（跳过 Logo）
+            lines = [l for l in output.split('\n') if l.strip()]
+            for line in reversed(lines):
+                clean = line.strip()
+                # 跳过空行、日志行、Logo 行
+                if not clean or clean.startswith('[') or clean.startswith('12:'):
+                    continue
+                if any(c in clean for c in ['╚', '╔', '═', '█', '🦞']):
+                    continue
+                # 找到回复
+                log(f"PicoClaw 回复: {clean[:50]}...")
+                return clean
+            
+            if result.stderr:
+                stderr = result.stderr.decode('utf-8', errors='ignore')
+                if stderr and 'Error' in stderr:
+                    log(f"PicoClaw error: {stderr[:100]}")
+            else:
+                log(f"PicoClaw 无输出")
+                
+        except FileNotFoundError:
+            log("未找到 picoclaw.exe")
+        except subprocess.TimeoutExpired:
+            log("PicoClaw 超时")
+        except Exception as e:
+            log(f"PicoClaw 调用失败: {e}")
+            
+        return self._ask_zhipu(text, system_prompt)
 
 class MonitorManager:
     def __init__(self):

@@ -1,0 +1,12 @@
+{
+  "attributes": {
+    "affection": 100,
+    "mood": 100,
+    "energy": 47,
+    "intimacy": 30,
+    "curiosity": 60,
+    "playfulness": 50,
+    "stress": 0,
+    "hunger": 20
+  }
+}

@@ -1,0 +1,16 @@
+{
+  "version": 2,
+  "agents": {
+    "defaults": {
+      "model_name": "glm-4.7"
+    }
+  },
+  "model_list": [
+    {
+      "model_name": "glm-4.7",
+      "model": "zhipu/glm-4.7",
+      "api_base": "https://open.bigmodel.cn/api/paas/v4",
+      "api_keys_env": "ZHIPU_API_KEY"
+    }
+  ]
+}
