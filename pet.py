@@ -98,7 +98,7 @@ class AIManager(QObject):
         
         # 智谱 AI (BigModel) - GLM-4-Flash 免费模型
         self.client = OpenAI(
-            api_key="5d39d0bfe2c2460e9e6582b7491adb98.gxG35KpkMEaGFW6s",
+            api_key=os.environ.get("ZHIPU_API_KEY", ""),
             base_url="https://open.bigmodel.cn/api/paas/v4/",
         )
         self.chat_history = []

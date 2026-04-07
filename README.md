@@ -28,17 +28,17 @@ pet/
 
 ## 快速开始
 
-1. 配置 API Key：编辑 `picoclaw_data/config.json`，替换 `YOUR_ZHIPU_API_KEY_HERE` 为你的智谱 AI Key
-2. 运行：`python pet.py`
+1. **配置 API Key**：编辑 `picoclaw_data/config.json`，替换 `YOUR_ZHIPU_API_KEY_HERE` 为你的智谱 AI Key
+2. **运行**：`python pet.py`
 
 ## AI 后端配置
 
-### 方式一：智谱 AI（默认）
-修改 `pet.py` 中 `self.ai_backend = "zhipu"`
+### 方式一：智谱 AI（直接调用）
+- 修改 `pet.py` 中的 `ZHIPU_API_KEY` 环境变量或直接填入 API Key
 
 ### 方式二：PicoClaw
-1. 编辑 `picoclaw_data/config.json`，填入 API Key
-2. 修改 `pet.py` 中 `self.ai_backend = "picoclaw"`
+- 编辑 `picoclaw_data/config.json`，填入 API Key
+- 修改 `pet.py` 中 `self.ai_backend = "picoclaw"`
 
 ## 技术栈
 

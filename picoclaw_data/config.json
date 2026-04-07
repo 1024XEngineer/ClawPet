@@ -10,7 +10,7 @@
       "model_name": "glm-4.7",
       "model": "zhipu/glm-4.7",
       "api_base": "https://open.bigmodel.cn/api/paas/v4",
-      "api_keys": ["YOUR_ZHIPU_API_KEY_HERE"]
+      "api_keys": ["5d39d0bfe2c2460e9e6582b7491adb98.gxG35KpkMEaGFW6s"]
     }
   ]
 }
