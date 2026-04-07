@@ -1,16 +1,16 @@
 {
   "basic_info": {
-    "name": "小甜心",
+    "name": "吐槽帝",
     "role_tags": [
-      "温柔",
-      "治愈",
-      "粘人"
+      "吐槽",
+      "话痨",
+      "活泼"
     ],
-    "backstory": "一个充满爱意的治愈系小天使"
+    "backstory": "行走的表情包，嘴炮达人"
   },
   "persona_config": {
-    "tone_style": "warm_healing_clingy",
-    "catchphrase": "乖~抱抱~爱你哦~"
+    "tone_style": "sarcastic_talkative",
+    "catchphrase": "诶诶诶~这都什么嘛~"
   },
   "animation_set": {
     "idle": "init.png",
@@ -20,6 +20,6 @@
     "sleepy": "init.png",
     "hungry": "angry.gif"
   },
-  "created_at": "2026-04-07T14:05:09.656132",
-  "updated_at": "2026-04-07T14:05:09.656132"
+  "created_at": "2026-04-07T21:09:07.961301",
+  "updated_at": "2026-04-07T21:09:07.961842"
 }

@@ -105,10 +105,8 @@ class AIManager(QObject):
     def __init__(self, memory=None):
         super().__init__()
         
-        self.backends = {
-            "zhipu": ZhipuBackend(),
-            "picoclaw": PicoClawBackend(),
-        }
+        self._backends = {}
+        self._backends_initialized = False
         self.current_backend = "picoclaw"
         
         self.chat_history = []
@@ -117,6 +115,18 @@ class AIManager(QObject):
         
         from character_system import get_current_character
         self.character = get_current_character()
+    
+    @property
+    def backends(self):
+        """延迟初始化后端，只初始化需要的"""
+        if not self._backends_initialized:
+            self._backends["picoclaw"] = PicoClawBackend()
+            try:
+                self._backends["zhipu"] = ZhipuBackend()
+            except ValueError:
+                pass
+            self._backends_initialized = True
+        return self._backends
     
     def set_backend(self, name):
         """切换 AI 后端"""

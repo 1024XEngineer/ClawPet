@@ -1,0 +1,47 @@
+{
+  "version": 2,
+  "agents": {
+    "defaults": {
+      "model_name": "glm-4.7",
+      "workspace": "D:\\opencode\\pet\\picoclaw_data\\workspace",
+      "restrict_to_workspace": false
+    }
+  },
+  "model_list": [
+    {
+      "model_name": "glm-4.7",
+      "model": "zhipu/glm-4.7",
+      "api_base": "https://open.bigmodel.cn/api/paas/v4",
+      "api_keys": [
+        "5d39d0bfe2c2460e9e6582b7491adb98.gxG35KpkMEaGFW6s"
+      ]
+    }
+  ],
+  "tools": {
+    "web": {
+      "enabled": true,
+      "duckduckgo": {
+        "enabled": true,
+        "max_results": 5
+      }
+    },
+    "exec": {
+      "enabled": true,
+      "allow_remote": true,
+      "timeout_seconds": 60
+    },
+    "cron": {
+      "enabled": true,
+      "exec_timeout_minutes": 5
+    },
+    "read_file": {
+      "enabled": true
+    },
+    "write_file": {
+      "enabled": true
+    },
+    "list_dir": {
+      "enabled": true
+    }
+  }
+}

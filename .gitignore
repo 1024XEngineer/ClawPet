@@ -2,11 +2,7 @@ __pycache__/
 *.pyc
 *.pyo
 *.log
-*.json
-!settings.json
-!config.json
-!characters/*.json
-!pet_memory.json
-!pet_state.json
+.env
 .DS_Store
 *.bat
+

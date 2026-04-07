@@ -1,32 +1,19 @@
 """
-Pet System - Extensible pet behavior, attributes, and memory system.
-Designed for future OpenClaw integration.
+宠物系统 - 记忆、属性和行为
 """
 import os
 import json
 import time
 import random
-import threading
 from datetime import datetime, timedelta
+from PyQt5.QtCore import QTimer
 
-# ==========================================
-# Configuration
-# ==========================================
+
 PET_STATE_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'pet_state.json')
 PET_MEMORY_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'pet_memory.json')
 
-# ==========================================
-# Storage Interface (Extensible: JSON / Markdown / Database)
-# ==========================================
-class StorageBackend:
-    """Base interface for data persistence. Inherit to add new backends."""
-    def load(self, key): raise NotImplementedError
-    def save(self, key, data): raise NotImplementedError
-    def delete(self, key): raise NotImplementedError
-    def list_keys(self): raise NotImplementedError
 
-class JsonStorage(StorageBackend):
-    """Default: JSON file storage"""
+class JsonStorage:
     def __init__(self, file_path):
         self.file_path = file_path
 
@@ -51,119 +38,18 @@ class JsonStorage(StorageBackend):
         with open(self.file_path, 'w', encoding='utf-8') as f:
             json.dump(existing, f, ensure_ascii=False, indent=2)
 
-    def delete(self, key):
-        if os.path.exists(self.file_path):
-            try:
-                with open(self.file_path, 'r', encoding='utf-8') as f:
-                    data = json.load(f)
-                data.pop(key, None)
-                with open(self.file_path, 'w', encoding='utf-8') as f:
-                    json.dump(data, f, ensure_ascii=False, indent=2)
-            except:
-                pass
 
-    def list_keys(self):
-        if not os.path.exists(self.file_path):
-            return []
-        try:
-            with open(self.file_path, 'r', encoding='utf-8') as f:
-                return list(json.load(f).keys())
-        except:
-            return []
-
-class MarkdownStorage(StorageBackend):
-    """
-    Markdown file storage (future).
-    Each key = one .md file in a directory.
-    """
-    def __init__(self, directory):
-        self.directory = directory
-        os.makedirs(directory, exist_ok=True)
-
-    def _file_path(self, key):
-        safe_key = key.replace('/', '_').replace('\\', '_')
-        return os.path.join(self.directory, f"{safe_key}.md")
-
-    def load(self, key):
-        path = self._file_path(key)
-        if not os.path.exists(path):
-            return None
-        with open(path, 'r', encoding='utf-8') as f:
-            return f.read()
-
-    def save(self, key, data):
-        path = self._file_path(key)
-        with open(path, 'w', encoding='utf-8') as f:
-            f.write(str(data))
-
-    def delete(self, key):
-        path = self._file_path(key)
-        if os.path.exists(path):
-            os.remove(path)
-
-    def list_keys(self):
-        if not os.path.exists(self.directory):
-            return []
-        return [f[:-3] for f in os.listdir(self.directory) if f.endswith('.md')]
-
-class DatabaseStorage(StorageBackend):
-    """
-    SQLite database storage (future).
-    Uncomment and configure when ready.
-    """
-    def __init__(self, db_path):
-        self.db_path = db_path
-        # import sqlite3
-        # self.conn = sqlite3.connect(db_path)
-        # self._init_table()
-
-    # def _init_table(self):
-    #     self.conn.execute('''CREATE TABLE IF NOT EXISTS pet_data
-    #         (key TEXT PRIMARY KEY, value TEXT)''')
-    #     self.conn.commit()
-
-    def load(self, key):
-        # cursor = self.conn.execute('SELECT value FROM pet_data WHERE key=?', (key,))
-        # row = cursor.fetchone()
-        # return json.loads(row[0]) if row else None
-        return None
-
-    def save(self, key, data):
-        # self.conn.execute('INSERT OR REPLACE INTO pet_data VALUES (?, ?)',
-        #                   (key, json.dumps(data, ensure_ascii=False)))
-        # self.conn.commit()
-        pass
-
-    def delete(self, key):
-        # self.conn.execute('DELETE FROM pet_data WHERE key=?', (key,))
-        # self.conn.commit()
-        pass
-
-    def list_keys(self):
-        # cursor = self.conn.execute('SELECT key FROM pet_data')
-        # return [row[0] for row in cursor.fetchall()]
-        return []
-
-# ==========================================
-# Pet Attributes (Hidden Values)
-# ==========================================
 class PetAttributes:
-    """
-    Manages hidden pet attributes that affect behavior.
-    Extensible: Add new attributes here for OpenClaw to use.
-    """
     def __init__(self, storage=None):
         self.storage = storage or JsonStorage(PET_STATE_FILE)
-        self.affection = 50      # 好感度 (0-100): 影响回复语气和主动说话频率
-        self.mood = 70           # 心情值 (0-100): 影响表情和动画
-        self.energy = 100        # 精力值 (0-100): 低时会犯困/睡觉
-        self.intimacy = 30       # 亲密度 (0-100): 解锁特殊互动
-        self.curiosity = 60      # 好奇心 (0-100): 影响主动提问频率
-        self.playfulness = 50    # 玩心值 (0-100): 影响随机动作频率
-        self.stress = 10         # 压力值 (0-100): 高时会抱怨/生气
-        self.hunger = 20         # 饥饿值 (0-100): 高时会要吃的
-        
-        self._decay_timer = None
+        self.affection = 50
+        self.mood = 70
+        self.energy = 100
+        self.intimacy = 30
+        self.curiosity = 60
+        self.playfulness = 50
+        self.stress = 10
+        self.hunger = 20
         self.load()
 
     def load(self):
@@ -174,30 +60,13 @@ class PetAttributes:
                     setattr(self, key, data[key])
 
     def save(self):
-        data = {
-            'affection': self.affection,
-            'mood': self.mood,
-            'energy': self.energy,
-            'intimacy': self.intimacy,
-            'curiosity': self.curiosity,
-            'playfulness': self.playfulness,
-            'stress': self.stress,
-            'hunger': self.hunger,
-        }
+        data = {k: getattr(self, k) for k in ['affection', 'mood', 'energy', 'intimacy', 'curiosity', 'playfulness', 'stress', 'hunger']}
         self.storage.save('attributes', data)
 
     def clamp(self):
         for attr in ['affection', 'mood', 'energy', 'intimacy', 'curiosity', 'playfulness', 'stress', 'hunger']:
             val = getattr(self, attr)
             setattr(self, attr, max(0, min(100, val)))
-
-    def decay(self):
-        self.energy = max(0, self.energy - 0.5)
-        self.mood = max(0, self.mood - 0.2)
-        self.hunger = min(100, self.hunger + 0.3)
-        self.stress = max(0, self.stress - 0.1)
-        self.clamp()
-        self.save()
 
     def get_mood_state(self):
         if self.energy < 20: return "sleepy"
@@ -207,255 +76,98 @@ class PetAttributes:
         if self.hunger > 70: return "hungry"
         return "normal"
 
-    def get_affection_level(self):
-        if self.affection >= 90: return "love"
-        if self.affection >= 70: return "close"
-        if self.affection >= 40: return "friendly"
-        if self.affection >= 20: return "neutral"
-        return "distant"
 
-# ==========================================
-# Unified Memory System (v2)
-# ==========================================
 class UnifiedMemory:
-    """
-    多维分类记忆系统 v2
-    - 基于规则的分类（无需额外LLM调用）
-    - 分类: personality / preference / event / scene
-    - 自动合并同类记忆
-    - 时间戳追踪
-    """
-    
-    CATEGORIES = {
-        'personality': '用户性格特点、情绪模式',
-        'preference': '用户喜好、习惯、偏好',
-        'event': '用户生活中的重要事件',
-        'scene': '当前场景、环境状态'
-    }
-    
-    # 分类关键词（简化版规则）
+    CATEGORIES = {'personality': '用户性格特点', 'preference': '用户喜好', 'event': '重要事件', 'scene': '场景状态'}
     CATEGORY_KEYWORDS = {
-        'personality': ['性格', '喜欢', '讨厌', '觉得', '认为', '总是', '从来', '一般', '通常', '感觉', '心情', '情绪'],
-        'preference': ['喜欢', '不喜欢', '爱', '讨厌', '想要', '想', '习惯', '平时', '通常', '偏好', '最爱', '最讨厌'],
-        'event': ['今天', '昨天', '明天', '上周', '下周', '最近', '发生', '考试', '工作', '毕业', '生日', '旅行', '搬家', '买了'],
-        'scene': ['在公司', '在学校', '在家', '在外面', '在吃饭', '在睡觉', '在上班', '在上课', '下雨', '天晴', '热', '冷']
+        'personality': ['性格', '喜欢', '讨厌', '觉得', '感觉', '心情'],
+        'preference': ['喜欢', '爱', '想要', '习惯', '偏爱', '最爱'],
+        'event': ['今天', '昨天', '明天', '考试', '工作', '生日', '旅行'],
+        'scene': ['在公司', '在学校', '在家', '下雨', '天晴', '热', '冷']
     }
-    
+
     def __init__(self, storage=None):
         self.storage = storage or JsonStorage(PET_MEMORY_FILE)
         self.short_term = []
-        self.unified_memory = []  # 分类记忆列表
+        self.unified_memory = []
         self.last_interaction = None
         self.conversation_count = 0
         self.load()
-    
+
     def load(self):
         self.short_term = self.storage.load('short_term') or []
         self.unified_memory = self.storage.load('unified_memory') or []
         self.last_interaction = self.storage.load('last_interaction')
         self.conversation_count = self.storage.load('conversation_count') or 0
-    
+
     def save(self):
         self.storage.save('short_term', self.short_term[-50:])
         self.storage.save('unified_memory', self.unified_memory)
         self.storage.save('last_interaction', self.last_interaction)
         self.storage.save('conversation_count', self.conversation_count)
-    
+
     def _classify(self, text):
-        """基于关键词的简单分类"""
         scores = {cat: 0 for cat in self.CATEGORIES}
-        
         for cat, keywords in self.CATEGORY_KEYWORDS.items():
             for kw in keywords:
                 if kw in text:
                     scores[cat] += 1
-        
-        # 返回得分最高的分类，默认为 personality
-        max_score = max(scores.values())
-        if max_score > 0:
-            for cat in scores:
-                if scores[cat] == max_score:
-                    return cat
-        return 'personality'
-    
+        max_score = max(scores.values()) if scores else 0
+        return max(scores, key=scores.get) if max_score > 0 else 'personality'
+
     def _calculate_importance(self, text):
-        """计算记忆重要性"""
         importance = 0.5
-        
-        # 明确表达喜好的
         if any(w in text for w in ['非常', '特别', '极其', '超级']):
             importance += 0.2
-        
-        # 否定表达
         if any(w in text for w in ['不', '没', '别', '讨厌', '恨']):
             importance += 0.1
-        
-        # 提及具体时间/事件
         if any(w in text for w in ['今天', '昨天', '考试', '生日', '工作']):
             importance += 0.15
-        
         return min(1.0, max(0.1, importance))
-    
-    def _extract_facts(self, user_text, pet_reply):
-        """从对话中提取关键事实"""
-        combined = f"{user_text} {pet_reply}"
-        
-        # 简单的事实提取：去除重复、截取核心
-        facts = []
-        
-        # 用户的核心内容（取前50字）
-        if len(user_text) > 5:
-            fact = user_text[:50].strip()
-            if fact:
-                facts.append({
-                    'content': fact,
-                    'category': self._classify(user_text),
-                    'importance': self._calculate_importance(user_text)
-                })
-        
-        # 桌宠的回复中的关键信息
-        if pet_reply and len(pet_reply) > 10:
-            fact = pet_reply[:50].strip()
-            if fact:
-                facts.append({
-                    'content': fact,
-                    'category': self._classify(pet_reply),
-                    'importance': self._calculate_importance(pet_reply) * 0.8
-                })
-        
-        return facts
-    
-    def _merge_memories(self, category):
-        """合并同类记忆"""
-        cat_memories = [m for m in self.unified_memory if m['category'] == category]
-        
-        if len(cat_memories) <= 3:
-            return
-        
-        # 保留最新的3条，其余合并
-        to_merge = cat_memories[:-3]
-        remaining = cat_memories[-3:]
-        
-        # 简单合并：取重要性最高的作为摘要
-        best = max(to_merge, key=lambda x: x['importance'])
-        merged = {
-            'content': best['content'],
-            'timestamp': datetime.now().strftime('%Y-%m-%d %H:%M'),
-            'category': category,
-            'importance': min(1.0, sum(m['importance'] for m in to_merge) / len(to_merge)),
-            'summary': True,
-            'source_count': len(to_merge) + 1
-        }
-        
-        # 移除旧记忆，添加合并后的
-        for m in to_merge:
-            self.unified_memory.remove(m)
-        self.unified_memory.append(merged)
-    
+
     def add_interaction(self, user_text, pet_reply):
-        """添加对话并提取记忆"""
-        self.short_term.append({
-            'time': time.time(),
-            'user': user_text,
-            'pet': pet_reply,
-        })
+        self.short_term.append({'time': time.time(), 'user': user_text, 'pet': pet_reply})
         self.last_interaction = time.time()
         self.conversation_count += 1
-        
-        # 提取事实并存储
-        facts = self._extract_facts(user_text, pet_reply)
-        for fact in facts:
-            memory_entry = {
-                'content': fact['content'],
+
+        combined = f"{user_text} {pet_reply}"
+        if len(user_text) > 5:
+            self.unified_memory.append({
+                'content': user_text[:50].strip(),
                 'timestamp': datetime.now().strftime('%Y-%m-%d %H:%M'),
-                'category': fact['category'],
-                'importance': fact['importance'],
-                'summary': False,
-                'source_count': 1
-            }
-            self.unified_memory.append(memory_entry)
-        
-        # 检查是否需要合并同类记忆
-        for category in self.CATEGORIES:
-            cat_count = len([m for m in self.unified_memory if m['category'] == category])
-            if cat_count > 5:
-                self._merge_memories(category)
-        
+                'category': self._classify(user_text),
+                'importance': self._calculate_importance(user_text)
+            })
         self.save()
-    
-    def get_relevant_memories(self, category=None, count=3):
-        """获取相关记忆"""
-        if category:
-            memories = [m for m in self.unified_memory if m['category'] == category]
-        else:
-            memories = self.unified_memory
-        
-        # 按时间和重要性排序
-        memories = sorted(memories, key=lambda x: (x['importance'], x['timestamp']), reverse=True)
-        return memories[:count]
-    
+
     def get_memory_context(self):
-        """获取记忆上下文，注入到AI提示"""
         contexts = []
-        
         for cat in ['event', 'preference', 'personality']:
-            memories = self.get_relevant_memories(category=cat, count=2)
+            memories = sorted([m for m in self.unified_memory if m['category'] == cat], key=lambda x: x['importance'], reverse=True)[:2]
             if memories:
-                cat_name = self.CATEGORIES[cat]
                 entries = ' | '.join([m['content'] for m in memories])
-                contexts.append(f"[{cat_name}] {entries}")
-        
+                contexts.append(f"[{self.CATEGORIES[cat]}] {entries}")
         return '\n'.join(contexts) if contexts else ''
-    
+
     def get_recent_topics(self, count=5):
         return [item['user'] for item in self.short_term[-count:]]
-    
+
     def get_time_since_last_interaction(self):
         if not self.last_interaction:
             return 999
         return (time.time() - self.last_interaction) / 3600
-    
-    def remember_fact(self, key, value):
-        """兼容旧API"""
-        entry = {
-            'content': value,
-            'timestamp': datetime.now().strftime('%Y-%m-%d %H:%M'),
-            'category': 'preference',
-            'importance': 0.7,
-            'summary': False,
-            'source_count': 1
-        }
-        self.unified_memory.append(entry)
-        self.save()
-    
-    def recall_fact(self, key):
-        """兼容旧API"""
-        return None
 
 
-# ==========================================
-# 兼容旧 PetMemory (别名)
-# ==========================================
 PetMemory = UnifiedMemory
 
-# ==========================================
-# Behavior Engine
-# ==========================================
+
 class PetBehavior:
-    """
-    Manages pet's autonomous behavior.
-    Extensible: OpenClaw can override or extend behaviors.
-    """
     def __init__(self, attributes, memory):
         self.attrs = attributes
         self.memory = memory
         self._proactive_timer = None
         self._action_timer = None
-        self._callbacks = {
-            'on_speak': None,
-            'on_action': None,
-            'on_mood_change': None,
-        }
+        self._callbacks = {'on_speak': None, 'on_action': None}
 
     def set_callback(self, event, callback):
         if event in self._callbacks:
@@ -472,95 +184,62 @@ class PetBehavior:
             self._action_timer.stop()
 
     def _schedule_proactive(self):
-        from PyQt5.QtCore import QTimer
         base_delay = 120
         affection_factor = max(0.3, 1 - self.attrs.affection / 150)
         curiosity_factor = max(0.5, 1 - self.attrs.curiosity / 200)
-        delay = base_delay * affection_factor * curiosity_factor
-        delay = max(30, min(300, delay + random.uniform(-20, 20)))
-        
-        if self._proactive_timer:
-            self._proactive_timer.stop()
-        else:
+        delay = max(30, min(300, base_delay * affection_factor * curiosity_factor + random.uniform(-20, 20)))
+
+        if not self._proactive_timer:
             self._proactive_timer = QTimer()
             self._proactive_timer.setSingleShot(True)
             self._proactive_timer.timeout.connect(self._do_proactive)
         self._proactive_timer.start(int(delay * 1000))
 
     def _do_proactive(self):
-        if not self._callbacks['on_speak']:
+        if not self._callbacks.get('on_speak'):
             return
 
         mood = self.attrs.get_mood_state()
         hours_idle = self.memory.get_time_since_last_interaction()
-        
         messages = []
-        
+
         if hours_idle > 2:
-            messages.extend([
-                "主人好久没理我了...我都快长蘑菇了🍄",
-                "你终于回来啦！我等了你好久好久~",
-                "哼，这么久不找我，我都快忘记你长什么样了！",
-            ])
+            messages.extend(["主人好久没理我了...", "你终于回来啦！", "哼，这么久不找我！"])
         elif hours_idle > 0.5:
-            messages.extend([
-                "主人刚才在忙什么呀？",
-                "我好无聊哦，陪我聊聊天嘛~",
-                "今天过得开心吗？",
-            ])
-        
+            messages.extend(["主人刚才在忙什么呀？", "我好无聊哦，陪我聊聊天嘛~", "今天过得开心吗？"])
+
         if mood == "happy":
-            messages.extend(["今天心情超好的！想和主人分享快乐~", "嘿嘿，突然想唱歌给你听呢🎵"])
+            messages.extend(["今天心情超好的！想和主人分享快乐~", "嘿嘿，突然想唱歌给你听呢"])
         elif mood == "sleepy":
-            messages.extend(["好困啊...主人让我睡一会儿好不好💤", "眼睛都快睁不开了..."])
+            messages.extend(["好困啊...主人让我睡一会儿好不好", "眼睛都快睁不开了..."])
         elif mood == "hungry":
-            messages.extend(["肚子好饿...主人什么时候给我好吃的呀🍰", "我想吃小蛋糕..."])
-        elif mood == "stressed":
-            messages.extend(["今天压力好大...主人能安慰安慰我吗😢", "感觉有点喘不过气..."])
-        
+            messages.extend(["肚子好饿...主人什么时候给我好吃的呀", "我想吃小蛋糕..."])
+
         if self.attrs.curiosity > 60:
-            messages.extend([
-                "主人，你说世界上真的有外星人吗？👽",
-                "如果我能变成人类，第一件事要做什么呢？",
-                "主人最喜欢什么颜色呀？",
-            ])
-        
+            messages.extend(["主人，你说世界上真的有外星人吗？", "如果我能变成人类，第一件事要做什么呢？"])
+
         if messages:
-            msg = random.choice(messages)
-            self._callbacks['on_speak'](msg, proactive=True)
-        
+            self._callbacks['on_speak'](random.choice(messages), proactive=True)
         self._schedule_proactive()
 
     def _schedule_random_action(self):
-        from PyQt5.QtCore import QTimer
         base_delay = 60
         playfulness_factor = max(0.4, 1 - self.attrs.playfulness / 150)
-        delay = base_delay * playfulness_factor
-        delay = max(20, min(180, delay + random.uniform(-10, 10)))
-        
-        if self._action_timer:
-            self._action_timer.stop()
-        else:
+        delay = max(20, min(180, base_delay * playfulness_factor + random.uniform(-10, 10)))
+
+        if not self._action_timer:
             self._action_timer = QTimer()
             self._action_timer.setSingleShot(True)
             self._action_timer.timeout.connect(self._do_random_action)
         self._action_timer.start(int(delay * 1000))
 
     def _do_random_action(self):
-        if not self._callbacks['on_action']:
+        if not self._callbacks.get('on_action'):
             return
-            
         mood = self.attrs.get_mood_state()
-        actions = {
-            "happy": ["dance", "sing", "spin"],
-            "sleepy": ["yawn", "sleep", "stretch"],
-            "hungry": ["rub_belly", "look_at_kitchen"],
-            "stressed": ["sigh", "pace", "hide"],
-        }.get(mood, ["look_around", "stretch", "wiggle", "blink"])
-            
+        actions = {"happy": ["dance", "sing", "spin"], "sleepy": ["yawn", "sleep", "stretch"], "hungry": ["rub_belly"], "stressed": ["sigh", "pace"]}.get(mood, ["look_around", "stretch", "wiggle", "blink"])
         if actions:
             self._callbacks['on_action'](random.choice(actions))
-        
         self._schedule_random_action()
 
     def on_user_interaction(self, user_text):
@@ -570,41 +249,6 @@ class PetBehavior:
         self.attrs.stress = max(0, self.attrs.stress - 2)
         self.attrs.clamp()
         self.attrs.save()
-        
         if self._proactive_timer:
             self._proactive_timer.stop()
             self._schedule_proactive()
-
-# ==========================================
-# Plugin Interface (OpenClaw Ready)
-# ==========================================
-class PetSystemPlugin:
-    """
-    Base plugin interface for extending pet system.
-    OpenClaw or other backends should inherit from this.
-    """
-    def __init__(self):
-        self.engine = None
-
-    def init(self, engine):
-        self.engine = engine
-
-    def on_message(self, user_text):
-        """Called before AI processes message. Returns modified_text or None."""
-        return None
-
-    def on_reply(self, reply_text):
-        """Called after AI generates reply. Returns modified_reply."""
-        return reply_text
-
-    def get_context(self):
-        """Returns context dict for AI prompt enhancement."""
-        if not self.engine:
-            return {}
-        return {
-            'mood': self.engine.attributes.get_mood_state(),
-            'affection_level': self.engine.attributes.get_affection_level(),
-            'energy': self.engine.attributes.energy,
-            'recent_topics': self.engine.memory.get_recent_topics(3),
-            'time_since_last_interaction': self.engine.memory.get_time_since_last_interaction(),
-        }
