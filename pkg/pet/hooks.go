@@ -37,6 +37,7 @@ type LLMTagHook struct {
 	emotionEngine *emotion.EmotionEngine // 情绪引擎
 	actionManager *action.ActionManager  // 动作管理器
 	petService    *PetService            // Pet服务，用于推送
+	voiceEnabled  bool                   // 是否启用语音输出
 }
 
 // NewLLMTagHook 创建LLMTagHook实例
@@ -44,12 +45,19 @@ type LLMTagHook struct {
 //   - emotionEngine: 情绪引擎指针
 //   - actionManager: 动作管理器指针
 //   - petService: Pet服务指针，用于推送情绪和动作
-func NewLLMTagHook(emotionEngine *emotion.EmotionEngine, actionManager *action.ActionManager, petService *PetService) *LLMTagHook {
+//   - voiceEnabled: 是否启用语音输出
+func NewLLMTagHook(emotionEngine *emotion.EmotionEngine, actionManager *action.ActionManager, petService *PetService, voiceEnabled bool) *LLMTagHook {
 	return &LLMTagHook{
 		emotionEngine: emotionEngine,
 		actionManager: actionManager,
 		petService:    petService,
+		voiceEnabled:  voiceEnabled,
 	}
+}
+
+// SetVoiceEnabled 设置语音开关状态
+func (h *LLMTagHook) SetVoiceEnabled(enabled bool) {
+	h.voiceEnabled = enabled
 }
 
 // BeforeLLM LLM调用前拦截
@@ -143,6 +151,22 @@ func (h *LLMTagHook) BeforeLLM(ctx context.Context, req *agent.LLMHookRequest) (
 		mbti,
 		strings.Join(emotionList, ", "),
 		strings.Join(actionNames, ", "))
+
+	if h.voiceEnabled {
+		prompt += `
+
+【语音输出提示】
+- 回复应简洁，适合语音朗读
+- 避免过长的复合句
+- 用自然停顿分割语义单元`
+	} else {
+		prompt += `
+
+【文本输出提示】
+- 回复可以更长更详细
+- 可以使用更多格式和结构
+- 适合阅读理解`
+	}
 
 	personaMsg := providers.Message{
 		Role:    "system",
