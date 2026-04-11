@@ -14,10 +14,14 @@ import (
 
 type PushHandler func(push any)
 
+type VoiceToggleHandler func(enabled bool)
+
 type PetService struct {
 	msgBus      *bus.MessageBus
 	config      PetServiceConfig
 	pushHandler PushHandler
+
+	voiceToggleHandler VoiceToggleHandler
 
 	characterStore *CharacterStore
 	emotionEngine  *emotion.EmotionEngine
@@ -116,6 +120,14 @@ func (s *PetService) ActionManager() *action.ActionManager {
 
 func (s *PetService) SetPushHandler(handler PushHandler) {
 	s.pushHandler = handler
+}
+
+func (s *PetService) SetVoiceToggleHandler(handler VoiceToggleHandler) {
+	s.voiceToggleHandler = handler
+}
+
+func (s *PetService) IsVoiceToggleEnabled() bool {
+	return s.voiceToggleHandler != nil
 }
 
 func (s *PetService) Push(push any) {
@@ -271,6 +283,8 @@ func (s *PetService) HandleRequest(connID string, req Request) error {
 		return s.handleEmotionGet(sessionID, req)
 	case ActionHealthCheck:
 		return s.handleHealthCheck(sessionID, req)
+	case ActionVoiceToggle:
+		return s.handleVoiceToggle(sessionID, req)
 	default:
 		return s.sendError(sessionID, req.Action, fmt.Sprintf("unknown action: %s", req.Action))
 	}
@@ -543,4 +557,19 @@ func mustMarshal(v interface{}) json.RawMessage {
 		return json.RawMessage(`{"error": "marshal error"}`)
 	}
 	return data
+}
+
+func (s *PetService) handleVoiceToggle(sessionID string, req Request) error {
+	if s.voiceToggleHandler == nil {
+		return s.sendError(sessionID, req.Action, "voice toggle not available")
+	}
+
+	var toggleReq VoiceToggleRequest
+	if err := json.Unmarshal(req.Data, &toggleReq); err != nil {
+		return s.sendError(sessionID, req.Action, "invalid voice toggle data")
+	}
+
+	s.voiceToggleHandler(toggleReq.Enabled)
+
+	return s.sendResponse(sessionID, req.Action, VoiceToggleResponse{VoiceEnabled: toggleReq.Enabled})
 }

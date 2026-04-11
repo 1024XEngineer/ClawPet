@@ -27,7 +27,18 @@ const (
 	ActionConfigUpdate     = "config_update"     // 更新应用配置
 	ActionEmotionGet       = "emotion_get"       // 获取情绪状态
 	ActionHealthCheck      = "health_check"      // 健康检查
+	ActionVoiceToggle      = "voice_toggle"      // 语音开关
 )
+
+// VoiceToggleRequest 语音开关请求数据
+type VoiceToggleRequest struct {
+	Enabled bool `json:"enabled"`
+}
+
+// VoiceToggleResponse 语音开关响应数据
+type VoiceToggleResponse struct {
+	VoiceEnabled bool `json:"voice_enabled"`
+}
 
 // =============================================================================
 // PushType 常量定义
