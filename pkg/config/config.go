@@ -588,9 +588,15 @@ type DevicesConfig struct {
 }
 
 type VoiceConfig struct {
-	ModelName         string `json:"model_name,omitempty"     env:"PICOCLAW_VOICE_MODEL_NAME"`
-	TTSModelName      string `json:"tts_model_name,omitempty" env:"PICOCLAW_VOICE_TTS_MODEL_NAME"`
-	EchoTranscription bool   `json:"echo_transcription"       env:"PICOCLAW_VOICE_ECHO_TRANSCRIPTION"`
+	Enabled           bool     `json:"enabled"                 env:"PICOCLAW_VOICE_ENABLED"`
+	ModelName         string   `json:"model_name,omitempty"     env:"PICOCLAW_VOICE_MODEL_NAME"`
+	TTSModelName      string   `json:"tts_model_name,omitempty" env:"PICOCLAW_VOICE_TTS_MODEL_NAME"`
+	VoiceID           string   `json:"voice_id,omitempty"       env:"PICOCLAW_VOICE_ID"`
+	DefaultVoiceID    string   `json:"default_voice_id,omitempty" env:"PICOCLAW_VOICE_DEFAULT_ID"`
+	FallbackVoiceIDs  []string `json:"fallback_voice_ids,omitempty"`
+	EchoTranscription bool     `json:"echo_transcription"       env:"PICOCLAW_VOICE_ECHO_TRANSCRIPTION"`
+	StreamEnabled     bool     `json:"stream_enabled,omitempty" env:"PICOCLAW_VOICE_STREAM_ENABLED"`
+	EmotionEnabled    bool     `json:"emotion_enabled,omitempty" env:"PICOCLAW_VOICE_EMOTION_ENABLED"`
 }
 
 // ModelConfig represents a model-centric provider configuration.
