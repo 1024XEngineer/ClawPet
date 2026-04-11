@@ -519,8 +519,14 @@ func DefaultConfig() *Config {
 			MonitorUSB: true,
 		},
 		Voice: VoiceConfig{
+			Enabled:           false,
 			ModelName:         "",
+			TTSModelName:      "",
+			VoiceID:           "",
+			DefaultVoiceID:    "Chinese (Mandarin)_Lyrical_Voice",
 			EchoTranscription: false,
+			StreamEnabled:     true,
+			EmotionEnabled:    true,
 		},
 		BuildInfo: BuildInfo{
 			Version:   Version,
