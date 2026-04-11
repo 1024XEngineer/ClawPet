@@ -1,7 +1,7 @@
 # Pet Channel API 接口文档
 
-> 版本：v2.0  
-> 日期：2026-04-10  
+> 版本：v2.1  
+> 日期：2026-04-11  
 > 协议：WebSocket + JSON
 
 ---
@@ -142,9 +142,9 @@ const ws = new WebSocket('ws://localhost:8080/ws?session=user_001');
 
 ### 3.2 ai_chat - AI 聊天回复（流式）
 
-AI 回复时推送，支持流式输出。
+AI 回复时推送，支持流式输出和语音合成。
 
-**流式推送**：
+#### 3.2.1 文本推送
 
 ```json
 {
@@ -160,7 +160,38 @@ AI 回复时推送，支持流式输出。
 }
 ```
 
-**最终推送（结束标记）**：
+#### 3.2.2 语音推送（voice）
+
+当语音功能启用时，后端会自动将文本转换为语音并推送。
+
+```json
+{
+  "type": "push",
+  "push_type": "ai_chat",
+  "data": {
+    "chat_id": 1,
+    "type": "voice",
+    "text": "你好呀",
+    "hex_audio": "c2VjcmV0YW5kcm9pZA==...",
+    "is_final": false
+  },
+  "timestamp": 1712610000,
+  "is_final": false
+}
+```
+
+**字段说明**：
+
+| 字段 | 类型 | 说明 |
+|------|------|------|
+| chat_id | int | 聊天块序号，逐块递增 |
+| type | string | 内容类型：`text`=文本块, `voice`=语音块, `final`=结束标记 |
+| text | string | AI 回复文本 |
+| hex_audio | string | hex 编码的 MP3 音频数据 |
+| emotion | string | 当前情绪标签（voice 类型时） |
+| is_final | bool | 是否为最终块 |
+
+#### 3.2.3 结束推送（final）
 
 ```json
 {
@@ -178,21 +209,29 @@ AI 回复时推送，支持流式输出。
 }
 ```
 
-**字段说明**：
+#### 3.2.4 错误推送（error）
 
-| 字段 | 类型 | 说明 |
-|------|------|------|
-| chat_id | int | 聊天块序号，逐块递增 |
-| type | string | 内容类型：`text`=文本块, `final`=结束标记 |
-| text | string | AI 回复文本（流式输出） |
-| emotion | string | 当前主要情绪标签 |
-| action | string | 动作名称（如有） |
-| is_final | bool | 是否为最终块 |
+语音合成失败时推送。
+
+```json
+{
+  "type": "push",
+  "push_type": "ai_chat",
+  "data": {
+    "chat_id": 1,
+    "type": "error",
+    "message": "语音合成失败: API error"
+  },
+  "timestamp": 1712610000,
+  "is_final": true
+}
+```
 
 **前端处理逻辑**：
 1. 收到 `type: "text"` 时，将 text 追加显示到聊天界面
-2. 收到 `type: "final"` 时，表示 AI 回复结束
-3. 情绪和动作标签在流式输出时已由后端处理，不在 text 中显示
+2. 收到 `type: "voice"` 时，先显示 text，再播放 hex_audio 音频
+3. 收到 `type: "final"` 时，清除当前对话状态
+4. 收到 `type: "error"` 时，显示错误提示
 
 ---
 
@@ -584,6 +623,41 @@ LLM 解析到动作标签时推送。
 
 ---
 
+### 4.9 voice_toggle - 语音开关
+
+运行时动态开关语音功能。
+
+**请求**：
+
+```json
+{
+  "action": "voice_toggle",
+  "data": {
+    "enabled": true
+  }
+}
+```
+
+**响应**：
+
+```json
+{
+  "status": "ok",
+  "action": "voice_toggle",
+  "data": {
+    "voice_enabled": true
+  }
+}
+```
+
+**字段说明**：
+
+| 字段 | 类型 | 必填 | 说明 |
+|------|------|------|------|
+| enabled | bool | 是 | true=开启语音, false=关闭语音 |
+
+---
+
 ## 五、错误码
 
 ### 5.1 WebSocket 错误 (status: error)
@@ -729,13 +803,14 @@ async def send_chat(ws, text):
 | config_update | 更新应用配置 | 修改应用设置 |
 | emotion_get | 获取情绪状态 | 查看当前情绪 |
 | health_check | 健康检查 | 检测连接状态 |
+| voice_toggle | 语音开关 | 动态开关语音功能 |
 
 ### 7.2 push_type 快速索引
 
 | push_type | 触发时机 | 用途 |
 |-----------|----------|------|
 | init_status | 连接建立时 | 推送初始化状态，是否需要配置 |
-| ai_chat | AI 回复时 | 流式推送 AI 回复文本 |
+| ai_chat | AI 回复时 | 流式推送 AI 回复文本/语音 |
 | emotion_change | 情绪变化时 | 推送情绪状态更新 |
 | action_trigger | LLM 解析到动作时 | 推送动作触发 |
 | heartbeat | 每 30 秒 | 保活检测 |
@@ -753,3 +828,486 @@ async def send_chat(ws, text):
 4. **动作触发**：LLM 在回复中输出 `[action:xxx]` 标签时，后端自动解析并推送 `action_trigger`。
 
 5. **错误处理**：收到 `status: error` 时，检查 `error` 字段获取具体错误信息。
+
+6. **语音功能**：需要后端配置 TTS 提供商（支持 Minimax）。语音功能启用后，AI 回复会自动合成语音并通过 `type: "voice"` 推送。
+
+---
+
+## 九、语音功能配置
+
+### 9.1 后端配置示例
+
+```json
+{
+  "voice": {
+    "enabled": true,
+    "stream_enabled": true,
+    "tts_model_name": "minimax-speech",
+    "voice_id": "Chinese (Mandarin)_Lyrical_Voice"
+  },
+  "model_list": [
+    {
+      "model_name": "minimax-speech",
+      "model": "minimax/speech-2.8-hd",
+      "api_base": "https://api.minimaxi.com",
+      "api_keys": ["your-minimax-api-key"]
+    }
+  ]
+}
+```
+
+### 9.2 支持的 TTS 模型
+
+| 模型 | 说明 |
+|------|------|
+| `speech-2.8-hd` | 高清语音，质量最好 |
+| `speech-2.8-turbo` | 快速语音，延迟更低 |
+| `speech-2.6-hd` | 高清语音 v2 |
+| `speech-2.6-turbo` | 快速语音 v2 |
+| `speech-02-hd` | 新版高清 |
+| `speech-02-turbo` | 新版快速 |
+| `speech-01-hd` | 新版高清 |
+| `speech-01-turbo` | 新版快速 |
+
+### 9.3 支持的中文音色
+
+| voice_id | 说明 |
+|----------|------|
+| `Chinese (Mandarin)_Lyrical_Voice` | 中文抒情语音（推荐） |
+| `Chinese (Mandarin)_HK_Flight_Attendant` | 香港航空乘务员音色 |
+| `moss_audio_ce44fc67-7ce3-11f0-8de5-96e35d26fb85` | 系统音色 |
+| `moss_audio_aaa1346a-7ce7-11f0-8e61-2e6e3c7ee85d` | 系统音色 |
+
+---
+
+## 十、语音客户端示例
+
+### 10.1 JavaScript 语音播放示例
+
+```javascript
+class PetVoicePlayer {
+  constructor() {
+    this.audioContext = new (window.AudioContext || window.webkitAudioContext)();
+    this.currentSource = null;
+  }
+
+  // 将 hex 音频数据转换为 AudioBuffer 并播放
+  async playHexAudio(hexAudio) {
+    try {
+      // 将 hex 转换为二进制数据
+      const binaryString = atob(hexAudio);
+      const bytes = new Uint8Array(binaryString.length);
+      for (let i = 0; i < binaryString.length; i++) {
+        bytes[i] = binaryString.charCodeAt(i);
+      }
+
+      // 解码为 AudioBuffer
+      const audioBuffer = await this.audioContext.decodeAudioData(bytes.buffer);
+
+      // 停止当前播放
+      if (this.currentSource) {
+        this.currentSource.stop();
+      }
+
+      // 创建播放源
+      this.currentSource = this.audioContext.createBufferSource();
+      this.currentSource.buffer = audioBuffer;
+      this.currentSource.connect(this.audioContext.destination);
+      this.currentSource.start();
+
+      return audioBuffer.duration;
+    } catch (error) {
+      console.error('Audio playback error:', error);
+      throw error;
+    }
+  }
+
+  // 保存音频为文件
+  saveAudioFile(hexAudio, filename = 'voice.mp3') {
+    const binaryString = atob(hexAudio);
+    const bytes = new Uint8Array(binaryString.length);
+    for (let i = 0; i < binaryString.length; i++) {
+      bytes[i] = binaryString.charCodeAt(i);
+    }
+
+    const blob = new Blob([bytes], { type: 'audio/mp3' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = filename;
+    a.click();
+    URL.revokeObjectURL(url);
+  }
+}
+
+// 使用示例
+const player = new PetVoicePlayer();
+
+// WebSocket 消息处理
+ws.onmessage = function(event) {
+  const msg = JSON.parse(event.data);
+
+  if (msg.push_type === 'ai_chat') {
+    const data = msg.data;
+
+    if (data.type === 'text') {
+      // 显示文本
+      appendToChat(data.text);
+    } 
+    else if (data.type === 'voice') {
+      // 显示文本
+      appendToChat(data.text);
+      // 播放语音
+      player.playHexAudio(data.hex_audio).catch(console.error);
+    }
+    else if (data.type === 'final') {
+      finishChat();
+    }
+    else if (data.type === 'error') {
+      showToast('语音错误: ' + data.message);
+    }
+  }
+};
+```
+
+### 10.2 Python 语音播放示例
+
+```python
+import asyncio
+import websockets
+import json
+import base64
+import os
+import pygame
+
+class PetVoicePlayer:
+    def __init__(self):
+        pygame.mixer.init()
+        self.current_sound = None
+
+    def play_hex_audio(self, hex_audio):
+        """播放 hex 编码的 MP3 音频"""
+        try:
+            # 将 hex 转换为二进制
+            audio_data = bytes.fromhex(hex_audio)
+            
+            # 保存为临时文件
+            temp_file = f"temp_voice_{int(asyncio.get_event_loop().time())}.mp3"
+            with open(temp_file, "wb") as f:
+                f.write(audio_data)
+            
+            # 播放
+            pygame.mixer.music.load(temp_file)
+            pygame.mixer.music.play()
+            
+            # 等待播放完成
+            while pygame.mixer.music.get_busy():
+                pygame.time.Clock().tick(10)
+            
+            # 清理临时文件
+            os.remove(temp_file)
+            
+        except Exception as e:
+            print(f"音频播放错误: {e}")
+
+    def save_audio_file(self, hex_audio, filename="voice.mp3"):
+        """保存音频为文件"""
+        audio_data = bytes.fromhex(hex_audio)
+        with open(filename, "wb") as f:
+            f.write(audio_data)
+        print(f"音频已保存: {filename}")
+
+async def main():
+    player = PetVoicePlayer()
+    
+    uri = "ws://localhost:8080/ws?session=test"
+    async with websockets.connect(uri) as ws:
+        # 开启语音
+        await ws.send(json.dumps({
+            "action": "voice_toggle",
+            "data": {"enabled": True}
+        }))
+        
+        # 接收消息
+        while True:
+            msg = await ws.recv()
+            data = json.loads(msg)
+            
+            if data.get("push_type") == "ai_chat":
+                chat_data = data.get("data", {})
+                msg_type = chat_data.get("type")
+                
+                if msg_type == "text":
+                    print(f"[文本] {chat_data.get('text')}")
+                    
+                elif msg_type == "voice":
+                    text = chat_data.get("text", "")
+                    hex_audio = chat_data.get("hex_audio", "")
+                    print(f"[语音] {text}")
+                    player.play_hex_audio(hex_audio)
+                    
+                elif msg_type == "final":
+                    print("[结束]")
+                    break
+                    
+                elif msg_type == "error":
+                    print(f"[错误] {chat_data.get('message')}")
+
+if __name__ == "__main__":
+    asyncio.run(main())
+```
+
+### 10.3 Python WebSocket 语音客户端（完整版）
+
+```python
+#!/usr/bin/env python3
+"""
+Pet Channel WebSocket 语音客户端
+支持语音接收、播放、保存
+"""
+
+import asyncio
+import websockets
+import json
+import base64
+import time
+import hashlib
+import os
+import pygame
+
+class PetVoiceClient:
+    def __init__(self, host="localhost", port=8080, session="test"):
+        self.uri = f"ws://{host}:{port}/ws?session={session}"
+        self.ws = None
+        self.session = session
+        self.running = True
+        self.voice_enabled = False
+        self.audio_buffers = {}  # chat_id -> hex audio
+        self.player = None
+        
+    def init_audio(self):
+        """初始化音频播放器"""
+        try:
+            pygame.init()
+            pygame.mixer.init()
+            self.player = pygame.mixer
+            print("[音频] 播放器初始化成功")
+        except Exception as e:
+            print(f"[音频] 播放器初始化失败: {e}")
+            self.player = None
+    
+    async def connect(self):
+        """连接 WebSocket"""
+        print(f"[连接] {self.uri}")
+        self.ws = await websockets.connect(self.uri)
+        
+        msg = await self.ws.recv()
+        data = json.loads(msg)
+        if data.get("push_type") == "init_status":
+            char = data.get("data", {}).get("character", {})
+            self.voice_enabled = data.get("data", {}).get("voice_enabled", False)
+            print(f"[初始化] Pet: {char.get('pet_name', 'Unknown')}")
+            print(f"[状态] voice_enabled={self.voice_enabled}")
+        
+        return True
+    
+    async def toggle_voice(self, enabled):
+        """开关语音"""
+        await self.ws.send(json.dumps({
+            "action": "voice_toggle",
+            "data": {"enabled": enabled}
+        }))
+        resp = await self.ws.recv()
+        data = json.loads(resp)
+        if data.get("status") == "ok":
+            self.voice_enabled = data['data'].get('voice_enabled', enabled)
+            print(f"[语音] {'开启' if self.voice_enabled else '关闭'}")
+    
+    async def receive_messages(self, timeout=120):
+        """接收消息"""
+        start_time = time.time()
+        
+        while time.time() - start_time < timeout and self.running:
+            try:
+                msg = await asyncio.wait_for(self.ws.recv(), timeout=5)
+                data = json.loads(msg)
+                
+                if data.get("type") == "push":
+                    push_type = data.get("push_type")
+                    push_data = data.get("data", {})
+                    
+                    if push_type == "ai_chat":
+                        chat_id = push_data.get("chat_id", 0)
+                        msg_type = push_data.get("type")
+                        
+                        if msg_type == "text":
+                            text = push_data.get("text", "")
+                            print(f"[文本] {text}")
+                            
+                        elif msg_type == "voice":
+                            text = push_data.get("text", "")
+                            hex_audio = push_data.get("hex_audio", "")
+                            is_final = push_data.get("is_final", False)
+                            
+                            print(f"[语音] chat_id={chat_id} text={text} size={len(hex_audio)}")
+                            
+                            # 收集音频片段
+                            if chat_id not in self.audio_buffers:
+                                self.audio_buffers[chat_id] = ""
+                            self.audio_buffers[chat_id] += hex_audio
+                            
+                            # 收到最终块时播放
+                            if is_final:
+                                await self.play_audio(chat_id)
+                                    
+                        elif msg_type == "final":
+                            emotion = push_data.get("emotion", "")
+                            action = push_data.get("action", "")
+                            print(f"[结束] emotion={emotion} action={action}")
+                            return True
+                            
+                        elif msg_type == "error":
+                            message = push_data.get("message", "")
+                            print(f"[错误] {message}")
+                            
+                    elif push_type == "emotion_change":
+                        print(f"[情绪] {push_data.get('emotion')} ({push_data.get('score')})")
+                        
+                    elif push_type == "action_trigger":
+                        print(f"[动作] {push_data.get('action')}")
+                        
+            except asyncio.TimeoutError:
+                continue
+            except Exception as e:
+                print(f"[异常] {e}")
+                
+        return False
+    
+    async def play_audio(self, chat_id):
+        """播放收集到的音频"""
+        if chat_id not in self.audio_buffers or not self.audio_buffers[chat_id]:
+            return
+        
+        hex_audio = self.audio_buffers[chat_id]
+        del self.audio_buffers[chat_id]
+        
+        if not self.player:
+            print("[警告] 音频播放器未初始化")
+            return
+        
+        try:
+            audio_data = bytes.fromhex(hex_audio)
+            temp_file = f"temp_{chat_id}_{int(time.time())}.mp3"
+            
+            with open(temp_file, "wb") as f:
+                f.write(audio_data)
+            
+            print(f"[播放] {temp_file} ({len(audio_data)} bytes)")
+            
+            self.player.music.load(temp_file)
+            self.player.music.play()
+            
+            # 等待播放完成
+            while self.player.music.get_busy():
+                await asyncio.sleep(0.1)
+            
+            os.remove(temp_file)
+            
+        except Exception as e:
+            print(f"[播放错误] {e}")
+    
+    async def save_audio(self, chat_id, filename=None):
+        """保存音频为文件"""
+        if chat_id not in self.audio_buffers:
+            return
+        
+        hex_audio = self.audio_buffers[chat_id]
+        
+        if not filename:
+            filename = f"voice_{chat_id}_{int(time.time())}.mp3"
+        
+        try:
+            audio_data = bytes.fromhex(hex_audio)
+            with open(filename, "wb") as f:
+                f.write(audio_data)
+            print(f"[保存] {filename} ({len(audio_data)} bytes)")
+        except Exception as e:
+            print(f"[保存错误] {e}")
+    
+    async def send_chat(self, text):
+        """发送聊天消息"""
+        request_id = hashlib.md5(str(time.time()).encode()).hexdigest()[:8]
+        
+        await self.ws.send(json.dumps({
+            "action": "chat",
+            "data": {
+                "text": text,
+                "session_key": f"pet:default:{self.session}"
+            },
+            "request_id": request_id
+        }))
+        print(f"[发送] {text}")
+    
+    async def close(self):
+        """关闭连接"""
+        self.running = False
+        if self.ws:
+            await self.ws.close()
+        print("[断开]")
+
+
+async def main():
+    print("=" * 60)
+    print("Pet Channel 语音客户端")
+    print("=" * 60)
+    
+    client = PetVoiceClient(host="localhost", port=8080, session="test")
+    
+    try:
+        await client.connect()
+        client.init_audio()
+        
+        # 开启语音
+        await client.toggle_voice(True)
+        
+        # 测试对话
+        messages = ["你好", "你叫什么名字？"]
+        
+        for msg in messages:
+            print(f"\n{'='*60}")
+            print(f"测试: {msg}")
+            print("="*60)
+            
+            await client.send_chat(msg)
+            await client.receive_messages(timeout=60)
+            
+            await asyncio.sleep(1)
+        
+        print("\n测试完成！")
+        
+    finally:
+        await client.close()
+
+
+if __name__ == "__main__":
+    asyncio.run(main())
+```
+
+---
+
+## 十一、依赖说明
+
+### JavaScript 客户端
+
+无需额外依赖，使用浏览器内置的 `AudioContext` 和 `atob`。
+
+### Python 客户端
+
+```bash
+pip install websockets pygame
+```
+
+| 依赖 | 用途 |
+|------|------|
+| websockets | WebSocket 客户端 |
+| pygame | 音频播放 |
