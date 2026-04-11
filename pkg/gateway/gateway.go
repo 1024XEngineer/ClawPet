@@ -201,9 +201,56 @@ func Run(debug bool, homePath, configPath string, allowEmptyStartup bool) error 
 		// 用于解析LLM输出中的情绪、动作、MBTI标签
 		if petChannel, ok := runningServices.ChannelManager.GetChannel("pet"); ok {
 			if pc, ok := petChannel.(*petchannel.PetChannel); ok {
-				petLLMTagHook := pet.NewLLMTagHook(pc.Service().EmotionEngine(), pc.Service().ActionManager(), pc.Service())
+				voiceEnabled := tts.IsVoiceEnabled(cfg) && tts.IsStreamEnabled(cfg)
+				logger.InfoCF("pet", "Voice check", map[string]any{
+					"voice_on":       tts.IsVoiceEnabled(cfg),
+					"stream_on":      tts.IsStreamEnabled(cfg),
+					"final_enabled":  voiceEnabled,
+					"tts_model_name": cfg.Voice.TTSModelName,
+				})
+				petLLMTagHook := pet.NewLLMTagHook(pc.Service().EmotionEngine(), pc.Service().ActionManager(), pc.Service(), voiceEnabled)
 				agentLoop.MountHook(agent.NamedHook("pet_llm_tag", petLLMTagHook))
-				logger.InfoCF("pet", "Pet LLM tag hook registered", nil)
+				logger.InfoCF("pet", "Pet LLM tag hook registered", map[string]any{"voice_enabled": voiceEnabled})
+
+				// 注册 Voice Hook 到 AgentLoop
+				// 用于流式语音输出
+				var voiceHook *pet.VoiceHook
+				if voiceEnabled {
+					logger.InfoCF("pet", "Detecting streaming TTS provider...", nil)
+					streamingTTS := tts.DetectStreamingTTS(cfg)
+					logger.InfoCF("pet", "Streaming TTS detection result", map[string]any{
+						"streaming_tts_nil": streamingTTS == nil,
+					})
+					if streamingTTS != nil {
+						voiceID := tts.GetVoiceID(cfg)
+						voiceHook = pet.NewVoiceHook(
+							pc.Service().EmotionEngine(),
+							pc.Service().ActionManager(),
+							pc.Service(),
+							streamingTTS,
+							voiceID,
+						)
+						agentLoop.MountHook(agent.NamedHook("pet_voice", voiceHook))
+						logger.InfoCF("pet", "Pet voice hook registered", map[string]any{
+							"tts_provider": streamingTTS.Name(),
+							"voice_id":     voiceID,
+						})
+
+						// 设置语音开关回调
+						pc.Service().SetVoiceToggleHandler(func(enabled bool) {
+							if voiceHook != nil {
+								voiceHook.SetEnabled(enabled)
+								petLLMTagHook.SetVoiceEnabled(enabled)
+								logger.InfoCF("pet", "Voice toggled", map[string]any{"enabled": enabled})
+							}
+						})
+					} else {
+						logger.WarnCF("pet", "Voice enabled but TTS provider not configured, voice output disabled", map[string]any{
+							"tts_model_name": cfg.Voice.TTSModelName,
+							"model_list_len": len(cfg.ModelList),
+						})
+					}
+				}
 			}
 		}
 	}
