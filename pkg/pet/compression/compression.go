@@ -289,10 +289,8 @@ func (s *CompressionService) callLLM(prompt string) (string, error) {
 	}
 
 	// 模型选择优先级：config.Model > modelCfg.Model > provider.GetDefaultModel()
-	model := s.config.Model
-	if model == "" && s.modelCfg != nil {
-		model = s.modelCfg.Model
-	}
+	model := s.modelCfg.Model
+
 	if model == "" {
 		model = s.provider.GetDefaultModel()
 	}

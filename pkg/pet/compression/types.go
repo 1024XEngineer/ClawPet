@@ -40,7 +40,6 @@ type CompressionConfig struct {
 // 启用压缩，20条消息触发压缩，5分钟检查一次，30天保留对话
 func DefaultCompressionConfig() *CompressionConfig {
 	return &CompressionConfig{
-		Model:                "minimax",
 		Enabled:              true,
 		Threshold:            20,
 		MergeIntervalMinutes: 5,
