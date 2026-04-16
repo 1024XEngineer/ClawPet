@@ -15,6 +15,7 @@ import (
 	"github.com/sipeed/picoclaw/pkg/pet/compression"
 	petconfig "github.com/sipeed/picoclaw/pkg/pet/config"
 	"github.com/sipeed/picoclaw/pkg/pet/memory"
+	"github.com/sipeed/picoclaw/pkg/pet/modelconfig"
 	"github.com/sipeed/picoclaw/pkg/pet/voice"
 	"github.com/sipeed/picoclaw/pkg/providers"
 )
@@ -27,13 +28,14 @@ type PetService struct {
 	pushHandler PushHandler
 	provider    providers.LLMProvider
 
-	configManager     *petconfig.Manager
-	charManager       *characters.Manager
-	actionManager     *action.ActionManager
-	memoryStore       *memory.Store
-	voiceLoader       *voice.Loader
-	conversationStore *compression.ConversationStore
-	compressionSvc    *compression.CompressionService
+	configManager      *petconfig.Manager
+	charManager        *characters.Manager
+	actionManager      *action.ActionManager
+	memoryStore        *memory.Store
+	voiceLoader        *voice.Loader
+	conversationStore  *compression.ConversationStore
+	compressionSvc     *compression.CompressionService
+	modelConfigManager *modelconfig.Manager
 
 	connSessions map[string]string
 
@@ -47,6 +49,7 @@ type PetService struct {
 type PetServiceConfig struct {
 	WorkspacePath string
 	Config        *config.Config
+	ConfigPath    string
 }
 
 func NewPetService(msgBus *bus.MessageBus, cfg PetServiceConfig) (*PetService, error) {
@@ -145,6 +148,10 @@ func NewPetService(msgBus *bus.MessageBus, cfg PetServiceConfig) (*PetService, e
 					s.compressionSvc.SetProvider(provider, modelCfg)
 				}
 			}
+		}
+
+		if cfg.ConfigPath != "" {
+			s.modelConfigManager = modelconfig.NewManager(cfg.ConfigPath)
 		}
 	}
 
@@ -394,6 +401,16 @@ func (s *PetService) HandleRequest(connID string, req Request) error {
 		return s.handleMemorySearch(sessionID, req)
 	case ActionConversationList:
 		return s.handleConversationList(sessionID, req)
+	case ActionModelListGet:
+		return s.handleModelListGet(sessionID, req)
+	case ActionModelAdd:
+		return s.handleModelAdd(sessionID, req)
+	case ActionModelUpdate:
+		return s.handleModelUpdate(sessionID, req)
+	case ActionModelDelete:
+		return s.handleModelDelete(sessionID, req)
+	case ActionModelSetDefault:
+		return s.handleModelSetDefault(sessionID, req)
 	default:
 		return s.sendError(sessionID, req.Action, fmt.Sprintf("unknown action: %s", req.Action))
 	}
@@ -769,6 +786,87 @@ func (s *PetService) handleConversationList(sessionID string, req Request) error
 		Total:         total,
 		HasMore:       hasMore,
 	})
+}
+
+func (s *PetService) handleModelListGet(sessionID string, req Request) error {
+	if s.modelConfigManager == nil {
+		return s.sendError(sessionID, req.Action, "model config manager not available")
+	}
+
+	resp, err := s.modelConfigManager.List()
+	if err != nil {
+		return s.sendError(sessionID, req.Action, err.Error())
+	}
+
+	return s.sendResponse(sessionID, req.Action, resp)
+}
+
+func (s *PetService) handleModelAdd(sessionID string, req Request) error {
+	if s.modelConfigManager == nil {
+		return s.sendError(sessionID, req.Action, "model config manager not available")
+	}
+
+	var data modelconfig.AddModelRequest
+	if err := json.Unmarshal(req.Data, &data); err != nil {
+		return s.sendError(sessionID, req.Action, "invalid request data")
+	}
+
+	if err := s.modelConfigManager.Add(&data); err != nil {
+		return s.sendError(sessionID, req.Action, err.Error())
+	}
+
+	return s.sendResponse(sessionID, req.Action, map[string]string{"status": "ok"})
+}
+
+func (s *PetService) handleModelUpdate(sessionID string, req Request) error {
+	if s.modelConfigManager == nil {
+		return s.sendError(sessionID, req.Action, "model config manager not available")
+	}
+
+	var data modelconfig.UpdateModelRequest
+	if err := json.Unmarshal(req.Data, &data); err != nil {
+		return s.sendError(sessionID, req.Action, "invalid request data")
+	}
+
+	if err := s.modelConfigManager.Update(&data); err != nil {
+		return s.sendError(sessionID, req.Action, err.Error())
+	}
+
+	return s.sendResponse(sessionID, req.Action, map[string]string{"status": "ok"})
+}
+
+func (s *PetService) handleModelDelete(sessionID string, req Request) error {
+	if s.modelConfigManager == nil {
+		return s.sendError(sessionID, req.Action, "model config manager not available")
+	}
+
+	var data modelconfig.DeleteModelRequest
+	if err := json.Unmarshal(req.Data, &data); err != nil {
+		return s.sendError(sessionID, req.Action, "invalid request data")
+	}
+
+	if err := s.modelConfigManager.Delete(&data); err != nil {
+		return s.sendError(sessionID, req.Action, err.Error())
+	}
+
+	return s.sendResponse(sessionID, req.Action, map[string]string{"status": "ok"})
+}
+
+func (s *PetService) handleModelSetDefault(sessionID string, req Request) error {
+	if s.modelConfigManager == nil {
+		return s.sendError(sessionID, req.Action, "model config manager not available")
+	}
+
+	var data modelconfig.SetDefaultRequest
+	if err := json.Unmarshal(req.Data, &data); err != nil {
+		return s.sendError(sessionID, req.Action, "invalid request data")
+	}
+
+	if err := s.modelConfigManager.SetDefault(&data); err != nil {
+		return s.sendError(sessionID, req.Action, err.Error())
+	}
+
+	return s.sendResponse(sessionID, req.Action, map[string]string{"status": "ok"})
 }
 
 // sortMemoriesByWeight 按权重从高到低排序
