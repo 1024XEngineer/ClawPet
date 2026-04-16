@@ -30,6 +30,11 @@ const (
 	ActionHealthCheck      = "health_check"      // 健康检查
 	ActionMemorySearch     = "memory_search"     // 搜索记忆
 	ActionConversationList = "conversation_list" // 对话列表
+	ActionModelListGet     = "model_list_get"    // 获取模型列表
+	ActionModelAdd         = "model_add"         // 添加模型
+	ActionModelUpdate      = "model_update"      // 更新模型
+	ActionModelDelete      = "model_delete"      // 删除模型
+	ActionModelSetDefault  = "model_set_default" // 设置默认模型
 )
 
 // =============================================================================
