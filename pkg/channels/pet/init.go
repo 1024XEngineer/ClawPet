@@ -1,6 +1,8 @@
 package pet
 
 import (
+	"path/filepath"
+
 	"github.com/sipeed/picoclaw/pkg/bus"
 	"github.com/sipeed/picoclaw/pkg/channels"
 	"github.com/sipeed/picoclaw/pkg/config"
@@ -24,7 +26,10 @@ func init() {
 			workspacePath = cfg.WorkspacePath()
 		}
 
+		// 获取 picoclaw 配置路径
+		configPath := filepath.Join(config.GetHome(), "config.json")
+
 		// 创建并返回 pet channel 实例
-		return NewPetChannel(cfg.Channels.Pet, b, workspacePath, cfg)
+		return NewPetChannel(cfg.Channels.Pet, b, workspacePath, cfg, configPath)
 	})
 }
