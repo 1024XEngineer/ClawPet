@@ -170,7 +170,7 @@ func (h *PetHook) BeforeLLM(ctx context.Context, req *agent.LLMHookRequest) (*ag
 
   2. 情绪变化用 [emotion:情绪名:变化值]
      - 情绪名：%s
-     - 示例：[emotion:joy:+5] 表示你感到开心增加了5
+     - 示例：[emotion:joy:+5] 表示你感到开心增加了5(这个篇幅可以大一些比如10或者20,最低-20,最高+20)
 
   3. (必须选择可用动作之一或者不选择任何动作)动作用 [action:动作名]
      - 可用动作：%s
@@ -321,26 +321,8 @@ func (h *PetHook) AfterLLM(ctx context.Context, resp *agent.LLMHookResponse) (*a
 	// 5. 提取用户可见文本
 	// 首先从 [text:xxx] 标签提取纯文本
 	textTags := parseTextTags(content)
-	var finalText string
-	if len(textTags) > 0 {
-		// LLM 使用了 [text:] 格式，保留完整标签
-		var sb strings.Builder
-		for _, tag := range textTags {
-			sb.WriteString("[text:")
-			sb.WriteString(tag.Text)
-			sb.WriteString("]")
-		}
-		finalText = sb.String()
-	} else {
-		// LLM 没有使用 [text:] 格式，强制包裹
-		cleaned := cleanAllTags(content)
-		if cleaned != "" {
-			finalText = "[text:" + cleaned + "]"
-		} else {
-			finalText = ""
-		}
-	}
-	resp.Response.Content = finalText
+	parseText := textTags[0].Text
+	resp.Response.Content = parseText
 
 	// 6. 记录对话到会话存储（用于后续压缩）
 	if h.conversationStore != nil {
@@ -351,8 +333,8 @@ func (h *PetHook) AfterLLM(ctx context.Context, resp *agent.LLMHookResponse) (*a
 					logger.Warnf("pet: failed to add user message to conversation store: %v", err)
 				}
 			}
-			if finalText != "" {
-				if err := h.conversationStore.Add(char.ID, "pet", finalText); err != nil {
+			if parseText != "" {
+				if err := h.conversationStore.Add(char.ID, "pet", parseText); err != nil {
 					logger.Warnf("pet: failed to add pet message to conversation store: %v", err)
 				}
 			}
