@@ -163,23 +163,22 @@ func (c *PetChannel) Service() *pet.PetService {
 	return c.service
 }
 
-// Start 启动通道
-func (c *PetChannel) Start(ctx context.Context) error {
-	addr := fmt.Sprintf("%s:%d", c.config.Host, c.config.Port)
-	logger.Infof("pet: Start called, addr=%s, host=%s, port=%d", addr, c.config.Host, c.config.Port)
+// WebhookPath 实现 WebhookHandler 接口，返回 HTTP 端点路径
+// PetChannel 使用 /pet/ 前缀（带斜杠表示子树匹配），包括 /pet/ws, /pet/token, /pet/init_status
+func (c *PetChannel) WebhookPath() string {
+	return "/pet/"
+}
 
-	go func() {
-		httpServer := &http.Server{
-			Addr:         addr,
-			Handler:      c,
-			ReadTimeout:  readTimeout,
-			WriteTimeout: 10 * time.Second,
-		}
-		logger.Infof("pet: starting WebSocket server at %s", addr)
-		if err := httpServer.ListenAndServe(); err != nil && err != http.ErrServerClosed {
-			logger.Errorf("pet: WebSocket server error: %v", err)
-		}
-	}()
+// Start 启动通道
+// 注意：当 PetChannel 实现了 WebhookHandler 接口后，
+// HTTP handler 会由 Manager 统一注册到主 Gateway 服务器，
+// 这里不再启动独立的 HTTP 服务器
+func (c *PetChannel) Start(ctx context.Context) error {
+	logger.Infof("pet: Start called, channel registered to main gateway HTTP server")
+
+	// PetChannel 通过 WebhookHandler 接口注册到主 Gateway，
+	// 不需要启动独立的 HTTP 服务器
+	// 如果需要独立的 HTTP 服务器，可以通过配置禁用 WebhookHandler
 
 	go c.runHeartbeat()
 
@@ -288,14 +287,84 @@ func (c *PetChannel) broadcastPush(push pet.Push) {
 	}
 }
 
-// ServeHTTP 处理HTTP请求（WebSocket升级）
+// ServeHTTP 处理HTTP请求（WebSocket升级 + API端点）
+// 支持从主 Gateway 转发的 /pet/* 路径
 func (c *PetChannel) ServeHTTP(w http.ResponseWriter, r *http.Request) {
-	logger.Infof("pet: ServeHTTP called, path=%s, method=%s", r.URL.Path, r.Method)
-	if r.URL.Path == "/ws" || r.URL.Path == "/" {
+	path := r.URL.Path
+
+	// 处理 /pet/ 前缀（从主 Gateway 转发来的请求）
+	if strings.HasPrefix(path, "/pet/") {
+		path = strings.TrimPrefix(path, "/pet")
+	} else if path == "/pet" {
+		path = "/"
+	}
+
+	logger.Infof("pet: ServeHTTP called, path=%s, normalized=%s, method=%s", r.URL.Path, path, r.Method)
+
+	switch path {
+	case "/ws", "/ws/", "/":
 		c.handleWebSocket(w, r)
+	case "/token", "/token/":
+		if r.Method != http.MethodGet {
+			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+			return
+		}
+		c.handleGetToken(w, r)
+	case "/init_status", "/init_status/":
+		if r.Method != http.MethodGet {
+			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+			return
+		}
+		c.handleGetInitStatus(w, r)
+	default:
+		http.NotFound(w, r)
+	}
+}
+
+func isSecureRequest(r *http.Request) bool {
+	if r.TLS != nil {
+		return true
+	}
+	if xfProto := strings.ToLower(strings.TrimSpace(r.Header.Get("X-Forwarded-Proto"))); xfProto == "https" || xfProto == "wss" {
+		return true
+	}
+	return false
+}
+
+func wsSchemeForRequest(r *http.Request) string {
+	if isSecureRequest(r) {
+		return "wss"
+	}
+	return "ws"
+}
+
+func (c *PetChannel) handleGetToken(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Content-Type", "application/json")
+
+	wsPath := "/ws"
+	if strings.HasPrefix(r.URL.Path, "/pet/") || r.URL.Path == "/pet" {
+		wsPath = "/pet/ws"
+	}
+
+	_ = json.NewEncoder(w).Encode(map[string]any{
+		"enabled":  true,
+		"token":    "",
+		"ws_url":   fmt.Sprintf("%s://%s%s", wsSchemeForRequest(r), r.Host, wsPath),
+		"protocol": "pet",
+	})
+}
+
+func (c *PetChannel) handleGetInitStatus(w http.ResponseWriter, _ *http.Request) {
+	w.Header().Set("Content-Type", "application/json")
+	if c.service == nil {
+		http.Error(w, "pet service unavailable", http.StatusServiceUnavailable)
 		return
 	}
-	http.NotFound(w, r)
+	// 返回基本的初始化状态
+	_ = json.NewEncoder(w).Encode(map[string]any{
+		"initialized": true,
+		"service":     "pet",
+	})
 }
 
 // handleWebSocket 处理WebSocket连接

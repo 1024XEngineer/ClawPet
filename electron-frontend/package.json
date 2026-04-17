@@ -4,7 +4,7 @@
   "scripts": {
     "dev": "vite",
     "electron": "node scripts/wait-and-start.cjs",
-    "start": "concurrently \"npm run dev\" \"npm run electron\"",
+    "start": "concurrently -k \"npm run dev\" \"npm run electron\"",
     "build": "tsc && vite build",
     "preview": "vite preview"
   },

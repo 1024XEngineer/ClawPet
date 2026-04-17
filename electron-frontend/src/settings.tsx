@@ -1,4 +1,4 @@
-﻿import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { usePicoClaw } from './usePicoClaw'
 import { useVoiceInput } from './useVoiceInput'
 import './settings.css'
@@ -55,16 +55,56 @@ interface ChannelItem {
 interface CronItem {
   id: string
   name: string
-  schedule: string
+  scheduleText: string
   enabled: boolean
   description: string
+  nextRunText: string
+  lastResultText: string
+  source: 'live' | 'mock'
 }
 
-const API_BASE =
+interface CronScheduleDTO {
+  kind: string
+  atMs?: number
+  everyMs?: number
+  expr?: string
+  tz?: string
+}
+
+interface CronPayloadDTO {
+  message: string
+  channel?: string
+  to?: string
+  command?: string
+}
+
+interface CronStateDTO {
+  nextRunAtMs?: number
+  lastRunAtMs?: number
+  lastStatus?: string
+  lastError?: string
+}
+
+interface CronJobDTO {
+  id: string
+  name: string
+  enabled: boolean
+  schedule: CronScheduleDTO
+  payload: CronPayloadDTO
+  state?: CronStateDTO
+}
+
+const API_BASE = 'http://127.0.0.1:18790'
+
+const ASSET_PREFIX =
   typeof window !== 'undefined' &&
   (window.location.protocol === 'http:' || window.location.protocol === 'https:')
-    ? ''
-    : 'http://127.0.0.1:18790'
+    ? '/'
+    : './'
+
+function assetPath(name: string) {
+  return `${ASSET_PREFIX}${name.replace(/^\/+/, '')}`
+}
 
 const FORCE_TEST_ONBOARDING = (() => {
   if (typeof window === 'undefined') {
@@ -109,8 +149,26 @@ const MOCK_CHANNELS: ChannelItem[] = [
 ]
 
 const MOCK_CRON: CronItem[] = [
-  { id: '1', name: '早安问候', schedule: '0 8 * * *', enabled: true, description: '每天 08:00 发送早安消息' },
-  { id: '2', name: '学习打卡', schedule: '0 21 * * 1-5', enabled: false, description: '工作日 21:00 提醒打卡' },
+  {
+    id: '1',
+    name: '早安问候',
+    scheduleText: 'cron · 0 8 * * *',
+    enabled: true,
+    description: '每天 08:00 发送早安消息',
+    nextRunText: '明天 08:00',
+    lastResultText: '最近执行：ok',
+    source: 'mock',
+  },
+  {
+    id: '2',
+    name: '学习打卡',
+    scheduleText: 'cron · 0 21 * * 1-5',
+    enabled: false,
+    description: '工作日 21:00 提醒打卡',
+    nextRunText: '已暂停',
+    lastResultText: '最近执行：- ',
+    source: 'mock',
+  },
 ]
 
 const PRICING = [
@@ -127,12 +185,12 @@ const SUGGESTIONS = [
 ]
 
 const emotionToGif: Record<string, string[]> = {
-  joy: ['/happy1.gif', '/happy2.gif'],
-  happy: ['/happy1.gif', '/happy2.gif'],
-  sadness: ['/sad.gif'],
-  anger: ['/shake-head_out.gif'],
-  surprise: ['/celebrate_out.gif'],
-  neutral: ['/standby1.gif', '/standby2.gif', '/standby3.gif'],
+  joy: ['happy1.gif', 'happy2.gif'],
+  happy: ['happy1.gif', 'happy2.gif'],
+  sadness: ['sad.gif'],
+  anger: ['shake-head_out.gif'],
+  surprise: ['celebrate_out.gif'],
+  neutral: ['standby1.gif', 'standby2.gif', 'standby3.gif'],
 }
 
 function getEmotionGif(emotion: string) {

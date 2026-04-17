@@ -456,11 +456,28 @@ func (m *Manager) SetupHTTPServer(addr string, healthServer *health.Server) {
 	m.registerHTTPHandlersLocked()
 
 	m.httpServer = &http.Server{
-		Addr:         addr,
-		Handler:      m.mux,
+		Addr:    addr,
+		Handler: corsMiddleware(m.mux),
 		ReadTimeout:  30 * time.Second,
 		WriteTimeout: 30 * time.Second,
 	}
+}
+
+// corsMiddleware adds CORS headers to allow browser-based frontend access
+func corsMiddleware(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Access-Control-Allow-Origin", "*")
+		w.Header().Set("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS")
+		w.Header().Set("Access-Control-Allow-Headers", "Content-Type, Authorization")
+		w.Header().Set("Access-Control-Allow-Credentials", "true")
+
+		if r.Method == "OPTIONS" {
+			w.WriteHeader(http.StatusOK)
+			return
+		}
+
+		next.ServeHTTP(w, r)
+	})
 }
 
 // registerHTTPHandlersLocked registers webhook and health-check handlers for

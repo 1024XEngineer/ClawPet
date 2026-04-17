@@ -5,14 +5,31 @@ export default defineConfig({
   plugins: [react()],
   base: './',
   server: {
-    port: 5173
+    port: 5173,
+    strictPort: true,
+    proxy: {
+      '/api': {
+        target: 'http://127.0.0.1:18790',
+        changeOrigin: true,
+      },
+      '/pico': {
+        target: 'http://127.0.0.1:18790',
+        changeOrigin: true,
+        ws: true,
+      },
+      '/pet': {
+        target: 'http://127.0.0.1:18790',
+        changeOrigin: true,
+        ws: true,
+      },
+    },
   },
   build: {
     rollupOptions: {
       input: {
         main: 'index.html',
-        settings: 'settings.html'
-      }
-    }
-  }
+        settings: 'settings.html',
+      },
+    },
+  },
 })
