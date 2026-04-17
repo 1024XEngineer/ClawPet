@@ -2,6 +2,7 @@ package characters
 
 import (
 	"fmt"
+	"sync"
 	"time"
 
 	"github.com/sipeed/picoclaw/pkg/logger"
@@ -12,7 +13,9 @@ import (
 // Manager 角色管理器
 // 负责管理所有角色，支持多角色切换
 // 注意：所有配置统一由 config.Manager 管理，Manager 只负责内存中的角色对象
+// 注意：所有访问 characters map 的方法都需要加锁保护
 type Manager struct {
+	mu            sync.RWMutex          // 保护 characters map 的读写锁
 	characters    map[string]*Character // 所有角色映射
 	configManager *config.Manager       // 配置管理器（统一配置管理）
 }
@@ -28,6 +31,15 @@ func NewManager(cfg []*config.CharacterConfig, configManager *config.Manager) (*
 		characters:    make(map[string]*Character),
 		configManager: configManager,
 	}
+
+	// 获取初始 activeID（从 configManager 获取，不需要锁）
+	initialActiveID := ""
+	if configManager != nil {
+		initialActiveID = configManager.GetActiveID()
+	}
+
+	m.mu.Lock()
+	defer m.mu.Unlock()
 
 	// 初始化所有角色
 	for _, cc := range cfg {
@@ -89,12 +101,14 @@ func NewManager(cfg []*config.CharacterConfig, configManager *config.Manager) (*
 		}
 	}
 
-	logger.Infof("characters: manager created with %d characters, active=%s", len(m.characters), m.GetCurrentID())
+	logger.Infof("characters: manager created with %d characters, active=%s", len(m.characters), initialActiveID)
 	return m, nil
 }
 
 // GetCurrent 获取当前激活的角色
 func (m *Manager) GetCurrent() *Character {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
 	return m.characters[m.GetCurrentID()]
 }
 
@@ -110,6 +124,9 @@ func (m *Manager) GetCurrentID() string {
 // Switch 切换到指定角色
 // 切换是即时完成的，同时更新 config.Manager 中的 activeID
 func (m *Manager) Switch(id string) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
 	if id == m.GetCurrentID() {
 		return nil // 已经是目标角色，无需切换
 	}
@@ -148,6 +165,8 @@ func (m *Manager) Switch(id string) error {
 
 // List 返回所有角色列表
 func (m *Manager) List() []*Character {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
 	result := make([]*Character, 0, len(m.characters))
 	for _, c := range m.characters {
 		result = append(result, c)
@@ -157,17 +176,24 @@ func (m *Manager) List() []*Character {
 
 // Get 根据ID获取指定角色
 func (m *Manager) Get(id string) *Character {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
 	return m.characters[id]
 }
 
 // Add 添加新角色到管理器
 func (m *Manager) Add(c *Character) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
 	m.characters[c.ID] = c
 }
 
 // Remove 从管理器移除角色
 // 不能移除当前激活的角色
 func (m *Manager) Remove(id string) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
 	if id == m.GetCurrentID() {
 		return fmt.Errorf("cannot remove active character")
 	}
@@ -180,6 +206,9 @@ func (m *Manager) Remove(id string) error {
 
 // UpdateCharacter 更新角色公开信息
 func (m *Manager) UpdateCharacter(id string, name, persona, personaType string) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
 	if char, ok := m.characters[id]; ok {
 		if name != "" {
 			char.Name = name
@@ -212,7 +241,10 @@ func (m *Manager) SavePrivateConfig() error {
 		return nil
 	}
 
-	char := m.GetCurrent()
+	m.mu.RLock()
+	char := m.characters[m.GetCurrentID()]
+	m.mu.RUnlock()
+
 	if char == nil {
 		return nil
 	}
@@ -248,6 +280,8 @@ func (m *Manager) SavePrivateConfig() error {
 // ToPublicConfig 将当前状态转换为公开配置结构
 // 只包含公开信息，不包含私有情绪/MBTI
 func (m *Manager) ToPublicConfig() []*config.CharacterConfig {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
 	characters := make([]*config.CharacterConfig, 0, len(m.characters))
 	for _, c := range m.characters {
 		characters = append(characters, &config.CharacterConfig{

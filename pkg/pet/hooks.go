@@ -183,7 +183,7 @@ func (h *PetHook) BeforeLLM(ctx context.Context, req *agent.LLMHookRequest) (*ag
      - 类型：conversation（对话）/ preference（偏好）/ fact（事实）
      - 权重：0-100，越高越重要（一般50，中间70，重要85+，特别95+）
      - 示例：[memory_type:preference-weight:75-memory_text:用户喜欢被夸奖]
-     - 每次对话建议生成1条相关记忆
+     - 不需要把以前的记忆内容也记忆下来
 
 【输出格式要求】
 你必须使用以下格式回复用户：
@@ -255,7 +255,7 @@ func (h *PetHook) AfterLLM(ctx context.Context, resp *agent.LLMHookResponse) (*a
 	}
 
 	// 记录LLM原始响应
-	logger.InfoCF("pet", "PetHook.AfterLLM: 收到LLM响应", map[string]any{
+	logger.DebugCF("pet", "PetHook.AfterLLM: 收到LLM响应", map[string]any{
 		"content_length": len(content),
 		"content_preview": func() string {
 			if len(content) > 200 {
@@ -321,8 +321,12 @@ func (h *PetHook) AfterLLM(ctx context.Context, resp *agent.LLMHookResponse) (*a
 	// 5. 提取用户可见文本
 	// 首先从 [text:xxx] 标签提取纯文本
 	textTags := parseTextTags(content)
+	if len(textTags) == 0 {
+		logger.InfoCF("pet", "PetHook:LLM响应中未解析到文本标签", nil)
+		return resp, agent.HookDecision{Action: agent.HookActionContinue}, nil
+	}
 	parseText := textTags[0].Text
-	resp.Response.Content = parseText
+	resp.Response.Content = content
 
 	// 6. 记录对话到会话存储（用于后续压缩）
 	if h.conversationStore != nil {
@@ -762,26 +766,23 @@ type TextTag struct {
 //	[TextTag{Text:"你好呀"}, TextTag{Text:"今天天气真好", Voice:"speed:1.2"}]
 func parseTextTags(content string) []TextTag {
 	var tags []TextTag
-	textRegex := regexp.MustCompile(`\[text:([^\]]+)\]`)
+	// 新的正则表达式，能够匹配带语音参数的完整标签
+	textRegex := regexp.MustCompile(`\[text:([^\]]+)\](?:-\[voice:([^\]]+)\])?`)
 	matches := textRegex.FindAllStringSubmatch(content, -1)
 
 	for _, match := range matches {
 		if len(match) < 2 {
 			continue
 		}
-		inner := match[1]
+		text := strings.TrimSpace(match[1])
 
-		// 检查是否有 -[voice:xxx] 后缀
-		voicePrefix := "]-[voice:"
-		voiceIdx := strings.Index(inner, voicePrefix)
-		if voiceIdx != -1 {
-			text := strings.TrimSpace(inner[:voiceIdx])
-			voice := strings.TrimSpace(inner[voiceIdx+len(voicePrefix):])
-			voice = strings.TrimSuffix(voice, "]")
-			tags = append(tags, TextTag{Text: text, Voice: voice})
-		} else {
-			tags = append(tags, TextTag{Text: strings.TrimSpace(inner)})
+		// 检查是否有语音参数
+		var voice string
+		if len(match) > 2 && match[2] != "" {
+			voice = strings.TrimSpace(match[2])
 		}
+
+		tags = append(tags, TextTag{Text: text, Voice: voice})
 	}
 
 	return tags
