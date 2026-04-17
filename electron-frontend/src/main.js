@@ -1,14 +1,36 @@
-const { app, BrowserWindow, ipcMain, screen } = require('electron');
+﻿const { app, BrowserWindow, ipcMain, screen } = require('electron');
 const path = require('path');
+const os = require('os');
+const fs = require('fs');
 
 let petWindow = null;
 let settingsWindow = null;
 
+// 璁剧疆鐢ㄦ埛鏁版嵁鐩綍浠ヨВ鍐虫潈闄愰棶棰?
+const userDataPath = path.join(os.homedir(), '.goclaw');
+app.setPath('userData', userDataPath);
+
+// 鍒涘缓鏃ュ織鏂囦欢
+const logFilePath = path.join(userDataPath, 'logs.txt');
+const logStream = fs.createWriteStream(logFilePath, { flags: 'a' });
+
+function logToFile(message) {
+  const timestamp = new Date().toISOString();
+  const logLine = `[${timestamp}] ${message}\n`;
+  logStream.write(logLine);
+  console.log(logLine);
+}
+
+logToFile('Electron application started');
+
+const rendererBaseUrl = (process.env.ELECTRON_RENDERER_URL || 'http://localhost:5173').replace(/\/+$/, '');
+const shouldOpenDevTools = process.env.ELECTRON_OPEN_DEVTOOLS === '1';
+
 function createPetWindow() {
-  // 获取屏幕右下角位置
+  // 鑾峰彇灞忓箷鍙充笅瑙掍綅锟?
   const { width, height } = screen.getPrimaryDisplay().workAreaSize;
   
-  // 桌宠窗口大小
+  // 妗屽疇绐楀彛澶у皬
   const petWidth = 280;
   const petHeight = 380;
   
@@ -17,12 +39,12 @@ function createPetWindow() {
     height: petHeight,
     x: width - petWidth - 20,
     y: height - petHeight - 60,
-    frame: false,           // 无边框
-    transparent: true,      // 透明背景
-    alwaysOnTop: true,     // 置顶
-    resizable: false,       // 不可调整大小
-    skipTaskbar: true,     // 不显示在任务栏
-    show: false,           // 加载完成后显示
+    frame: false,           // 鏃犺竟锟?
+    transparent: true,      // 閫忔槑鑳屾櫙
+    alwaysOnTop: true,     // 缃《
+    resizable: false,       // 涓嶅彲璋冩暣澶у皬
+    skipTaskbar: true,     // 涓嶆樉绀哄湪浠诲姟锟?
+    show: false,           // 鍔犺浇瀹屾垚鍚庢樉锟?
     webPreferences: {
       nodeIntegration: false,
       contextIsolation: true,
@@ -30,7 +52,7 @@ function createPetWindow() {
     }
   });
 
-  petWindow.loadURL('http://localhost:5173');
+  petWindow.loadURL(rendererBaseUrl);
   
   petWindow.once('ready-to-show', () => {
     petWindow.show();
@@ -69,10 +91,13 @@ function createSettingsWindow() {
     }
   });
 
-  settingsWindow.loadURL('http://localhost:5173/settings.html');
+  settingsWindow.loadURL(`${rendererBaseUrl}/settings.html`);
 
   settingsWindow.once('ready-to-show', () => {
     settingsWindow.show();
+    if (shouldOpenDevTools) {
+      settingsWindow.webContents.openDevTools({ mode: 'detach' });
+    }
   });
 
   settingsWindow.on('closed', () => {
@@ -82,6 +107,22 @@ function createSettingsWindow() {
 
 ipcMain.on('open-settings', () => {
   createSettingsWindow();
+});
+
+// 鎺ユ敹鏉ヨ嚜娓叉煋杩涚▼鐨勬棩蹇?
+ipcMain.on('renderer-log', (event, { level, args }) => {
+  const message = args.map(arg => {
+    if (typeof arg === 'object') {
+      return JSON.stringify(arg);
+    }
+    return String(arg);
+  }).join(' ');
+  
+  if (level === 'error') {
+    logToFile(`[RENDERER ERROR] ${message}`);
+  } else {
+    logToFile(`[RENDERER] ${message}`);
+  }
 });
 
 ipcMain.on('minimize-settings', () => {

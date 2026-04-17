@@ -1,6 +1,7 @@
 package emotion
 
 import (
+	"math"
 	"sync"
 	"time"
 )
@@ -30,7 +31,77 @@ const (
 	// 实现"时间抚平一切情绪"的生理规律
 	// 每秒衰减1%，即情绪值每秒向50靠近1%
 	DecayRate = 0.01
+
+	// 波动系数安全区间
+	VolatilityMin = 0.0
+	VolatilityMax = 3.0
+
+	defaultPushCooldown   = 0 * time.Second
+	defaultCouplingFactor = 0.0
+	defaultSmoothingAlpha = 1.0
+
+	defaultCriticalEnterHigh = 90
+	defaultCriticalEnterLow  = 10
+	defaultCriticalExitHigh  = 85
+	defaultCriticalExitLow   = 15
+	defaultElevatedEnterHigh = ThresholdHigh
+	defaultElevatedEnterLow  = ThresholdLow
+	defaultElevatedExitHigh  = 75
+	defaultElevatedExitLow   = 25
 )
+
+type EmotionThresholds struct {
+	ElevatedEnterHigh int
+	ElevatedEnterLow  int
+	ElevatedExitHigh  int
+	ElevatedExitLow   int
+	CriticalEnterHigh int
+	CriticalEnterLow  int
+	CriticalExitHigh  int
+	CriticalExitLow   int
+}
+
+func defaultEmotionThresholds() EmotionThresholds {
+	return EmotionThresholds{
+		ElevatedEnterHigh: defaultElevatedEnterHigh,
+		ElevatedEnterLow:  defaultElevatedEnterLow,
+		ElevatedExitHigh:  defaultElevatedExitHigh,
+		ElevatedExitLow:   defaultElevatedExitLow,
+		CriticalEnterHigh: defaultCriticalEnterHigh,
+		CriticalEnterLow:  defaultCriticalEnterLow,
+		CriticalExitHigh:  defaultCriticalExitHigh,
+		CriticalExitLow:   defaultCriticalExitLow,
+	}
+}
+
+var emotionCouplingMatrix = map[string]map[string]float64{
+	EmotionJoy: {
+		EmotionSadness: -0.18,
+		EmotionFear:    -0.10,
+		EmotionAnger:   -0.08,
+	},
+	EmotionAnger: {
+		EmotionJoy:     -0.10,
+		EmotionFear:    0.12,
+		EmotionDisgust: 0.10,
+	},
+	EmotionSadness: {
+		EmotionJoy:  -0.16,
+		EmotionFear: 0.10,
+	},
+	EmotionDisgust: {
+		EmotionJoy:   -0.08,
+		EmotionAnger: 0.08,
+	},
+	EmotionSurprise: {
+		EmotionFear: 0.06,
+		EmotionJoy:  0.05,
+	},
+	EmotionFear: {
+		EmotionJoy:   -0.12,
+		EmotionAnger: 0.10,
+	},
+}
 
 // =============================================================================
 // 数据结构定义
@@ -75,18 +146,61 @@ type EmotionEngine struct {
 	emotions    SixEmotions     // 六大情绪状态（当前）
 	volatility  float64         // 情绪波动系数，影响每次变化的幅度（越大变化越剧烈）
 	lastUpdate  time.Time       // 最后更新时间，用于计算衰减
+	pushLevels  map[string]emotionLevel
+	lastPushAt  map[string]time.Time
+	lastPushed  map[string]emotionLevel
+
+	thresholds        EmotionThresholds
+	pushCooldown      time.Duration
+	dynamicVolatility bool
+	lastSignalAt      time.Time
+	couplingFactor    float64
+	smoothingAlpha    float64
 
 	persistPath string       // 持久化路径，保存到哪个目录
 	mu          sync.RWMutex // 读写锁，保证并发安全
 }
 
+type emotionEntry struct {
+	name  string
+	score int
+}
+
+type emotionLevel string
+
+const (
+	emotionLevelNormal   emotionLevel = "normal"
+	emotionLevelElevated emotionLevel = "elevated"
+	emotionLevelCritical emotionLevel = "critical"
+)
+
+const defaultEmotionAnimation = "init.png"
+
+var emotionAnimationKeyMap = map[string]string{
+	EmotionJoy:      "happy",
+	EmotionAnger:    "shake-head",
+	EmotionSadness:  "sad",
+	EmotionDisgust:  "shake-head",
+	EmotionSurprise: "celebrate",
+	EmotionFear:     "stay-out",
+}
+
+var emotionLevelAnimationKeyMap = map[emotionLevel]string{
+	emotionLevelNormal:   "standby",
+	emotionLevelElevated: "standby",
+	emotionLevelCritical: "stay-out",
+}
+
 // EmotionPush 情绪变化推送数据结构
 // 当情绪触发阈值时，推送给客户端
 type EmotionPush struct {
-	Emotion string `json:"emotion"`          // 情绪标签
-	Score   int    `json:"score"`            // 情绪强度值
-	Motion  string `json:"motion,omitempty"` // 关联的动作（可选）
-	Prompt  string `json:"prompt,omitempty"` // 阈值触发时的Prompt，用于注入LLM
+	Emotion        string   `json:"emotion"`                   // 情绪标签
+	Score          int      `json:"score"`                     // 情绪强度值
+	Level          string   `json:"level,omitempty"`           // 情绪等级：normal/elevated/critical
+	Animation      string   `json:"animation,omitempty"`       // 首选动画标识
+	AnimationHints []string `json:"animation_hints,omitempty"` // 动画回退顺序
+	Motion         string   `json:"motion,omitempty"`          // 关联的动作（可选）
+	Prompt         string   `json:"prompt,omitempty"`          // 阈值触发时的Prompt，用于注入LLM
 }
 
 // =============================================================================
@@ -104,12 +218,29 @@ type EmotionPush struct {
 //   - 波动系数为1.0（默认）
 //   - 最后更新为当前时间
 func NewEmotionEngine(persistPath string) *EmotionEngine {
+	now := time.Now()
 	return &EmotionEngine{
 		personality: MBTIPersonality{IE: NeutralValue, SN: NeutralValue, TF: NeutralValue, JP: NeutralValue},
 		emotions:    SixEmotions{Joy: NeutralValue, Anger: NeutralValue, Sadness: NeutralValue, Disgust: NeutralValue, Surprise: NeutralValue, Fear: NeutralValue},
 		volatility:  1.0,
-		lastUpdate:  time.Now(),
-		persistPath: persistPath,
+		lastUpdate:  now,
+		pushLevels: map[string]emotionLevel{
+			EmotionJoy:      emotionLevelNormal,
+			EmotionAnger:    emotionLevelNormal,
+			EmotionSadness:  emotionLevelNormal,
+			EmotionDisgust:  emotionLevelNormal,
+			EmotionSurprise: emotionLevelNormal,
+			EmotionFear:     emotionLevelNormal,
+		},
+		lastPushAt:        make(map[string]time.Time),
+		lastPushed:        make(map[string]emotionLevel),
+		thresholds:        defaultEmotionThresholds(),
+		pushCooldown:      defaultPushCooldown,
+		dynamicVolatility: false,
+		lastSignalAt:      now,
+		couplingFactor:    defaultCouplingFactor,
+		smoothingAlpha:    defaultSmoothingAlpha,
+		persistPath:       persistPath,
 	}
 }
 
@@ -146,7 +277,73 @@ func (e *EmotionEngine) GetVolatility() float64 {
 func (e *EmotionEngine) SetVolatility(v float64) {
 	e.mu.Lock()
 	defer e.mu.Unlock()
-	e.volatility = v
+	switch {
+	case math.IsNaN(v), math.IsInf(v, 0):
+		e.volatility = 1.0
+	case v < VolatilityMin:
+		e.volatility = VolatilityMin
+	case v > VolatilityMax:
+		e.volatility = VolatilityMax
+	default:
+		e.volatility = v
+	}
+}
+
+func (e *EmotionEngine) SetPushCooldown(d time.Duration) {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	if d < 0 {
+		d = 0
+	}
+	e.pushCooldown = d
+}
+
+func (e *EmotionEngine) GetPushCooldown() time.Duration {
+	e.mu.RLock()
+	defer e.mu.RUnlock()
+	return e.pushCooldown
+}
+
+func (e *EmotionEngine) SetThresholds(t EmotionThresholds) {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	e.thresholds = normalizeThresholds(t)
+}
+
+func (e *EmotionEngine) GetThresholds() EmotionThresholds {
+	e.mu.RLock()
+	defer e.mu.RUnlock()
+	return e.thresholds
+}
+
+func (e *EmotionEngine) SetDynamicVolatility(enabled bool) {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	e.dynamicVolatility = enabled
+}
+
+func (e *EmotionEngine) SetCouplingFactor(f float64) {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	if f < 0 {
+		f = 0
+	}
+	if f > 1 {
+		f = 1
+	}
+	e.couplingFactor = f
+}
+
+func (e *EmotionEngine) SetSmoothingAlpha(alpha float64) {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	if alpha < 0 {
+		alpha = 0
+	}
+	if alpha > 1 {
+		alpha = 1
+	}
+	e.smoothingAlpha = alpha
 }
 
 // GetLastUpdate 获取最后更新时间
@@ -172,22 +369,9 @@ func (e *EmotionEngine) GetLastUpdate() time.Time {
 func (e *EmotionEngine) SetEmotion(emotion string, score int) {
 	e.mu.Lock()
 	defer e.mu.Unlock()
+	e.lastSignalAt = time.Now()
 	e.lastUpdate = time.Now()
-
-	switch emotion {
-	case EmotionJoy:
-		e.emotions.Joy = clamp(score)
-	case EmotionAnger:
-		e.emotions.Anger = clamp(score)
-	case EmotionSadness:
-		e.emotions.Sadness = clamp(score)
-	case EmotionDisgust:
-		e.emotions.Disgust = clamp(score)
-	case EmotionSurprise:
-		e.emotions.Surprise = clamp(score)
-	case EmotionFear:
-		e.emotions.Fear = clamp(score)
-	}
+	e.setEmotionLocked(emotion, score)
 }
 
 // UpdateFromLLMTags 从LLM标签批量更新情绪
@@ -203,23 +387,11 @@ func (e *EmotionEngine) SetEmotion(emotion string, score int) {
 func (e *EmotionEngine) UpdateFromLLMTags(tags []EmotionTag) {
 	e.mu.Lock()
 	defer e.mu.Unlock()
+	e.lastSignalAt = time.Now()
 	e.lastUpdate = time.Now()
 
 	for _, tag := range tags {
-		switch tag.Emotion {
-		case EmotionJoy:
-			e.emotions.Joy = clamp(tag.Score)
-		case EmotionAnger:
-			e.emotions.Anger = clamp(tag.Score)
-		case EmotionSadness:
-			e.emotions.Sadness = clamp(tag.Score)
-		case EmotionDisgust:
-			e.emotions.Disgust = clamp(tag.Score)
-		case EmotionSurprise:
-			e.emotions.Surprise = clamp(tag.Score)
-		case EmotionFear:
-			e.emotions.Fear = clamp(tag.Score)
-		}
+		e.updateEmotionLocked(tag.Emotion, false, tag.Score, 0)
 	}
 }
 
@@ -232,47 +404,11 @@ func (e *EmotionEngine) UpdateFromLLMTags(tags []EmotionTag) {
 func (e *EmotionEngine) UpdateFromLLMTagsDelta(tags []EmotionTag) {
 	e.mu.Lock()
 	defer e.mu.Unlock()
+	e.lastSignalAt = time.Now()
 	e.lastUpdate = time.Now()
 
 	for _, tag := range tags {
-		switch tag.Emotion {
-		case EmotionJoy:
-			if tag.IsDelta {
-				e.emotions.Joy = clamp(e.emotions.Joy + tag.Delta)
-			} else {
-				e.emotions.Joy = clamp(tag.Score)
-			}
-		case EmotionAnger:
-			if tag.IsDelta {
-				e.emotions.Anger = clamp(e.emotions.Anger + tag.Delta)
-			} else {
-				e.emotions.Anger = clamp(tag.Score)
-			}
-		case EmotionSadness:
-			if tag.IsDelta {
-				e.emotions.Sadness = clamp(e.emotions.Sadness + tag.Delta)
-			} else {
-				e.emotions.Sadness = clamp(tag.Score)
-			}
-		case EmotionDisgust:
-			if tag.IsDelta {
-				e.emotions.Disgust = clamp(e.emotions.Disgust + tag.Delta)
-			} else {
-				e.emotions.Disgust = clamp(tag.Score)
-			}
-		case EmotionSurprise:
-			if tag.IsDelta {
-				e.emotions.Surprise = clamp(e.emotions.Surprise + tag.Delta)
-			} else {
-				e.emotions.Surprise = clamp(tag.Score)
-			}
-		case EmotionFear:
-			if tag.IsDelta {
-				e.emotions.Fear = clamp(e.emotions.Fear + tag.Delta)
-			} else {
-				e.emotions.Fear = clamp(tag.Score)
-			}
-		}
+		e.updateEmotionLocked(tag.Emotion, tag.IsDelta, tag.Score, tag.Delta)
 	}
 }
 
@@ -306,26 +442,20 @@ func (e *EmotionEngine) ApplyDecay(elapsed time.Duration) {
 		return
 	}
 
-	// 计算衰减因子 = 基础衰减率 * 时间(秒) * 波动系数
-	decayFactor := DecayRate * seconds * e.volatility
+	// 将线性近似改为指数衰减，避免长时间间隔导致过冲
+	decayVolatility := e.effectiveDecayVolatilityLocked(seconds)
+	decayFactor := 1 - math.Exp(-DecayRate*seconds*decayVolatility)
 
 	// 对每个情绪值应用衰减
 	// 公式：new = old + (50 - old) * decayFactor
-	// 这是一个指数衰减向50靠近的过程
-	e.emotions.Joy = int(float64(e.emotions.Joy) + (float64(NeutralValue-e.emotions.Joy) * decayFactor))
-	e.emotions.Anger = int(float64(e.emotions.Anger) + (float64(NeutralValue-e.emotions.Anger) * decayFactor))
-	e.emotions.Sadness = int(float64(e.emotions.Sadness) + (float64(NeutralValue-e.emotions.Sadness) * decayFactor))
-	e.emotions.Disgust = int(float64(e.emotions.Disgust) + (float64(NeutralValue-e.emotions.Disgust) * decayFactor))
-	e.emotions.Surprise = int(float64(e.emotions.Surprise) + (float64(NeutralValue-e.emotions.Surprise) * decayFactor))
-	e.emotions.Fear = int(float64(e.emotions.Fear) + (float64(NeutralValue-e.emotions.Fear) * decayFactor))
-
-	// 确保值在有效范围内
-	e.emotions.Joy = clamp(e.emotions.Joy)
-	e.emotions.Anger = clamp(e.emotions.Anger)
-	e.emotions.Sadness = clamp(e.emotions.Sadness)
-	e.emotions.Disgust = clamp(e.emotions.Disgust)
-	e.emotions.Surprise = clamp(e.emotions.Surprise)
-	e.emotions.Fear = clamp(e.emotions.Fear)
+	// 使用四舍五入减少长期离散化偏差
+	e.emotions.Joy = decayEmotionTowardNeutral(e.emotions.Joy, decayFactor)
+	e.emotions.Anger = decayEmotionTowardNeutral(e.emotions.Anger, decayFactor)
+	e.emotions.Sadness = decayEmotionTowardNeutral(e.emotions.Sadness, decayFactor)
+	e.emotions.Disgust = decayEmotionTowardNeutral(e.emotions.Disgust, decayFactor)
+	e.emotions.Surprise = decayEmotionTowardNeutral(e.emotions.Surprise, decayFactor)
+	e.emotions.Fear = decayEmotionTowardNeutral(e.emotions.Fear, decayFactor)
+	e.lastUpdate = time.Now()
 }
 
 // =============================================================================
@@ -350,21 +480,13 @@ func (e *EmotionEngine) GetDominantEmotion() (string, int) {
 	e.mu.RLock()
 	defer e.mu.RUnlock()
 
-	emotions := map[string]int{
-		EmotionJoy:      e.emotions.Joy,
-		EmotionAnger:    e.emotions.Anger,
-		EmotionSadness:  e.emotions.Sadness,
-		EmotionDisgust:  e.emotions.Disgust,
-		EmotionSurprise: e.emotions.Surprise,
-		EmotionFear:     e.emotions.Fear,
-	}
-
 	dominant := EmotionNeutral
 	maxScore := NeutralValue
 	maxDeviation := 0
 
 	// 遍历所有情绪，找出偏离中性最远的
-	for emo, score := range emotions {
+	for _, entry := range e.emotionEntriesLocked() {
+		score := entry.score
 		var deviation int
 		if score >= NeutralValue {
 			deviation = score - NeutralValue
@@ -374,7 +496,7 @@ func (e *EmotionEngine) GetDominantEmotion() (string, int) {
 
 		if deviation > maxDeviation {
 			maxDeviation = deviation
-			dominant = emo
+			dominant = entry.name
 			maxScore = score
 		}
 	}
@@ -393,29 +515,49 @@ func (e *EmotionEngine) GetDominantEmotion() (string, int) {
 //
 // 这个阈值用于触发客户端的特殊表情/动画效果
 func (e *EmotionEngine) ShouldPush() (bool, EmotionPush) {
-	e.mu.RLock()
-	defer e.mu.RUnlock()
+	e.mu.Lock()
+	defer e.mu.Unlock()
 
-	emotions := map[string]int{
-		EmotionJoy:      e.emotions.Joy,
-		EmotionAnger:    e.emotions.Anger,
-		EmotionSadness:  e.emotions.Sadness,
-		EmotionDisgust:  e.emotions.Disgust,
-		EmotionSurprise: e.emotions.Surprise,
-		EmotionFear:     e.emotions.Fear,
-	}
-
-	// 检查每个情绪是否触发阈值
-	for emo, score := range emotions {
-		if score > ThresholdHigh || score < ThresholdLow {
-			return true, EmotionPush{
-				Emotion: emo,
-				Score:   score,
-				Prompt:  e.getThresholdPrompt(emo, score),
+	// 检查每个情绪是否进入新的非正常状态
+	// 只在状态变化时推送一次，避免同一状态重复刷屏
+	var candidate EmotionPush
+	found := false
+	bestWeight := -1
+	bestDeviation := -1
+	now := time.Now()
+	for _, entry := range e.emotionEntriesLocked() {
+		score := entry.score
+		prevLevel := e.pushLevels[entry.name]
+		if prevLevel == "" {
+			prevLevel = emotionLevelNormal
+		}
+		level := classifyEmotionLevel(score, prevLevel, e.thresholds)
+		if shouldEmitTransition(prevLevel, level) && e.canEmitByCooldownLocked(entry.name, level, now) {
+			weight := emotionLevelWeight(level)
+			deviation := abs(score - NeutralValue)
+			if !found || weight > bestWeight || (weight == bestWeight && deviation > bestDeviation) {
+				animation, hints := resolveEmotionAnimation(entry.name, level)
+				candidate = EmotionPush{
+					Emotion:        entry.name,
+					Score:          score,
+					Level:          string(level),
+					Animation:      animation,
+					AnimationHints: hints,
+					Prompt:         e.getThresholdPrompt(entry.name, score),
+				}
+				bestWeight = weight
+				bestDeviation = deviation
+				found = true
 			}
 		}
+		e.pushLevels[entry.name] = level
 	}
 
+	if found {
+		e.lastPushAt[candidate.Emotion] = now
+		e.lastPushed[candidate.Emotion] = emotionLevel(candidate.Level)
+		return true, candidate
+	}
 	return false, EmotionPush{}
 }
 
@@ -487,6 +629,286 @@ func clamp(val int) int {
 		return 100
 	}
 	return val
+}
+
+func (e *EmotionEngine) setEmotionLocked(emotion string, score int) {
+	if _, ok := e.getEmotionScoreLocked(emotion); !ok {
+		return
+	}
+	newScore := clamp(score)
+	e.setEmotionScoreLocked(emotion, newScore)
+}
+
+func (e *EmotionEngine) updateEmotionLocked(emotion string, isDelta bool, score int, delta int) {
+	current, ok := e.getEmotionScoreLocked(emotion)
+	if !ok {
+		return
+	}
+	updated := e.applyEmotionUpdate(current, isDelta, score, delta)
+	e.setEmotionScoreLocked(emotion, updated)
+	e.applyEmotionCouplingLocked(emotion, updated-current)
+}
+
+func (e *EmotionEngine) applyEmotionUpdate(current int, isDelta bool, score int, delta int) int {
+	if isDelta {
+		next := float64(current + delta)
+		if e.smoothingAlpha < 1 {
+			next = float64(current) + float64(delta)*e.smoothingAlpha
+		}
+		return clamp(int(math.Round(next)))
+	}
+
+	next := float64(score)
+	if e.smoothingAlpha < 1 {
+		next = float64(current) + (float64(score-current) * e.smoothingAlpha)
+	}
+	return clamp(int(math.Round(next)))
+}
+
+func (e *EmotionEngine) getEmotionScoreLocked(emotion string) (int, bool) {
+	switch emotion {
+	case EmotionJoy:
+		return e.emotions.Joy, true
+	case EmotionAnger:
+		return e.emotions.Anger, true
+	case EmotionSadness:
+		return e.emotions.Sadness, true
+	case EmotionDisgust:
+		return e.emotions.Disgust, true
+	case EmotionSurprise:
+		return e.emotions.Surprise, true
+	case EmotionFear:
+		return e.emotions.Fear, true
+	default:
+		return 0, false
+	}
+}
+
+func (e *EmotionEngine) setEmotionScoreLocked(emotion string, score int) {
+	clamped := clamp(score)
+	switch emotion {
+	case EmotionJoy:
+		e.emotions.Joy = clamped
+	case EmotionAnger:
+		e.emotions.Anger = clamped
+	case EmotionSadness:
+		e.emotions.Sadness = clamped
+	case EmotionDisgust:
+		e.emotions.Disgust = clamped
+	case EmotionSurprise:
+		e.emotions.Surprise = clamped
+	case EmotionFear:
+		e.emotions.Fear = clamped
+	}
+}
+
+func (e *EmotionEngine) applyEmotionCouplingLocked(source string, sourceDelta int) {
+	if sourceDelta == 0 || e.couplingFactor <= 0 {
+		return
+	}
+
+	targets, ok := emotionCouplingMatrix[source]
+	if !ok {
+		return
+	}
+
+	d := float64(sourceDelta) * e.couplingFactor
+	for target, weight := range targets {
+		current, exists := e.getEmotionScoreLocked(target)
+		if !exists {
+			continue
+		}
+		adjusted := float64(current) + d*weight
+		e.setEmotionScoreLocked(target, int(math.Round(adjusted)))
+	}
+}
+
+func (e *EmotionEngine) emotionEntriesLocked() []emotionEntry {
+	return []emotionEntry{
+		{name: EmotionJoy, score: e.emotions.Joy},
+		{name: EmotionAnger, score: e.emotions.Anger},
+		{name: EmotionSadness, score: e.emotions.Sadness},
+		{name: EmotionDisgust, score: e.emotions.Disgust},
+		{name: EmotionSurprise, score: e.emotions.Surprise},
+		{name: EmotionFear, score: e.emotions.Fear},
+	}
+}
+
+func classifyEmotionLevel(score int, previous emotionLevel, thresholds EmotionThresholds) emotionLevel {
+	if previous == "" {
+		previous = emotionLevelNormal
+	}
+
+	switch previous {
+	case emotionLevelCritical:
+		if score > thresholds.CriticalExitHigh || score < thresholds.CriticalExitLow {
+			return emotionLevelCritical
+		}
+		if score > thresholds.ElevatedEnterHigh || score < thresholds.ElevatedEnterLow {
+			return emotionLevelElevated
+		}
+		return emotionLevelNormal
+	case emotionLevelElevated:
+		if score >= thresholds.CriticalEnterHigh || score <= thresholds.CriticalEnterLow {
+			return emotionLevelCritical
+		}
+		if score > thresholds.ElevatedExitHigh || score < thresholds.ElevatedExitLow {
+			return emotionLevelElevated
+		}
+		return emotionLevelNormal
+	default:
+		switch {
+		case score >= thresholds.CriticalEnterHigh || score <= thresholds.CriticalEnterLow:
+			return emotionLevelCritical
+		case score > thresholds.ElevatedEnterHigh || score < thresholds.ElevatedEnterLow:
+			return emotionLevelElevated
+		default:
+			return emotionLevelNormal
+		}
+	}
+}
+
+func shouldEmitTransition(previous, next emotionLevel) bool {
+	if next == emotionLevelNormal {
+		return false
+	}
+	return emotionLevelWeight(next) > emotionLevelWeight(previous)
+}
+
+func (e *EmotionEngine) canEmitByCooldownLocked(emotion string, level emotionLevel, now time.Time) bool {
+	if e.pushCooldown <= 0 {
+		return true
+	}
+	lastAt, ok := e.lastPushAt[emotion]
+	if !ok {
+		return true
+	}
+	if now.Sub(lastAt) >= e.pushCooldown {
+		return true
+	}
+	lastLevel := e.lastPushed[emotion]
+	return emotionLevelWeight(level) > emotionLevelWeight(lastLevel)
+}
+
+func emotionLevelWeight(level emotionLevel) int {
+	switch level {
+	case emotionLevelCritical:
+		return 2
+	case emotionLevelElevated:
+		return 1
+	default:
+		return 0
+	}
+}
+
+func decayEmotionTowardNeutral(current int, factor float64) int {
+	next := float64(current) + (float64(NeutralValue-current) * factor)
+	return clamp(int(math.Round(next)))
+}
+
+func (e *EmotionEngine) effectiveDecayVolatilityLocked(_ float64) float64 {
+	v := e.volatility
+	if !e.dynamicVolatility {
+		return v
+	}
+
+	deviationRatio := float64(e.maxDeviationLocked()) / float64(NeutralValue)
+	v *= 1 + 0.35*deviationRatio
+
+	idleFor := time.Since(e.lastSignalAt)
+	if idleFor < 8*time.Second {
+		v *= 0.8
+	} else if idleFor > 45*time.Second {
+		v *= 1.25
+	}
+
+	if v < VolatilityMin {
+		return VolatilityMin
+	}
+	if v > VolatilityMax {
+		return VolatilityMax
+	}
+	return v
+}
+
+func (e *EmotionEngine) maxDeviationLocked() int {
+	maxDeviation := 0
+	for _, entry := range e.emotionEntriesLocked() {
+		deviation := abs(entry.score - NeutralValue)
+		if deviation > maxDeviation {
+			maxDeviation = deviation
+		}
+	}
+	return maxDeviation
+}
+
+func normalizeThresholds(t EmotionThresholds) EmotionThresholds {
+	n := t
+	n.ElevatedEnterHigh = clamp(n.ElevatedEnterHigh)
+	n.ElevatedEnterLow = clamp(n.ElevatedEnterLow)
+	n.ElevatedExitHigh = clamp(n.ElevatedExitHigh)
+	n.ElevatedExitLow = clamp(n.ElevatedExitLow)
+	n.CriticalEnterHigh = clamp(n.CriticalEnterHigh)
+	n.CriticalEnterLow = clamp(n.CriticalEnterLow)
+	n.CriticalExitHigh = clamp(n.CriticalExitHigh)
+	n.CriticalExitLow = clamp(n.CriticalExitLow)
+
+	if n.ElevatedEnterHigh <= NeutralValue {
+		n.ElevatedEnterHigh = defaultElevatedEnterHigh
+	}
+	if n.ElevatedEnterLow >= NeutralValue {
+		n.ElevatedEnterLow = defaultElevatedEnterLow
+	}
+	if n.ElevatedExitHigh > n.ElevatedEnterHigh {
+		n.ElevatedExitHigh = n.ElevatedEnterHigh
+	}
+	if n.ElevatedExitLow < n.ElevatedEnterLow {
+		n.ElevatedExitLow = n.ElevatedEnterLow
+	}
+	if n.CriticalEnterHigh < n.ElevatedEnterHigh {
+		n.CriticalEnterHigh = n.ElevatedEnterHigh
+	}
+	if n.CriticalEnterLow > n.ElevatedEnterLow {
+		n.CriticalEnterLow = n.ElevatedEnterLow
+	}
+	if n.CriticalExitHigh > n.CriticalEnterHigh {
+		n.CriticalExitHigh = n.CriticalEnterHigh
+	}
+	if n.CriticalExitLow < n.CriticalEnterLow {
+		n.CriticalExitLow = n.CriticalEnterLow
+	}
+
+	return n
+}
+
+func resolveEmotionAnimation(emotion string, level emotionLevel) (string, []string) {
+	specific, ok := emotionAnimationKeyMap[emotion]
+	if !ok {
+		specific = ""
+	}
+
+	levelKey, ok := emotionLevelAnimationKeyMap[level]
+	if !ok {
+		levelKey = ""
+	}
+
+	hints := make([]string, 0, 3)
+	if specific != "" {
+		hints = append(hints, specific)
+	}
+	if levelKey != "" && levelKey != specific {
+		hints = append(hints, levelKey)
+	}
+	hints = append(hints, defaultEmotionAnimation)
+
+	preferred := defaultEmotionAnimation
+	if specific != "" {
+		preferred = specific
+	} else if levelKey != "" {
+		preferred = levelKey
+	}
+
+	return preferred, hints
 }
 
 // abs 取绝对值
