@@ -123,6 +123,34 @@ function isPetWsUrl(wsUrl: string): boolean {
   return wsUrl.includes('/pet/ws') || /:8080\/ws(\?|$)/.test(wsUrl)
 }
 
+function decodeEscapedUnicode(value: string): string {
+  if (!/\\u[0-9a-fA-F]{4}/.test(value)) {
+    return value
+  }
+  try {
+    const escaped = value
+      .replace(/\\/g, '\\\\')
+      .replace(/"/g, '\\"')
+      .replace(/\r/g, '\\r')
+      .replace(/\n/g, '\\n')
+    return JSON.parse(`"${escaped}"`) as string
+  } catch {
+    return value
+  }
+}
+
+function normalizeIncomingText(value: string): string {
+  let text = typeof value === 'string' ? value : ''
+  if (!text) {
+    return ''
+  }
+  text = text.trim()
+  if (text.startsWith('"') && text.endsWith('"')) {
+    text = text.slice(1, -1)
+  }
+  return decodeEscapedUnicode(text)
+}
+
 export function usePicoClaw(apiBaseUrl: string, callbacks?: PicoCallbacks) {
   const [isConnected, setIsConnected] = useState(false)
   const [isConnecting, setIsConnecting] = useState(false)
@@ -332,9 +360,7 @@ export function usePicoClaw(apiBaseUrl: string, callbacks?: PicoCallbacks) {
 
         if (typeof text === 'string') {
           text = text.replace(/\{[^}]*\}/g, '').trim()
-          if (text.startsWith('"') && text.endsWith('"')) {
-            text = text.slice(1, -1)
-          }
+          text = normalizeIncomingText(text)
         }
 
         handlersRef.current['ai_chat']?.({
@@ -363,7 +389,7 @@ export function usePicoClaw(apiBaseUrl: string, callbacks?: PicoCallbacks) {
 
     if (msg.type === 'message.create' || msg.type === 'message.update') {
       const payload = msg.payload || {}
-      const text = typeof payload.content === 'string' ? payload.content : ''
+      const text = normalizeIncomingText(typeof payload.content === 'string' ? payload.content : '')
       if (!text.trim()) {
         return
       }
@@ -449,6 +475,7 @@ export function usePicoClaw(apiBaseUrl: string, callbacks?: PicoCallbacks) {
                   const maybe = payload as { text?: string; error?: string; message?: string }
                   text = maybe.text || maybe.error || maybe.message || ''
                 }
+                text = normalizeIncomingText(text)
                 if (text) {
                   handlersRef.current['ai_chat']?.({
                     text,

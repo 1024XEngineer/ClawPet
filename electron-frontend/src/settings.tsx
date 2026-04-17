@@ -170,6 +170,28 @@ function parseMaybeJSON<T>(raw: unknown): T | null {
   return raw as T
 }
 
+function mergeFinalText(streamed: string, finalChunk?: string) {
+  const streamText = streamed || ''
+  const finalText = finalChunk || ''
+
+  if (!streamText) {
+    return finalText.trim()
+  }
+  if (!finalText) {
+    return streamText.trim()
+  }
+  if (streamText === finalText) {
+    return finalText.trim()
+  }
+  if (streamText.includes(finalText)) {
+    return streamText.trim()
+  }
+  if (finalText.includes(streamText)) {
+    return finalText.trim()
+  }
+  return `${streamText}${finalText}`.trim()
+}
+
 export default function PetClawApp() {
   const [page, setPage] = useState<PageType>('chat')
   const [menu, setMenu] = useState<MainMenu>('chat')
@@ -291,7 +313,7 @@ export default function PetClawApp() {
       clearResponseTimeout()
 
       if (data.is_final) {
-        const text = chatRef.current
+        const text = mergeFinalText(chatRef.current, data.text)
         chatRef.current = ''
         setStreamingText('')
         if (text) {
