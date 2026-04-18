@@ -1,7 +1,7 @@
 # Pet Channel API 接口文档
 
-> 版本：v2.3  
-> 日期：2026-04-16  
+> 版本：v2.4  
+> 日期：2026-04-17  
 > 协议：WebSocket + JSON
 
 ---
@@ -1112,6 +1112,253 @@ audio.play();
 
 ---
 
+### 4.17 cron_add - 添加定时任务
+
+添加一个新的定时任务。任务触发时会通过 pet channel 发送消息，如果 `voice_enabled` 启用则同时触发语音合成。
+
+**请求**：
+
+```json
+{
+  "action": "cron_add",
+  "data": {
+    "name": "开会提醒",
+    "message": "10分钟后要开会了",
+    "at_seconds": 600
+  }
+}
+```
+
+**响应**：
+
+```json
+{
+  "status": "ok",
+  "action": "cron_add",
+  "data": {
+    "job_id": "abc123def456",
+    "name": "开会提醒"
+  }
+}
+```
+
+**字段说明**：
+
+| 字段 | 类型 | 必填 | 说明 |
+|------|------|------|------|
+| name | string | 是 | 任务名称 |
+| message | string | 是 | 触发时发送的消息内容 |
+| at_seconds | int | 否 | 一次性任务：从现在起多少秒后触发（与 every_seconds/cron_expr 互斥） |
+| every_seconds | int | 否 | 周期性任务：每多少秒执行一次（与 at_seconds/cron_expr 互斥） |
+| cron_expr | string | 否 | Cron 表达式：如 `"0 9 * * *"` 表示每天 9 点执行（与 at_seconds/every_seconds 互斥） |
+
+**任务类型说明**：
+
+| 类型 | 字段 | 示例 | 说明 |
+|------|------|------|------|
+| 一次性 | `at_seconds` | `600` | 600 秒后执行一次，然后自动删除 |
+| 周期性 | `every_seconds` | `3600` | 每 3600 秒（1 小时）执行一次 |
+| Cron | `cron_expr` | `"0 9 * * *"` | 每天 9:00 执行 |
+
+---
+
+### 4.18 cron_list - 列出定时任务
+
+获取所有定时任务列表。
+
+**请求**：
+
+```json
+{
+  "action": "cron_list",
+  "data": {
+    "include_disabled": false
+  }
+}
+```
+
+**响应**：
+
+```json
+{
+  "status": "ok",
+  "action": "cron_list",
+  "data": {
+    "jobs": [
+      {
+        "id": "abc123def456",
+        "name": "开会提醒",
+        "enabled": true,
+        "schedule_kind": "at",
+        "at_ms": 1713001234567,
+        "message": "10分钟后要开会了",
+        "channel": "pet",
+        "to": "default",
+        "next_run_at_ms": 1713001234567,
+        "last_run_at_ms": null,
+        "last_status": "",
+        "created_at_ms": 1713000634567
+      },
+      {
+        "id": "xyz789ghi012",
+        "name": "每小时提醒",
+        "enabled": true,
+        "schedule_kind": "every",
+        "every_ms": 3600000,
+        "message": "站起来活动一下吧",
+        "channel": "pet",
+        "to": "default",
+        "next_run_at_ms": 1713004234567,
+        "last_run_at_ms": 1713000634567,
+        "last_status": "ok",
+        "created_at_ms": 1713000634567
+      }
+    ]
+  }
+}
+```
+
+**字段说明**：
+
+| 字段 | 类型 | 必填 | 说明 |
+|------|------|------|------|
+| include_disabled | bool | 否 | 是否包含已禁用的任务，默认 false |
+
+**响应字段说明**：
+
+| 字段 | 类型 | 说明 |
+|------|------|------|
+| jobs | array | 任务列表 |
+| jobs[].id | string | 任务ID |
+| jobs[].name | string | 任务名称 |
+| jobs[].enabled | bool | 是否启用 |
+| jobs[].schedule_kind | string | 调度类型：`at`(一次性) / `every`(周期性) / `cron`(Cron 表达式) |
+| jobs[].at_ms | int | 一次性任务触发时间戳（毫秒） |
+| jobs[].every_ms | int | 周期性任务间隔（毫秒） |
+| jobs[].cron_expr | string | Cron 表达式 |
+| jobs[].message | string | 触发时发送的消息 |
+| jobs[].channel | string | 目标渠道（通常为 `pet`） |
+| jobs[].to | string | 目标接收者（session ID） |
+| jobs[].next_run_at_ms | int | 下次触发时间戳（毫秒） |
+| jobs[].last_run_at_ms | int | 上次触发时间戳（毫秒） |
+| jobs[].last_status | string | 上次执行状态：`ok` / `error` |
+| jobs[].created_at_ms | int | 创建时间戳（毫秒） |
+
+---
+
+### 4.19 cron_remove - 删除定时任务
+
+删除指定的定时任务。
+
+**请求**：
+
+```json
+{
+  "action": "cron_remove",
+  "data": {
+    "job_id": "abc123def456"
+  }
+}
+```
+
+**响应**：
+
+```json
+{
+  "status": "ok",
+  "action": "cron_remove",
+  "data": {
+    "job_id": "abc123def456"
+  }
+}
+```
+
+**字段说明**：
+
+| 字段 | 类型 | 必填 | 说明 |
+|------|------|------|------|
+| job_id | string | 是 | 要删除的任务ID |
+
+**错误**：`job xxx not found` - 任务不存在
+
+---
+
+### 4.20 cron_enable - 启用定时任务
+
+启用指定的定时任务。
+
+**请求**：
+
+```json
+{
+  "action": "cron_enable",
+  "data": {
+    "job_id": "abc123def456"
+  }
+}
+```
+
+**响应**：
+
+```json
+{
+  "status": "ok",
+  "action": "cron_enable",
+  "data": {
+    "job_id": "abc123def456",
+    "enabled": true
+  }
+}
+```
+
+**字段说明**：
+
+| 字段 | 类型 | 必填 | 说明 |
+|------|------|------|------|
+| job_id | string | 是 | 要启用的任务ID |
+
+**错误**：`job xxx not found` - 任务不存在
+
+---
+
+### 4.21 cron_disable - 禁用定时任务
+
+禁用指定的定时任务。
+
+**请求**：
+
+```json
+{
+  "action": "cron_disable",
+  "data": {
+    "job_id": "abc123def456"
+  }
+}
+```
+
+**响应**：
+
+```json
+{
+  "status": "ok",
+  "action": "cron_disable",
+  "data": {
+    "job_id": "abc123def456",
+    "enabled": false
+  }
+}
+```
+
+**字段说明**：
+
+| 字段 | 类型 | 必填 | 说明 |
+|------|------|------|------|
+| job_id | string | 是 | 要禁用的任务ID |
+
+**错误**：`job xxx not found` - 任务不存在
+
+---
+
 ## 五、错误码
 
 ### 5.1 WebSocket 错误 (status: error)
@@ -1130,6 +1377,12 @@ audio.play();
 | `model is required` | 模型标识必填 | 添加模型时缺少 model 字段 |
 | `model not found` | 模型不存在 | 要更新/删除/设置的模型不存在 |
 | `cannot set virtual model as default` | 不能设虚拟模型为默认 | 虚拟模型由多 key 展开生成，不能设为默认 |
+| `cron service not initialized` | Cron 服务未初始化 | 服务未正确初始化 |
+| `name is required` | 任务名称必填 | 添加任务时缺少 name 字段 |
+| `message is required` | 消息内容必填 | 添加任务时缺少 message 字段 |
+| `one of at_seconds, every_seconds, or cron_expr is required` | 调度参数必填 | 需要指定 at_seconds、every_seconds 或 cron_expr 之一 |
+| `job_id is required` | 任务ID必填 | 操作任务时缺少 job_id 字段 |
+| `job xxx not found` | 任务不存在 | 要操作的任务不存在 |
 
 ### 5.2 错误响应示例
 
@@ -1301,6 +1554,11 @@ async def send_chat(ws, text):
 | model_update | 更新模型 | 修改已有模型配置 |
 | model_delete | 删除模型 | 删除模型配置 |
 | model_set_default | 设置默认模型 | 将某模型设为默认 |
+| cron_add | 添加定时任务 | 创建新的定时任务 |
+| cron_list | 列出定时任务 | 查看所有定时任务 |
+| cron_remove | 删除定时任务 | 删除指定的定时任务 |
+| cron_enable | 启用定时任务 | 启用指定的定时任务 |
+| cron_disable | 禁用定时任务 | 禁用指定的定时任务 |
 
 ### 7.2 push_type 快速索引
 
