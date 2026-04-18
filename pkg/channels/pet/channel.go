@@ -471,9 +471,6 @@ func (c *PetChannel) handleRequest(pc *petConn, req Request) {
 
 // writeJSON 发送JSON到客户端
 func (pc *petConn) writeJSON(v any) error {
-	if pc.closed {
-		return fmt.Errorf("connection closed")
-	}
 	pc.writeMu.Lock()
 	defer pc.writeMu.Unlock()
 	if pc.closed {
@@ -488,9 +485,6 @@ func (pc *petConn) writeJSON(v any) error {
 }
 
 func (pc *petConn) writePing() error {
-	if pc.closed {
-		return fmt.Errorf("connection closed")
-	}
 	pc.writeMu.Lock()
 	defer pc.writeMu.Unlock()
 	if pc.closed {
