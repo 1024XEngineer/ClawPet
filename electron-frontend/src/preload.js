@@ -7,8 +7,12 @@ contextBridge.exposeInMainWorld('electronAPI', {
   closeSettings: () => ipcRenderer.send('close-settings'),
   sendSettingsChange: (settings) => ipcRenderer.send('settings-changed', settings),
   sendChatHistory: (history) => ipcRenderer.send('chat-history', history),
-  showBubble: (text, emotion, audio) => {
-    ipcRenderer.send('show-bubble', { text, emotion, audio })
+  showBubble: (payloadOrText, emotion, audio) => {
+    const payload =
+      payloadOrText && typeof payloadOrText === 'object'
+        ? payloadOrText
+        : { text: payloadOrText ?? null, emotion, audio }
+    ipcRenderer.send('show-bubble', payload)
   },
   sendConnectionAlive: () => ipcRenderer.send('connection-alive'),
   onSettingsUpdate: (callback) => {

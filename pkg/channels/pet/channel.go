@@ -405,8 +405,16 @@ func (c *PetChannel) handleWebSocket(w http.ResponseWriter, r *http.Request) {
 
 // readLoop 读取客户端消息
 func (c *PetChannel) readLoop(pc *petConn) {
+	pingDone := make(chan struct{})
+
 	defer func() {
+		close(pingDone)
 		c.service.UnregisterSession(pc.id)
+
+		pc.writeMu.Lock()
+		pc.closed = true
+		pc.writeMu.Unlock()
+
 		pc.conn.Close()
 		c.connsMu.Lock()
 		delete(c.connections, pc.id)
@@ -427,8 +435,13 @@ func (c *PetChannel) readLoop(pc *petConn) {
 			select {
 			case <-c.ctx.Done():
 				return
+			case <-pingDone:
+				return
 			case <-ticker.C:
-				pc.conn.WriteMessage(websocket.PingMessage, nil)
+				if err := pc.writePing(); err != nil {
+					logger.Debugf("pet: ping failed, conn_id=%s, err=%v", pc.id, err)
+					return
+				}
 			}
 		}
 	}()
@@ -436,6 +449,7 @@ func (c *PetChannel) readLoop(pc *petConn) {
 	for {
 		_, rawMsg, err := pc.conn.ReadMessage()
 		if err != nil {
+			logger.Debugf("pet: readLoop exit, conn_id=%s, err=%v", pc.id, err)
 			return
 		}
 
@@ -462,11 +476,27 @@ func (pc *petConn) writeJSON(v any) error {
 	}
 	pc.writeMu.Lock()
 	defer pc.writeMu.Unlock()
+	if pc.closed {
+		return fmt.Errorf("connection closed")
+	}
+	_ = pc.conn.SetWriteDeadline(time.Now().Add(10 * time.Second))
 	err := pc.conn.WriteJSON(v)
 	if err != nil {
 		logger.Warnf("pet: writeJSON failed conn_id=%s, err=%v", pc.id, err)
 	}
 	return err
+}
+
+func (pc *petConn) writePing() error {
+	if pc.closed {
+		return fmt.Errorf("connection closed")
+	}
+	pc.writeMu.Lock()
+	defer pc.writeMu.Unlock()
+	if pc.closed {
+		return fmt.Errorf("connection closed")
+	}
+	return pc.conn.WriteControl(websocket.PingMessage, nil, time.Now().Add(10*time.Second))
 }
 
 // generateConnID 生成连接ID

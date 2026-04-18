@@ -1,4 +1,4 @@
-﻿const { app, BrowserWindow, ipcMain, screen } = require('electron');
+const { app, BrowserWindow, ipcMain, screen } = require('electron');
 const path = require('path');
 const os = require('os');
 const fs = require('fs');
@@ -6,11 +6,13 @@ const fs = require('fs');
 let petWindow = null;
 let settingsWindow = null;
 
-// 璁剧疆鐢ㄦ埛鏁版嵁鐩綍浠ヨВ鍐虫潈闄愰棶棰?
 const userDataPath = path.join(os.homedir(), '.goclaw');
 app.setPath('userData', userDataPath);
 
-// 鍒涘缓鏃ュ織鏂囦欢
+if (!fs.existsSync(userDataPath)) {
+  fs.mkdirSync(userDataPath, { recursive: true });
+}
+
 const logFilePath = path.join(userDataPath, 'logs.txt');
 const logStream = fs.createWriteStream(logFilePath, { flags: 'a' });
 
@@ -23,28 +25,25 @@ function logToFile(message) {
 
 logToFile('Electron application started');
 
-const rendererBaseUrl = (process.env.ELECTRON_RENDERER_URL || 'http://localhost:5173').replace(/\/+$/, '');
+const rendererBaseUrl = (process.env.ELECTRON_RENDERER_URL || 'http://localhost:5173').trim().replace(/\/+$/, '');
 const shouldOpenDevTools = process.env.ELECTRON_OPEN_DEVTOOLS === '1';
 
 function createPetWindow() {
-  // 鑾峰彇灞忓箷鍙充笅瑙掍綅锟?
   const { width, height } = screen.getPrimaryDisplay().workAreaSize;
-  
-  // 妗屽疇绐楀彛澶у皬
   const petWidth = 280;
   const petHeight = 380;
-  
+
   petWindow = new BrowserWindow({
     width: petWidth,
     height: petHeight,
     x: width - petWidth - 20,
     y: height - petHeight - 60,
-    frame: false,           // 鏃犺竟锟?
-    transparent: true,      // 閫忔槑鑳屾櫙
-    alwaysOnTop: true,     // 缃《
-    resizable: false,       // 涓嶅彲璋冩暣澶у皬
-    skipTaskbar: true,     // 涓嶆樉绀哄湪浠诲姟锟?
-    show: false,           // 鍔犺浇瀹屾垚鍚庢樉锟?
+    frame: false,
+    transparent: true,
+    alwaysOnTop: true,
+    resizable: false,
+    skipTaskbar: true,
+    show: false,
     webPreferences: {
       nodeIntegration: false,
       contextIsolation: true,
@@ -52,8 +51,10 @@ function createPetWindow() {
     }
   });
 
-  petWindow.loadURL(rendererBaseUrl);
-  
+  petWindow.loadURL(rendererBaseUrl).catch((err) => {
+    logToFile(`[PET WINDOW] loadURL failed: ${String(err)}`);
+  });
+
   petWindow.once('ready-to-show', () => {
     petWindow.show();
   });
@@ -65,7 +66,11 @@ function createPetWindow() {
 }
 
 function createSettingsWindow() {
-  if (settingsWindow) {
+  if (settingsWindow && !settingsWindow.isDestroyed()) {
+    if (settingsWindow.isMinimized()) {
+      settingsWindow.restore();
+    }
+    settingsWindow.show();
     settingsWindow.focus();
     return;
   }
@@ -73,7 +78,7 @@ function createSettingsWindow() {
   const { width, height } = screen.getPrimaryDisplay().workAreaSize;
   const settingsWidth = Math.round(width * 0.7);
   const settingsHeight = Math.round(height * 0.7);
-  
+
   settingsWindow = new BrowserWindow({
     width: settingsWidth,
     height: settingsHeight,
@@ -81,7 +86,8 @@ function createSettingsWindow() {
     minHeight: 400,
     show: false,
     frame: false,
-    transparent: true,
+    transparent: false,
+    backgroundColor: '#111111',
     alwaysOnTop: false,
     autoHideMenuBar: true,
     webPreferences: {
@@ -91,10 +97,24 @@ function createSettingsWindow() {
     }
   });
 
-  settingsWindow.loadURL(`${rendererBaseUrl}/settings.html`);
+  const settingsUrl = `${rendererBaseUrl}/settings.html`;
+  logToFile(`[SETTINGS WINDOW] opening ${settingsUrl}`);
+
+  settingsWindow.webContents.on('did-fail-load', (_event, code, desc, url) => {
+    logToFile(`[SETTINGS WINDOW] did-fail-load code=${code} desc=${desc} url=${url}`);
+  });
+
+  settingsWindow.webContents.on('did-finish-load', () => {
+    logToFile('[SETTINGS WINDOW] did-finish-load');
+  });
+
+  settingsWindow.loadURL(settingsUrl).catch((err) => {
+    logToFile(`[SETTINGS WINDOW] loadURL failed: ${String(err)}`);
+  });
 
   settingsWindow.once('ready-to-show', () => {
     settingsWindow.show();
+    settingsWindow.focus();
     if (shouldOpenDevTools) {
       settingsWindow.webContents.openDevTools({ mode: 'detach' });
     }
@@ -106,18 +126,18 @@ function createSettingsWindow() {
 }
 
 ipcMain.on('open-settings', () => {
+  logToFile('[IPC] open-settings');
   createSettingsWindow();
 });
 
-// 鎺ユ敹鏉ヨ嚜娓叉煋杩涚▼鐨勬棩蹇?
-ipcMain.on('renderer-log', (event, { level, args }) => {
-  const message = args.map(arg => {
+ipcMain.on('renderer-log', (_event, { level, args }) => {
+  const message = args.map((arg) => {
     if (typeof arg === 'object') {
       return JSON.stringify(arg);
     }
     return String(arg);
   }).join(' ');
-  
+
   if (level === 'error') {
     logToFile(`[RENDERER ERROR] ${message}`);
   } else {
@@ -126,11 +146,13 @@ ipcMain.on('renderer-log', (event, { level, args }) => {
 });
 
 ipcMain.on('minimize-settings', () => {
-  if (settingsWindow) settingsWindow.minimize();
+  if (settingsWindow && !settingsWindow.isDestroyed()) {
+    settingsWindow.minimize();
+  }
 });
 
 ipcMain.on('maximize-settings', () => {
-  if (settingsWindow) {
+  if (settingsWindow && !settingsWindow.isDestroyed()) {
     if (settingsWindow.isMaximized()) {
       settingsWindow.unmaximize();
     } else {
@@ -140,22 +162,24 @@ ipcMain.on('maximize-settings', () => {
 });
 
 ipcMain.on('close-settings', () => {
-  if (settingsWindow) settingsWindow.close();
+  if (settingsWindow && !settingsWindow.isDestroyed()) {
+    settingsWindow.close();
+  }
 });
 
-ipcMain.on('settings-changed', (event, settings) => {
+ipcMain.on('settings-changed', (_event, settings) => {
   if (petWindow && !petWindow.isDestroyed()) {
     petWindow.webContents.send('settings-updated', settings);
   }
 });
 
-ipcMain.on('chat-history', (event, history) => {
+ipcMain.on('chat-history', (_event, history) => {
   if (settingsWindow && !settingsWindow.isDestroyed()) {
     settingsWindow.webContents.send('chat-history-updated', history);
   }
 });
 
-ipcMain.on('show-bubble', (event, data) => {
+ipcMain.on('show-bubble', (_event, data) => {
   if (petWindow && !petWindow.isDestroyed()) {
     petWindow.webContents.send('bubble-show', data);
   }
