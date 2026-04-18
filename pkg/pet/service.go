@@ -4,11 +4,13 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"path/filepath"
 	"sync"
 	"time"
 
 	"github.com/sipeed/picoclaw/pkg/bus"
 	"github.com/sipeed/picoclaw/pkg/config"
+	"github.com/sipeed/picoclaw/pkg/cron"
 	"github.com/sipeed/picoclaw/pkg/logger"
 	"github.com/sipeed/picoclaw/pkg/pet/action"
 	"github.com/sipeed/picoclaw/pkg/pet/characters"
@@ -36,6 +38,7 @@ type PetService struct {
 	conversationStore  *compression.ConversationStore
 	compressionSvc     *compression.CompressionService
 	modelConfigManager *modelconfig.Manager
+	cronService        *cron.CronService
 
 	connSessions map[string]string
 
@@ -153,6 +156,12 @@ func NewPetService(msgBus *bus.MessageBus, cfg PetServiceConfig) (*PetService, e
 		if cfg.ConfigPath != "" {
 			s.modelConfigManager = modelconfig.NewManager(cfg.ConfigPath)
 		}
+
+		cronStorePath := filepath.Join(workspacePath, "cron", "jobs.json")
+		s.cronService = cron.NewCronService(cronStorePath, nil)
+		logger.DebugCF("pet", "PetService: cron service initialized, store=", map[string]any{
+			"store_path": cronStorePath,
+		})
 	}
 
 	return s, nil
@@ -164,14 +173,14 @@ func (s *PetService) Start() {
 	if s.compressionSvc != nil {
 		s.compressionSvc.Start()
 	}
-	fmt.Println("pet: PetService started, emotion decay ticker running")
+	logger.DebugCF("pet", "PetService: PetService started, emotion decay ticker running", nil)
 }
 
 func (s *PetService) runEmotionDecay() {
 	for {
 		select {
 		case <-s.ctx.Done():
-			fmt.Println("pet: emotion decay ticker stopped")
+			logger.DebugCF("pet", "PetService: emotion decay ticker stopped", nil)
 			return
 		case <-s.decayTicker.C:
 			if char := s.charManager.GetCurrent(); char != nil {
@@ -411,6 +420,16 @@ func (s *PetService) HandleRequest(connID string, req Request) error {
 		return s.handleModelDelete(sessionID, req)
 	case ActionModelSetDefault:
 		return s.handleModelSetDefault(sessionID, req)
+	case ActionCronAdd:
+		return s.handleCronAdd(sessionID, req)
+	case ActionCronList:
+		return s.handleCronList(sessionID, req)
+	case ActionCronRemove:
+		return s.handleCronRemove(sessionID, req)
+	case ActionCronEnable:
+		return s.handleCronEnable(sessionID, req)
+	case ActionCronDisable:
+		return s.handleCronDisable(sessionID, req)
 	default:
 		return s.sendError(sessionID, req.Action, fmt.Sprintf("unknown action: %s", req.Action))
 	}
@@ -962,4 +981,150 @@ func GetEmotionDescription(emotion string, score int) string {
 
 	idx := scoreToIndex(score)
 	return descriptions[idx]
+}
+
+func (s *PetService) handleCronAdd(sessionID string, req Request) error {
+	if s.cronService == nil {
+		return s.sendError(sessionID, req.Action, "cron service not initialized")
+	}
+
+	var r CronAddRequest
+	if err := json.Unmarshal(req.Data, &r); err != nil {
+		return s.sendError(sessionID, req.Action, "invalid cron add data")
+	}
+
+	if r.Name == "" {
+		return s.sendError(sessionID, req.Action, "name is required")
+	}
+	if r.Message == "" {
+		return s.sendError(sessionID, req.Action, "message is required")
+	}
+
+	var schedule cron.CronSchedule
+	if r.AtSeconds > 0 {
+		atMS := time.Now().UnixMilli() + r.AtSeconds*1000
+		schedule = cron.CronSchedule{Kind: "at", AtMS: &atMS}
+	} else if r.EverySeconds > 0 {
+		everyMS := r.EverySeconds * 1000
+		schedule = cron.CronSchedule{Kind: "every", EveryMS: &everyMS}
+	} else if r.CronExpr != "" {
+		schedule = cron.CronSchedule{Kind: "cron", Expr: r.CronExpr}
+	} else {
+		return s.sendError(sessionID, req.Action, "one of at_seconds, every_seconds, or cron_expr is required")
+	}
+
+	job, err := s.cronService.AddJob(r.Name, schedule, r.Message, "pet", sessionID)
+	if err != nil {
+		return s.sendError(sessionID, req.Action, fmt.Sprintf("failed to add cron job: %v", err))
+	}
+
+	return s.sendResponse(sessionID, req.Action, CronAddResponse{
+		JobID: job.ID,
+		Name:  job.Name,
+	})
+}
+
+func (s *PetService) handleCronList(sessionID string, req Request) error {
+	if s.cronService == nil {
+		return s.sendError(sessionID, req.Action, "cron service not initialized")
+	}
+
+	// 重新加载 jobs.json，获取最新数据（包括 picoclaw 创建的任务）
+	if err := s.cronService.Load(); err != nil {
+		return s.sendError(sessionID, req.Action, fmt.Sprintf("failed to load cron jobs: %v", err))
+	}
+
+	var r CronListRequest
+	if err := json.Unmarshal(req.Data, &r); err != nil {
+		r = CronListRequest{}
+	}
+
+	jobs := s.cronService.ListJobs(r.IncludeDisabled)
+
+	var jobInfos []CronJobInfo
+	for _, job := range jobs {
+		jobInfos = append(jobInfos, CronJobInfo{
+			ID:           job.ID,
+			Name:         job.Name,
+			Enabled:      job.Enabled,
+			ScheduleKind: job.Schedule.Kind,
+			EveryMS:      job.Schedule.EveryMS,
+			CronExpr:     job.Schedule.Expr,
+			AtMS:         job.Schedule.AtMS,
+			Message:      job.Payload.Message,
+			Channel:      job.Payload.Channel,
+			To:           job.Payload.To,
+			NextRunAtMS:  job.State.NextRunAtMS,
+			LastRunAtMS:  job.State.LastRunAtMS,
+			LastStatus:   job.State.LastStatus,
+			CreatedAtMS:  job.CreatedAtMS,
+		})
+	}
+
+	return s.sendResponse(sessionID, req.Action, CronListResponse{Jobs: jobInfos})
+}
+
+func (s *PetService) handleCronRemove(sessionID string, req Request) error {
+	if s.cronService == nil {
+		return s.sendError(sessionID, req.Action, "cron service not initialized")
+	}
+
+	var r CronRemoveRequest
+	if err := json.Unmarshal(req.Data, &r); err != nil {
+		return s.sendError(sessionID, req.Action, "invalid cron remove data")
+	}
+
+	if r.JobID == "" {
+		return s.sendError(sessionID, req.Action, "job_id is required")
+	}
+
+	if !s.cronService.RemoveJob(r.JobID) {
+		return s.sendError(sessionID, req.Action, fmt.Sprintf("job %s not found", r.JobID))
+	}
+
+	return s.sendResponse(sessionID, req.Action, map[string]string{"job_id": r.JobID})
+}
+
+func (s *PetService) handleCronEnable(sessionID string, req Request) error {
+	if s.cronService == nil {
+		return s.sendError(sessionID, req.Action, "cron service not initialized")
+	}
+
+	var r CronEnableRequest
+	if err := json.Unmarshal(req.Data, &r); err != nil {
+		return s.sendError(sessionID, req.Action, "invalid cron enable data")
+	}
+
+	if r.JobID == "" {
+		return s.sendError(sessionID, req.Action, "job_id is required")
+	}
+
+	job := s.cronService.EnableJob(r.JobID, true)
+	if job == nil {
+		return s.sendError(sessionID, req.Action, fmt.Sprintf("job %s not found", r.JobID))
+	}
+
+	return s.sendResponse(sessionID, req.Action, map[string]any{"job_id": job.ID, "enabled": job.Enabled})
+}
+
+func (s *PetService) handleCronDisable(sessionID string, req Request) error {
+	if s.cronService == nil {
+		return s.sendError(sessionID, req.Action, "cron service not initialized")
+	}
+
+	var r CronEnableRequest
+	if err := json.Unmarshal(req.Data, &r); err != nil {
+		return s.sendError(sessionID, req.Action, "invalid cron disable data")
+	}
+
+	if r.JobID == "" {
+		return s.sendError(sessionID, req.Action, "job_id is required")
+	}
+
+	job := s.cronService.EnableJob(r.JobID, false)
+	if job == nil {
+		return s.sendError(sessionID, req.Action, fmt.Sprintf("job %s not found", r.JobID))
+	}
+
+	return s.sendResponse(sessionID, req.Action, map[string]any{"job_id": job.ID, "enabled": job.Enabled})
 }

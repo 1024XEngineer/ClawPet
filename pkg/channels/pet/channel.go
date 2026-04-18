@@ -211,6 +211,21 @@ func (c *PetChannel) Send(ctx context.Context, msg bus.OutboundMessage) ([]strin
 	}
 	logger.Infof("pet: Send, msg=%v", msg)
 	c.sendToClient(msg.ChatID, msg.Content)
+
+	if c.voiceSynthesizer != nil {
+		appConfig := c.service.AppConfig()
+		if appConfig != nil && appConfig.VoiceEnabled {
+			emotion := ""
+			if char := c.service.CharManager().GetCurrent(); char != nil {
+				emotion, _ = char.GetEmotionEngine().GetDominantEmotion()
+			}
+			pureText := parsePureText(msg.Content)
+			if pureText != "" {
+				go c.voiceSynthesizer.ParseAndSynthesize(msg.ChatID, 0, pureText, emotion)
+			}
+		}
+	}
+
 	return nil, nil
 }
 

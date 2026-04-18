@@ -35,6 +35,11 @@ const (
 	ActionModelUpdate      = "model_update"      // 更新模型
 	ActionModelDelete      = "model_delete"      // 删除模型
 	ActionModelSetDefault  = "model_set_default" // 设置默认模型
+	ActionCronAdd          = "cron_add"          // 添加定时任务
+	ActionCronList         = "cron_list"         // 列出定时任务
+	ActionCronRemove       = "cron_remove"       // 删除定时任务
+	ActionCronEnable       = "cron_enable"       // 启用定时任务
+	ActionCronDisable      = "cron_disable"      // 禁用定时任务
 )
 
 // =============================================================================
@@ -182,6 +187,64 @@ type ConversationListResponse struct {
 	Conversations []ConversationItem `json:"conversations"` // 对话列表
 	Total         int                `json:"total"`         // 总数量
 	HasMore       bool               `json:"has_more"`      // 是否有更多
+}
+
+// =============================================================================
+// Cron 定时任务请求和响应定义
+// =============================================================================
+
+// CronAddRequest 添加定时任务请求数据
+type CronAddRequest struct {
+	Name         string `json:"name"`                    // 任务名称
+	Message      string `json:"message"`                 // 触发时发送的消息
+	EverySeconds int64  `json:"every_seconds,omitempty"` // 周期性任务间隔（秒）
+	CronExpr     string `json:"cron_expr,omitempty"`     // Cron 表达式
+	AtSeconds    int64  `json:"at_seconds,omitempty"`    // 一次性任务延迟（秒，从现在起）
+}
+
+// CronListRequest 列出定时任务请求数据
+type CronListRequest struct {
+	IncludeDisabled bool `json:"include_disabled"` // 是否包含已禁用的任务
+}
+
+// CronRemoveRequest 删除定时任务请求数据
+type CronRemoveRequest struct {
+	JobID string `json:"job_id"` // 任务ID
+}
+
+// CronEnableRequest 启用/禁用定时任务请求数据
+type CronEnableRequest struct {
+	JobID   string `json:"job_id"`  // 任务ID
+	Enabled bool   `json:"enabled"` // 是否启用
+}
+
+// CronJobInfo 定时任务信息（用于响应）
+type CronJobInfo struct {
+	ID           string `json:"id"`                       // 任务ID
+	Name         string `json:"name"`                     // 任务名称
+	Enabled      bool   `json:"enabled"`                  // 是否启用
+	ScheduleKind string `json:"schedule_kind"`            // 调度类型: at, every, cron
+	EveryMS      *int64 `json:"every_ms,omitempty"`       // 周期（毫秒）
+	CronExpr     string `json:"cron_expr,omitempty"`      // Cron 表达式
+	AtMS         *int64 `json:"at_ms,omitempty"`          // 一次性触发时间戳
+	Message      string `json:"message"`                  // 触发时发送的消息
+	Channel      string `json:"channel"`                  // 目标渠道
+	To           string `json:"to"`                       // 目标接收者
+	NextRunAtMS  *int64 `json:"next_run_at_ms,omitempty"` // 下次触发时间戳
+	LastRunAtMS  *int64 `json:"last_run_at_ms,omitempty"` // 上次触发时间戳
+	LastStatus   string `json:"last_status,omitempty"`    // 上次执行状态
+	CreatedAtMS  int64  `json:"created_at_ms"`            // 创建时间戳
+}
+
+// CronListResponse 定时任务列表响应
+type CronListResponse struct {
+	Jobs []CronJobInfo `json:"jobs"` // 任务列表
+}
+
+// CronAddResponse 添加定时任务响应
+type CronAddResponse struct {
+	JobID string `json:"job_id"` // 新创建的任务ID
+	Name  string `json:"name"`   // 任务名称
 }
 
 // =============================================================================
