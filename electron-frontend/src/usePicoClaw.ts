@@ -426,6 +426,27 @@ export function usePicoClaw(apiBaseUrl: string, callbacks?: PicoCallbacks) {
 
     setIsConnecting(true)
 
+    const scheduleReconnect = () => {
+      if (!shouldReconnectRef.current) {
+        return
+      }
+      if (reconnectAttempts.current >= maxReconnectAttempts) {
+        return
+      }
+      if (reconnectTimeoutRef.current) {
+        clearTimeout(reconnectTimeoutRef.current)
+      }
+      const delay = Math.min(
+        1000 * Math.pow(2, reconnectAttempts.current),
+        30000,
+      )
+      console.log('[usePicoClaw] scheduling reconnect in', delay, 'ms')
+      reconnectTimeoutRef.current = setTimeout(() => {
+        reconnectAttempts.current += 1
+        connect()
+      }, delay)
+    }
+
     fetchTokenInfo().then((tokenInfo) => {
       console.log('[usePicoClaw] fetchTokenInfo result:', tokenInfo)
       if (!tokenInfo) {
@@ -433,6 +454,7 @@ export function usePicoClaw(apiBaseUrl: string, callbacks?: PicoCallbacks) {
         setIsConnecting(false)
         setIsConnected(false)
         callbacksRef.current?.onConnectionChange?.(false)
+        scheduleReconnect()
         return
       }
 
@@ -525,17 +547,7 @@ export function usePicoClaw(apiBaseUrl: string, callbacks?: PicoCallbacks) {
             return
           }
 
-          if (reconnectAttempts.current < maxReconnectAttempts) {
-            const delay = Math.min(
-              1000 * Math.pow(2, reconnectAttempts.current),
-              30000,
-            )
-            console.log('[usePicoClaw] scheduling reconnect in', delay, 'ms')
-            reconnectTimeoutRef.current = setTimeout(() => {
-              reconnectAttempts.current += 1
-              connect()
-            }, delay)
-          }
+          scheduleReconnect()
         }
 
         wsRef.current = ws
