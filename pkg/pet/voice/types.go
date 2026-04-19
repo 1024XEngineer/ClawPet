@@ -47,3 +47,14 @@ type StreamingTTS interface {
 	// Close 关闭TTS连接并释放资源
 	Close() error
 }
+
+// AudioSegment 语音片段，用于优先队列播放控制
+type AudioSegment struct {
+	Seq       int64  // 序号，按顺序播放
+	Text      string // 对应文本
+	AudioData []byte // 缓存的音频数据（合成完毕后填充）
+	Duration  int    // 时长（毫秒），从 AudioInfo.Length 获取
+	Ready     bool   // 是否合成完毕
+	Sent      bool   // 是否已发送
+	Error     string // 错误信息（如果有）
+}
