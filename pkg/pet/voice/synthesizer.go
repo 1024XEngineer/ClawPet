@@ -183,3 +183,73 @@ func ExtractPureText(content string) string {
 
 	return sb.String()
 }
+
+// SynthesizeToQueue 将文本片段加入队列并异步合成音频
+// 流程：
+//  1. 创建 AudioSegment 入队
+//  2. 异步调用 TTS 合成
+//  3. 合成完成后更新队列中对应片段的 AudioData 和 Duration
+//  4. 通知 audioReady channel
+func (s *Synthesizer) SynthesizeToQueue(sessionID string, chatID int64, text string, seq int64, queue *AudioQueue, audioReady chan<- int64) error {
+	// 创建片段并入队
+	seg := &AudioSegment{
+		Seq:   seq,
+		Text:  text,
+		Ready: false,
+		Sent:  false,
+	}
+
+	if err := queue.Enqueue(seg); err != nil {
+		return err
+	}
+
+	// 异步合成
+	go func() {
+		params := DefaultVoiceParams()
+
+		ch, err := s.provider.Synthesize(text, params)
+		if err != nil {
+			// 更新队列，标记错误
+			queue.UpdateSegment(seq, true, nil, 0, err.Error())
+			// 通知 audioReady
+			if audioReady != nil {
+				select {
+				case audioReady <- seq:
+				default:
+				}
+			}
+			return
+		}
+
+		var audioData []byte
+		var duration int
+
+		// 收集所有音频块
+		for chunk := range ch {
+			audioData = append(audioData, chunk.Data...)
+			if chunk.Info != nil {
+				duration = chunk.Info.Length
+			}
+		}
+
+		// 检查音频数据是否为空（无额度）
+		// if len(audioData) == 0 {
+		// 	queue.UpdateSegment(seq, true, nil, 0, "语音合成返回空，请检查一下相关语音合成模型的额度")
+		// } else {
+		// 	queue.UpdateSegment(seq, true, audioData, duration, "")
+		// }
+
+		// 暂时注释掉额度检查
+		queue.UpdateSegment(seq, true, audioData, duration, "")
+
+		// 通知 audioReady channel
+		if audioReady != nil {
+			select {
+			case audioReady <- seq:
+			default:
+			}
+		}
+	}()
+
+	return nil
+}
