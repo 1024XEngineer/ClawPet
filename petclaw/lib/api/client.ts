@@ -1,5 +1,6 @@
 import {
   API_ENDPOINTS,
+  cacheDirectGatewayBaseUrl,
   getApiBaseUrl,
   getDirectGatewayBaseUrl,
   getAuthRequestCredentials,
@@ -58,9 +59,14 @@ async function request<T>(
   return JSON.parse(text)
 }
 
-async function fetchDirectGatewayHealth(): Promise<{ uptime?: string } | null> {
+async function fetchDirectGatewayHealth(baseUrl?: string): Promise<{ uptime?: string } | null> {
+  const targetBase = (baseUrl || getDirectGatewayBaseUrl()).trim()
+  if (!targetBase) {
+    return null
+  }
+
   try {
-    const res = await fetch(`${getDirectGatewayBaseUrl()}/health`)
+    const res = await fetch(`${targetBase}/health`)
     if (!res.ok) {
       return null
     }
@@ -68,6 +74,16 @@ async function fetchDirectGatewayHealth(): Promise<{ uptime?: string } | null> {
   } catch {
     return null
   }
+}
+
+export interface GatewayStatus {
+  running: boolean
+  state: 'stopped' | 'starting' | 'running' | 'stopping' | 'restarting'
+  pid?: number
+  restartRequired: boolean
+  startAllowed?: boolean
+  startReason?: string
+  uptime?: string
 }
 
 // 认证 API
@@ -90,11 +106,12 @@ export const authApi = {
 
 // 网关 API
 export const gatewayApi = {
-  status: async () => {
+  status: async (): Promise<GatewayStatus> => {
     let raw:
       | {
           gateway_status?: 'stopped' | 'starting' | 'running' | 'stopping' | 'restarting' | 'error'
           pid?: number
+          gateway_base_url?: string
           gateway_restart_required?: boolean
           gateway_start_allowed?: boolean
           gateway_start_reason?: string
@@ -105,6 +122,7 @@ export const gatewayApi = {
       raw = await request<{
         gateway_status?: 'stopped' | 'starting' | 'running' | 'stopping' | 'restarting' | 'error'
         pid?: number
+        gateway_base_url?: string
         gateway_restart_required?: boolean
         gateway_start_allowed?: boolean
         gateway_start_reason?: string
@@ -125,7 +143,11 @@ export const gatewayApi = {
       }
     }
 
-    const direct = await fetchDirectGatewayHealth()
+    if (raw.gateway_base_url) {
+      cacheDirectGatewayBaseUrl(raw.gateway_base_url)
+    }
+
+    const direct = await fetchDirectGatewayHealth(raw.gateway_base_url)
     if (direct && raw.gateway_status !== 'running') {
       return {
         running: true,

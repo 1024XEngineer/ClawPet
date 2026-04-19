@@ -20,6 +20,10 @@ interface HealthStatusResponse {
   status?: string
 }
 
+interface GatewayStatusResponse {
+  gateway_base_url?: string
+}
+
 interface FetchJsonResult<T> {
   ok: boolean
   status?: number
@@ -129,6 +133,14 @@ function buildBaseCandidates(configuredBase: string): string[] {
   return unique(candidates)
 }
 
+function getLauncherApiBase(): string {
+  const fromElectron = window.electronAPI?.getBackendBaseUrl?.()
+  if (fromElectron && fromElectron.trim()) {
+    return trimTrailingSlash(fromElectron.trim())
+  }
+  return 'http://127.0.0.1:18800'
+}
+
 function isPetTokenInfo(info: { protocol?: string; ws_url?: string }): boolean {
   if (info.protocol === 'pet') {
     return true
@@ -231,7 +243,8 @@ export function usePicoClaw(apiBaseUrl: string, callbacks?: PicoCallbacks) {
   }, [apiBaseUrl])
 
   const fetchTokenInfo = useCallback(async (): Promise<PicoTokenInfo | null> => {
-    const bases = buildBaseCandidates(apiBaseRef.current)
+    const launcherApiBase = getLauncherApiBase()
+    let discoveredGatewayBase = ''
     const tried: string[] = []
 
     const tryFetchJSON = async <T,>(
@@ -255,6 +268,22 @@ export function usePicoClaw(apiBaseUrl: string, callbacks?: PicoCallbacks) {
         return { ok: false }
       }
     }
+
+    try {
+      const gatewayStatus = await tryFetchJSON<GatewayStatusResponse>(
+        joinUrl(launcherApiBase, '/api/gateway/status'),
+      )
+      const candidate = gatewayStatus.data?.gateway_base_url?.trim() || ''
+      if (gatewayStatus.ok && candidate) {
+        discoveredGatewayBase = trimTrailingSlash(candidate)
+      }
+    } catch {
+      // Ignore launcher discovery failures and continue with static candidates.
+    }
+
+    const bases = discoveredGatewayBase
+      ? unique([discoveredGatewayBase, ...buildBaseCandidates(apiBaseRef.current)])
+      : buildBaseCandidates(apiBaseRef.current)
 
     for (const base of bases) {
       const healthEndpoint = joinUrl(base, '/health')

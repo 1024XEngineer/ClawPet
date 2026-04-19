@@ -402,6 +402,83 @@ func TestGatewayStatusIncludesStartConditionWhenNotReady(t *testing.T) {
 	}
 }
 
+func TestHandleGatewayStartReusesAliveTrackedProcess(t *testing.T) {
+	resetGatewayTestState(t)
+
+	configPath := filepath.Join(t.TempDir(), "config.json")
+	cfg := config.DefaultConfig()
+	cfg.Agents.Defaults.ModelName = cfg.ModelList[0].ModelName
+	cfg.ModelList[0].SetAPIKey("test-key")
+	if err := config.SaveConfig(configPath, cfg); err != nil {
+		t.Fatalf("SaveConfig() error = %v", err)
+	}
+
+	h := NewHandler(configPath)
+	mux := http.NewServeMux()
+	h.RegisterRoutes(mux)
+
+	cmd := startLongRunningProcess(t)
+	t.Cleanup(func() {
+		if cmd.Process != nil {
+			_ = cmd.Process.Kill()
+		}
+		_ = cmd.Wait()
+	})
+
+	fakeBinary := filepath.Join(t.TempDir(), "not-a-real-gateway.txt")
+	if err := os.WriteFile(fakeBinary, []byte("not executable"), 0o644); err != nil {
+		t.Fatalf("WriteFile() error = %v", err)
+	}
+	t.Setenv("PICOCLAW_BINARY", fakeBinary)
+
+	gateway.mu.Lock()
+	gateway.cmd = cmd
+	gateway.owned = true
+	setGatewayRuntimeStatusLocked("running")
+	gateway.mu.Unlock()
+
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodPost, "/api/gateway/start", nil)
+	mux.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want %d", rec.Code, http.StatusOK)
+	}
+
+	var body map[string]any
+	if err := json.Unmarshal(rec.Body.Bytes(), &body); err != nil {
+		t.Fatalf("unmarshal response: %v", err)
+	}
+
+	if got := body["pid"]; got != float64(cmd.Process.Pid) {
+		t.Fatalf("pid = %#v, want %d", got, cmd.Process.Pid)
+	}
+
+	gateway.mu.Lock()
+	defer gateway.mu.Unlock()
+	if gateway.cmd != cmd {
+		t.Fatal("gateway.cmd should keep pointing to the existing alive process")
+	}
+}
+
+func TestCurrentGatewayBaseURLPrefersRuntimePidData(t *testing.T) {
+	configPath := filepath.Join(t.TempDir(), "config.json")
+	h := NewHandler(configPath)
+
+	cfg := config.DefaultConfig()
+	cfg.Gateway.Host = "127.0.0.1"
+	cfg.Gateway.Port = 18790
+
+	pidData := &ppid.PidFileData{
+		Host: "127.0.0.1",
+		Port: 18888,
+	}
+
+	if got := h.currentGatewayBaseURL(cfg, pidData); got != "http://127.0.0.1:18888" {
+		t.Fatalf("currentGatewayBaseURL() = %q, want %q", got, "http://127.0.0.1:18888")
+	}
+}
+
 func TestGatewayStatusKeepsRunningWhenHealthProbeFailsAfterRunning(t *testing.T) {
 	resetGatewayTestState(t)
 

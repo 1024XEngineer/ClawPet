@@ -578,7 +578,7 @@ try {
     Ensure-GatewayPortAvailable -ConfigPath $LauncherConfigPath
 
     $gatewayStatus = Invoke-LauncherApi -Method GET -Path "/api/gateway/status" -LauncherToken $LauncherToken
-    if ($gatewayStatus.gateway_status -ne "running") {
+    if ($gatewayStatus.gateway_status -eq "stopped" -or $gatewayStatus.gateway_status -eq "error") {
       $null = Invoke-LauncherApi -Method POST -Path "/api/gateway/start" -LauncherToken $LauncherToken
     }
 
@@ -621,6 +621,9 @@ try {
   throw "Gateway preflight failed: $($_.Exception.Message)"
 }
 
+$gatewayPort = Get-GatewayPortFromConfig -ConfigPath $LauncherConfigPath
+$directGatewayUrl = "http://127.0.0.1:$gatewayPort"
+
 if ((Test-HttpReady -Url $DashboardUrl -TimeoutSeconds 2) -or (Test-PortListening -Port 3000)) {
   Write-Step "Petclaw dashboard already running at $DashboardUrl"
 } else {
@@ -632,11 +635,13 @@ if ((Test-HttpReady -Url $DashboardUrl -TimeoutSeconds 2) -or (Test-PortListenin
     }
     Write-Step "Starting petclaw dashboard (prod mode)..."
     $escapedLauncherToken = $LauncherToken.Replace("'", "''")
-    $petclawCmd = "`$env:NEXT_PUBLIC_PICOCLAW_API_URL='http://127.0.0.1:18800'; `$env:NEXT_PUBLIC_PICOCLAW_WS_URL='ws://127.0.0.1:18800'; `$env:NEXT_PUBLIC_PICOCLAW_LAUNCHER_TOKEN='$escapedLauncherToken'; `$env:NEXT_PUBLIC_PICOCLAW_USE_CREDENTIALS='true'; Set-Location '$petclawDir'; npm run start -- --hostname 127.0.0.1 --port 3000"
+    $escapedDirectGatewayUrl = $directGatewayUrl.Replace("'", "''")
+    $petclawCmd = "`$env:NEXT_PUBLIC_PICOCLAW_API_URL='http://127.0.0.1:18800'; `$env:NEXT_PUBLIC_PICOCLAW_WS_URL='ws://127.0.0.1:18800'; `$env:NEXT_PUBLIC_PICOCLAW_DIRECT_GATEWAY_URL='$escapedDirectGatewayUrl'; `$env:NEXT_PUBLIC_PICOCLAW_LAUNCHER_TOKEN='$escapedLauncherToken'; `$env:NEXT_PUBLIC_PICOCLAW_USE_CREDENTIALS='true'; Set-Location '$petclawDir'; npm run start -- --hostname 127.0.0.1 --port 3000"
   } else {
     Write-Step "Starting petclaw dashboard (dev mode)..."
     $escapedLauncherToken = $LauncherToken.Replace("'", "''")
-    $petclawCmd = "`$env:NEXT_PUBLIC_PICOCLAW_API_URL='http://127.0.0.1:18800'; `$env:NEXT_PUBLIC_PICOCLAW_WS_URL='ws://127.0.0.1:18800'; `$env:NEXT_PUBLIC_PICOCLAW_LAUNCHER_TOKEN='$escapedLauncherToken'; `$env:NEXT_PUBLIC_PICOCLAW_USE_CREDENTIALS='true'; Set-Location '$petclawDir'; npm run dev -- --hostname 127.0.0.1 --port 3000 --webpack"
+    $escapedDirectGatewayUrl = $directGatewayUrl.Replace("'", "''")
+    $petclawCmd = "`$env:NEXT_PUBLIC_PICOCLAW_API_URL='http://127.0.0.1:18800'; `$env:NEXT_PUBLIC_PICOCLAW_WS_URL='ws://127.0.0.1:18800'; `$env:NEXT_PUBLIC_PICOCLAW_DIRECT_GATEWAY_URL='$escapedDirectGatewayUrl'; `$env:NEXT_PUBLIC_PICOCLAW_LAUNCHER_TOKEN='$escapedLauncherToken'; `$env:NEXT_PUBLIC_PICOCLAW_USE_CREDENTIALS='true'; Set-Location '$petclawDir'; npm run dev -- --hostname 127.0.0.1 --port 3000 --webpack"
   }
 
   Start-DetachedPowerShell -Title "GoClaw - Petclaw" -Command $petclawCmd

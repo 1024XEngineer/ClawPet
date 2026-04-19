@@ -208,7 +208,11 @@ func (h *Handler) picoWebUIAddr(r *http.Request) string {
 }
 
 func (h *Handler) buildWsURL(r *http.Request) string {
-	return requestWSScheme(r) + "://" + h.picoWebUIAddr(r) + "/pico/ws"
+	return h.buildChannelWsURL(r, "/pico/ws")
+}
+
+func (h *Handler) buildChannelWsURL(r *http.Request, path string) string {
+	return requestWSScheme(r) + "://" + h.picoWebUIAddr(r) + path
 }
 
 func (h *Handler) buildPicoEventsURL(r *http.Request) string {

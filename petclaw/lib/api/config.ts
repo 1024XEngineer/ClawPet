@@ -1,5 +1,7 @@
 const LOCAL_DEFAULT_ORIGIN = 'http://127.0.0.1:18800'
-const LOCAL_DIRECT_GATEWAY_ORIGIN = process.env.NEXT_PUBLIC_PICOCLAW_DIRECT_GATEWAY_URL || 'http://127.0.0.1:18790'
+const DIRECT_GATEWAY_ENV_ORIGIN = process.env.NEXT_PUBLIC_PICOCLAW_DIRECT_GATEWAY_URL || ''
+const LOCAL_DIRECT_GATEWAY_ORIGIN = DIRECT_GATEWAY_ENV_ORIGIN || 'http://127.0.0.1:18790'
+const DIRECT_GATEWAY_CACHE_KEY = 'petclaw.directGatewayBaseUrl'
 export const DIRECT_PET_TOKEN_PATH = '/pet/token'
 export const DIRECT_PET_WS_PATH = '/pet/ws'
 
@@ -8,6 +10,14 @@ export const WS_BASE_URL = process.env.NEXT_PUBLIC_PICOCLAW_WS_URL || ''
 export const WSS_BASE_URL = process.env.NEXT_PUBLIC_PICOCLAW_WSS_URL || ''
 export const LAUNCHER_TOKEN = process.env.NEXT_PUBLIC_PICOCLAW_LAUNCHER_TOKEN || ''
 export const USE_CREDENTIALS = process.env.NEXT_PUBLIC_PICOCLAW_USE_CREDENTIALS !== 'false'
+
+function trimTrailingSlash(value: string): string {
+  return value.replace(/\/+$/, '')
+}
+
+function normalizeBaseUrl(value: string): string {
+  return trimTrailingSlash(value.trim())
+}
 
 export function getApiBaseUrl(): string {
   if (API_BASE_URL) {
@@ -33,7 +43,49 @@ export function getApiBaseUrl(): string {
 }
 
 export function getDirectGatewayBaseUrl(): string {
-  return LOCAL_DIRECT_GATEWAY_ORIGIN
+  if (DIRECT_GATEWAY_ENV_ORIGIN.trim()) {
+    return normalizeBaseUrl(DIRECT_GATEWAY_ENV_ORIGIN)
+  }
+
+  if (typeof window !== 'undefined') {
+    try {
+      const cached = window.sessionStorage.getItem(DIRECT_GATEWAY_CACHE_KEY)
+      if (cached && cached.trim()) {
+        return normalizeBaseUrl(cached)
+      }
+    } catch {
+    }
+
+    try {
+      const cached = window.localStorage.getItem(DIRECT_GATEWAY_CACHE_KEY)
+      if (cached && cached.trim()) {
+        return normalizeBaseUrl(cached)
+      }
+    } catch {
+    }
+  }
+  return normalizeBaseUrl(LOCAL_DIRECT_GATEWAY_ORIGIN)
+}
+
+export function cacheDirectGatewayBaseUrl(value?: string | null): void {
+  const normalized = typeof value === 'string' ? normalizeBaseUrl(value) : ''
+  if (!normalized) {
+    return
+  }
+
+  if (typeof window === 'undefined') {
+    return
+  }
+
+  try {
+    window.sessionStorage.setItem(DIRECT_GATEWAY_CACHE_KEY, normalized)
+  } catch {
+  }
+
+  try {
+    window.localStorage.setItem(DIRECT_GATEWAY_CACHE_KEY, normalized)
+  } catch {
+  }
 }
 
 export function getWsBaseUrl(): string {
@@ -191,9 +243,11 @@ export const API_ENDPOINTS = {
   PET: {
     TOKEN: '/api/pet/token',
     SETUP: '/api/pet/setup',
+    ONBOARDING: '/api/pet/onboarding',
   },
   PICO: {
     TOKEN: '/api/pico/token',
     SETUP: '/api/pico/setup',
+    ONBOARDING: '/api/pico/onboarding',
   },
 } as const
