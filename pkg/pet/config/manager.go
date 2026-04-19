@@ -135,6 +135,16 @@ func (m *Manager) GetMemory() *MemoryConfig {
 	return m.memoryConfig
 }
 
+// GetMemoryTypes 获取可用记忆类型 map
+func (m *Manager) GetMemoryTypes() map[string]string {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	if m.memoryConfig == nil || m.memoryConfig.Types == nil {
+		return DefaultMemoryTypes()
+	}
+	return m.memoryConfig.Types
+}
+
 // GetCompression 获取压缩配置
 func (m *Manager) GetCompression() *compression.CompressionConfig {
 	m.mu.RLock()
