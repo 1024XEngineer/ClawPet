@@ -1,7 +1,7 @@
 # Pet Channel API 接口文档
 
-> 版本：v2.4  
-> 日期：2026-04-17  
+> 版本：v2.5  
+> 日期：2026-04-20  
 > 协议：WebSocket + JSON
 
 ---
@@ -288,36 +288,61 @@ LLM 解析到动作标签时推送。
 
 ---
 
-### 3.7 ai_audio - 语音合成音频
+### 3.7 audio_and_voice - 语音流式合成音频
 
-当 `voice_enabled` 启用时，AI 回复会同时触发语音合成，并将音频数据推送客户端播放。
+当 `voice_enabled` 启用时，AI 回复会触发语音流式合成。后端将文本按标点符号和 `[text:]` 标签分割成多个片段，异步合成音频后按顺序推送给前端播放。
+
+**音频块推送**：
 
 ```json
 {
   "type": "push",
-  "push_type": "ai_audio",
+  "push_type": "audio_and_voice",
   "data": {
-    "chat_id": 1,
-    "type": "audio",
-    "text": "//uQxAAAAs3gAAFBYy...",
-    "is_final": false
+    "seq": 1,
+    "text": "你好呀，很高兴见到你",
+    "audio": "//uQxAAAAs3gAAFBYy...",
+    "duration": 2500,
+    "is_final": false,
+    "error": ""
   },
   "timestamp": 1712610000,
   "is_final": false
 }
 ```
 
-**最终推送（结束标记）**：
+**错误块推送**：
 
 ```json
 {
   "type": "push",
-  "push_type": "ai_audio",
+  "push_type": "audio_and_voice",
   "data": {
-    "chat_id": 1,
-    "type": "audio",
+    "seq": 2,
+    "text": "你好",
+    "audio": "",
+    "duration": 0,
+    "is_final": false,
+    "error": "语音合成返回空，请检查一下相关语音合成模型的额度"
+  },
+  "timestamp": 1712610000,
+  "is_final": false
+}
+```
+
+**最终块推送**：
+
+```json
+{
+  "type": "push",
+  "push_type": "audio_and_voice",
+  "data": {
+    "seq": 0,
     "text": "",
-    "is_final": true
+    "audio": "",
+    "duration": 0,
+    "is_final": true,
+    "error": ""
   },
   "timestamp": 1712610000,
   "is_final": true
@@ -328,25 +353,112 @@ LLM 解析到动作标签时推送。
 
 | 字段 | 类型 | 说明 |
 |------|------|------|
-| chat_id | int | 聊天会话ID |
-| type | string | 内容类型：`audio`=音频块, `error`=错误信息 |
-| text | string | Base64 编码的音频数据（MP3 格式），`is_final=true` 时为空 |
+| seq | int | 音频片段序号，按发送顺序递增 |
+| text | string | 对应的原始文本内容 |
+| audio | string | Base64 编码的音频数据（MP3 格式） |
+| duration | int | 音频时长（毫秒） |
 | is_final | bool | 是否为最后一个音频块 |
+| error | string | 错误信息（如果有） |
 
-**音频解码示例**（JavaScript）：
+**语音流式合成流程**：
+
+1. **文本分割**：后端按标点符号（`.。；;?？！!`）和 `[text:]` 标签将文本分割成多个片段
+2. **异步合成**：每个片段独立异步调用 TTS 合成
+3. **顺序发送**：第一个合成完成的音频立即发送，后续音频需等待前端 `audio_done` 通知或超时
+4. **等待机制**：
+   - 后端发送音频后启动计时器（默认 3 秒）
+   - 收到前端 `audio_done` 通知后发送下一个音频
+   - 计时器超时时也发送下一个音频
+5. **最终块**：所有音频发送完毕后，发送 `is_final=true` 的块
+
+**前端处理逻辑**：
 
 ```javascript
-// 接收 audio 推送
-const audioData = base64ToArrayBuffer(msg.data.text);
-const audioBlob = new Blob([audioData], { type: 'audio/mpeg' });
-const audioUrl = URL.createObjectURL(audioBlob);
-const audio = new Audio(audioUrl);
-audio.play();
+// 接收 audio_and_voice 推送
+if (msg.push_type === 'audio_and_voice') {
+    const data = msg.data;
+    
+    if (data.is_final) {
+        // 最终块，语音播放结束
+        console.log('Voice streaming completed');
+        return;
+    }
+    
+    if (data.error) {
+        // 错误块
+        console.error('Audio error:', data.error);
+        // 通知后端当前音频播放完毕，继续下一个
+        ws.send(JSON.stringify({
+            "action": "audio_done",
+            "data": { "seq": data.seq }
+        }));
+        return;
+    }
+    
+    // 播放音频
+    const audioData = base64ToArrayBuffer(data.audio);
+    const audioBlob = new Blob([audioData], { type: 'audio/mpeg' });
+    const audioUrl = URL.createObjectURL(audioBlob);
+    const audio = new Audio(audioUrl);
+    
+    audio.onended = function() {
+        // 音频播放完毕，通知后端
+        ws.send(JSON.stringify({
+            "action": "audio_done",
+            "data": { "seq": data.seq }
+        }));
+    };
+    
+    audio.play();
+}
 ```
 
 ---
 
-## 四、请求接口
+## 四、客户端请求接口
+
+### 4.1 audio_done - 音频播放完毕通知
+
+前端通知后端当前音频片段已播放完毕，后端收到通知后发送下一个音频片段。
+
+**请求**：
+
+```json
+{
+  "action": "audio_done",
+  "data": {
+    "seq": 1
+  },
+  "request_id": "req_001"
+}
+```
+
+**响应**：
+
+```json
+{
+  "status": "ok",
+  "action": "audio_done",
+  "data": {
+    "seq": 1
+  }
+}
+```
+
+**字段说明**：
+
+| 字段 | 类型 | 必填 | 说明 |
+|------|------|------|------|
+| seq | int | 是 | 已播放完毕的音频片段序号 |
+
+**注意**：
+- 前端应在音频播放完毕后尽快发送此通知，以便后端发送下一个音频
+- 如果音频播放失败或中断，也应发送此通知避免阻塞后续音频
+- 后端有超时机制（默认 3 秒），超时后会自动发送下一个音频
+
+---
+
+### 4.2 chat - 发送聊天消息
 
 ### 4.1 chat - 发送聊天消息
 
@@ -1539,6 +1651,7 @@ async def send_chat(ws, text):
 | action | 功能 | 用途 |
 |--------|------|------|
 | chat | 聊天交互 | 发送消息，获得 AI 回复（流式） |
+| audio_done | 音频播放完毕 | 通知后端当前音频片段已播放完毕 |
 | onboarding_config | 提交初始化配置 | 首次启动时提交配置 |
 | character_get | 获取角色配置 | 查看当前角色 |
 | character_update | 更新角色配置 | 修改角色设置 |
@@ -1569,7 +1682,7 @@ async def send_chat(ws, text):
 | emotion_change | 情绪变化时 | 推送情绪状态更新 |
 | action_trigger | LLM 解析到动作时 | 推送动作触发 |
 | character_switch | 角色切换后 | 推送切换后的角色ID |
-| ai_audio | 语音合成完成 | 推送音频数据用于播放 |
+| audio_and_voice | 语音流式合成 | 流式推送语音音频片段，按顺序播放 |
 | heartbeat | 每 30 秒 | 保活检测 |
 
 ---
