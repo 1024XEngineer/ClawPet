@@ -3,6 +3,7 @@ package pet
 
 import (
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"github.com/gorilla/websocket"
@@ -19,6 +20,15 @@ import (
 	"github.com/sipeed/picoclaw/pkg/pet"
 	"github.com/sipeed/picoclaw/pkg/pet/voice"
 )
+
+// 队列和超时配置默认值（当配置缺失时使用）
+const (
+	defaultAudioQueueSize   = 100             // 默认队列容量
+	defaultAudioWaitTimeout = 3 * time.Second // 默认等待超时（兜底）
+)
+
+// 语音分段符
+const voiceSegmentSeps = ".。；;?？！!"
 
 // parsePureText 从 [text:xxx] 格式中提取纯文本
 func parsePureText(raw string) string {
@@ -541,17 +551,47 @@ type petStreamer struct {
 	textVoiceBuffer strings.Builder // 收集 [text:] 中的文本
 	voiceBuffer     strings.Builder // 收集 [voice:] 中的语音数据
 	inVoiceTag      bool            // 是否在 [voice:...] 标签内
+
+	// 语音队列和播放控制
+	audioQueue         *voice.AudioQueue // 语音优先队列
+	seqCounter         int64             // 序号计数器
+	waitTimer          *time.Timer       // 等待前端回应的超时计时器
+	waitTimeout        time.Duration     // 等待超时时长
+	waitMu             sync.Mutex        // 保护 waitTimer 的互斥锁
+	stopped            bool              // 是否已停止（用于阻止新操作）
+	streamingEnded     bool              // 流式是否已结束
+	hasSentFirst       bool              // 是否已发送第一个音频
+	hasReadyAudioCount int               // 等待发送的音频数量
+	audioPlayDone      chan struct{}     // audioPlayLoop 结束信号
+	voiceEnabled       bool              // 当前语音开关状态
+	audioDone          chan int64        // audio_done 通知 channel
+	audioReady         chan int64        // TTS 合成完毕通知 channel
 }
 
 // BeginStream 实现StreamingCapable接口
 func (c *PetChannel) BeginStream(ctx context.Context, sessionID string) (channels.Streamer, error) {
 	logger.Infof("pet: BeginStream called, sessionID=%s", sessionID)
-	return &petStreamer{
+
+	streamer := &petStreamer{
 		channel:          c,
 		sessionID:        sessionID,
 		chatID:           0,
 		voiceSynthesizer: c.voiceSynthesizer,
-	}, nil
+		// 语音优先队列初始化
+		audioQueue:    voice.NewAudioQueue(defaultAudioQueueSize),
+		seqCounter:    0,
+		waitTimer:     time.NewTimer(defaultAudioWaitTimeout),
+		waitTimeout:   defaultAudioWaitTimeout,
+		voiceEnabled:  true,
+		audioDone:     make(chan int64, 1),
+		audioReady:    make(chan int64, 1),
+		audioPlayDone: make(chan struct{}),
+	}
+
+	// 启动音频播放控制 goroutine
+	go streamer.audioPlayLoop()
+
+	return streamer, nil
 }
 
 // Update 发送增量内容到客户端，使用状态机解析标签
@@ -564,9 +604,22 @@ func (s *petStreamer) Update(ctx context.Context, content string) error {
 	s.buffer += content
 	s.textVoiceBuffer.WriteString(content)
 
+	// 检查语音开关状态
+	appConfig := s.channel.service.AppConfig()
+	voiceEnabled := appConfig != nil && appConfig.VoiceEnabled
+
+	if voiceEnabled && s.audioQueue != nil {
+		// 语音开启：处理语音分段
+		s.voiceEnabled = true
+		s.processVoiceSegmentsLocked(content)
+		return nil
+	}
+
+	// 语音关闭：使用原来的流式文本逻辑
+	s.voiceEnabled = false
+
 	sendVoice := func() {
-		appConfig := s.channel.service.AppConfig()
-		if s.voiceSynthesizer != nil && appConfig != nil && appConfig.VoiceEnabled {
+		if s.voiceSynthesizer != nil {
 			emotion := ""
 			if char := s.channel.service.CharManager().GetCurrent(); char != nil {
 				emotion, _ = char.GetEmotionEngine().GetDominantEmotion()
@@ -609,6 +662,7 @@ func (s *petStreamer) Update(ctx context.Context, content string) error {
 
 // Finalize 发送最终完成标记
 // 注意：不再发送重复文本，只发送情绪状态汇总
+// 流式结束后等待剩余音频发送完毕
 func (s *petStreamer) Finalize(ctx context.Context, content string) error {
 
 	logger.DebugCF("pet", "Finalize called", map[string]any{
@@ -617,6 +671,22 @@ func (s *petStreamer) Finalize(ctx context.Context, content string) error {
 
 	if s == nil || s.channel == nil {
 		return nil
+	}
+
+	s.waitMu.Lock()
+	if s.waitTimer != nil {
+		s.waitTimer.Stop()
+	}
+	// 标记流式结束，但不立即停止。audioPlayLoop 会继续处理剩余音频
+	s.streamingEnded = true
+	s.waitMu.Unlock()
+
+	// 等待 audioPlayLoop 处理完剩余音频
+	select {
+	case <-s.audioPlayDone:
+		logger.DebugCF("pet", "Finalize: audioPlayLoop finished", nil)
+	case <-time.After(30 * time.Second):
+		logger.WarnCF("pet", "Finalize: audioPlayLoop timeout", nil)
 	}
 
 	// 清空状态，不发送任何文本
@@ -628,6 +698,10 @@ func (s *petStreamer) Finalize(ctx context.Context, content string) error {
 	s.inTextTag = false
 	s.inOtherTag = false
 
+	// 重置语音播放状态
+	s.hasSentFirst = false
+	s.hasReadyAudioCount = 0
+
 	// 发送最终状态块（带情绪状态）
 	s.chatID++
 	s.channel.sendStreamChunk(s.sessionID, s.chatID, "final", "", true)
@@ -637,6 +711,17 @@ func (s *petStreamer) Finalize(ctx context.Context, content string) error {
 
 // Cancel 取消流式输出
 func (s *petStreamer) Cancel(ctx context.Context) {
+	s.waitMu.Lock()
+	defer s.waitMu.Unlock()
+	s.stopped = true
+	s.hasSentFirst = false
+	s.hasReadyAudioCount = 0
+	if s.waitTimer != nil {
+		s.waitTimer.Stop()
+	}
+	if s.audioQueue != nil {
+		s.audioQueue.Clear()
+	}
 }
 
 // findSegment 查找第一个完整的段落（以换行或句号结尾）
@@ -850,4 +935,294 @@ type PetStreamResponse struct {
 	Data      json.RawMessage `json:"data"`
 	IsFinal   bool            `json:"is_final"`
 	Timestamp int64           `json:"timestamp"`
+}
+
+// processVoiceSegmentsLocked 处理语音分段（不获取锁版本）
+// 调用方需持有 waitMu 锁
+//
+// 分段逻辑：
+//  1. 找 [text: 开始
+//  2. 在 [text: 和 ] 之间，按分段符（，。！？,.!?) 分割成多句
+//  3. 每积累一段文本，加入 audioQueue 队列
+//  4. 异步调用 TTS 合成音频
+//  5. 遇到 "]" 立即将剩余 buffer 内容入队
+func (s *petStreamer) processVoiceSegmentsLocked(content string) {
+	if s.stopped {
+		logger.DebugCF("pet", "processVoiceSegmentsLocked: stopped=true, skip", nil)
+		return
+	}
+	if s.voiceSynthesizer == nil {
+		logger.DebugCF("pet", "processVoiceSegmentsLocked: voiceSynthesizer=nil, skip", nil)
+		return
+	}
+	if s.audioQueue == nil {
+		logger.DebugCF("pet", "processVoiceSegmentsLocked: audioQueue=nil, skip", nil)
+		return
+	}
+
+	s.voiceBuffer.WriteString(content)
+	buffer := s.voiceBuffer.String()
+
+	for len(buffer) > 0 {
+		if s.inTextTag {
+			runes := []rune(buffer)
+			text := ""
+			segIdx := -1
+			sepRune := rune(0)
+			for i, r := range runes {
+				if r == ']' {
+					segIdx = i
+					sepRune = r
+					break
+				}
+				if strings.ContainsRune(voiceSegmentSeps, r) {
+					segIdx = i
+					sepRune = r
+					break
+				}
+			}
+			if segIdx == -1 {
+				break
+			}
+			if sepRune == ']' {
+				s.inTextTag = false
+				text = string(runes[:segIdx])
+				s.voiceBuffer.Reset()
+			} else {
+				text = string(runes[:segIdx]) + string(sepRune)
+				s.voiceBuffer.Reset()
+				s.voiceBuffer.WriteString(string(runes[segIdx+1:]))
+			}
+			buffer = s.voiceBuffer.String()
+			if text != "" {
+				s.seqCounter++
+				err := s.voiceSynthesizer.SynthesizeToQueue(
+					s.sessionID,
+					s.chatID,
+					text,
+					s.seqCounter,
+					s.audioQueue,
+					s.audioReady,
+				)
+				if err != nil {
+					logger.WarnCF("pet", "failed to enqueue audio segment", map[string]any{
+						"seq":   s.seqCounter,
+						"error": err.Error(),
+					})
+				}
+			}
+		} else {
+			startIdx := strings.Index(buffer, "[text:")
+			if startIdx == -1 {
+				break
+			}
+			s.inTextTag = true
+			buffer = buffer[startIdx+6:]
+			s.voiceBuffer.Reset()
+			s.voiceBuffer.WriteString(buffer)
+			buffer = s.voiceBuffer.String()
+		}
+	}
+}
+
+// audioPlayLoop 音频播放控制循环
+// 专门处理 audio_done 和 timer，不与主逻辑竞争锁
+func (s *petStreamer) audioPlayLoop() {
+	logger.DebugCF("pet", "audioPlayLoop: started", nil)
+	for {
+		// 检查退出条件
+		s.waitMu.Lock()
+		if s.stopped {
+			s.waitMu.Unlock()
+			logger.DebugCF("pet", "audioPlayLoop: stopped, exiting", nil)
+			return
+		}
+		if s.streamingEnded && (s.audioQueue == nil || s.audioQueue.IsEmpty()) {
+			s.waitMu.Unlock()
+			close(s.audioPlayDone)
+			logger.DebugCF("pet", "audioPlayLoop: streaming ended and queue empty, exiting", nil)
+			return
+		}
+		s.waitMu.Unlock()
+
+		select {
+		case seq := <-s.audioReady:
+			// TTS 合成完毕通知
+			s.waitMu.Lock()
+			logger.DebugCF("pet", "audioPlayLoop: audio ready", map[string]any{"seq": seq})
+			if s.trySendNextLocked() {
+				// 发送成功 → 这是第一个
+				s.hasSentFirst = true
+			} else {
+				// 没发送 → 不是第一个，增加计数
+				s.hasReadyAudioCount++
+			}
+			s.waitMu.Unlock()
+
+		case <-s.audioDone:
+			// 收到 audio_done 通知
+			s.waitMu.Lock()
+			logger.DebugCF("pet", "audioPlayLoop: received audio_done", map[string]any{
+				"hasReadyAudioCount": s.hasReadyAudioCount,
+				"queue_size":         s.audioQueue.Size(),
+			})
+			// 弹出已发送的片段
+			//front, _ := s.audioQueue.PeekNextReady()
+			//if front != nil {
+			//	_, _ = s.audioQueue.MarkSent()
+			//	logger.DebugCF("pet", "audioPlayLoop: marked sent", map[string]any{"seq": front.Seq})
+			//}
+			// 有待发送音频则发送
+			if s.hasReadyAudioCount > 0 {
+				s.hasReadyAudioCount--
+				s.trySendNextLocked()
+			}
+			s.waitMu.Unlock()
+
+		case <-s.waitTimer.C:
+			// timer 超时
+			s.waitTimer.Stop()
+			s.waitMu.Lock()
+			logger.DebugCF("pet", "audioPlayLoop: timer fired", map[string]any{
+				"hasReadyAudioCount": s.hasReadyAudioCount,
+				"queue_size":         s.audioQueue.Size(),
+			})
+			//// 弹出已发送的片段
+			//front, _ := s.audioQueue.PeekNextReady()
+			//if front != nil {
+			//	_, _ = s.audioQueue.MarkSent()
+			//	logger.DebugCF("pet", "audioPlayLoop: marked sent", map[string]any{"seq": front.Seq})
+			//}
+			// 有待发送音频则发送
+			if s.hasReadyAudioCount > 0 {
+				s.hasReadyAudioCount--
+				s.trySendNextLocked()
+			}
+			s.waitMu.Unlock()
+		}
+	}
+}
+
+// trySendNextLocked 尝试发送下一个已就绪的音频
+// 返回 true 表示发送成功，false 表示没有发送
+func (s *petStreamer) trySendNextLocked() bool {
+	if s.audioQueue == nil || s.audioQueue.IsEmpty() {
+		logger.DebugCF("pet", "trySendNextLocked: queue is nil or empty", nil)
+		return false
+	}
+
+	front, err := s.audioQueue.PeekNextReady()
+	if err != nil || front == nil {
+		logger.DebugCF("pet", "trySendNextLocked: PeekNextReady failed", map[string]any{
+			"err":   err,
+			"front": front,
+		})
+		return false
+	}
+
+	logger.DebugCF("pet", "trySendNextLocked: checking", map[string]any{
+		"queue_size":         s.audioQueue.Size(),
+		"front_seq":          front.Seq,
+		"front_ready":        front.Ready,
+		"front_sent":         front.Sent,
+		"hasSentFirst":       s.hasSentFirst,
+		"hasReadyAudioCount": s.hasReadyAudioCount,
+	})
+
+	// 检查是否就绪且未发送
+	if !front.Ready {
+		logger.DebugCF("pet", "trySendNextLocked: audio not ready", map[string]any{"seq": front.Seq})
+		return false
+	}
+	if front.Sent {
+		logger.DebugCF("pet", "trySendNextLocked: audio already sent", map[string]any{"seq": front.Seq})
+		return false
+	}
+
+	// 判断是否是最后一个
+	isFinal := s.audioQueue.Size() == 1
+
+	// 复制数据
+	segCopy := &voice.AudioSegment{
+		Seq:       front.Seq,
+		Text:      front.Text,
+		AudioData: front.AudioData,
+		Duration:  front.Duration,
+	}
+
+	// 标记为已发送并弹出
+	_, _ = s.audioQueue.MarkSent()
+
+	// 锁外异步发送
+	go s.sendAudioSegmentAsync(segCopy, isFinal)
+
+	return true
+}
+
+// sendAudioSegmentAsync 异步发送音频片段到前端（不持有锁）
+func (s *petStreamer) sendAudioSegmentAsync(seg *voice.AudioSegment, isFinal bool) {
+	if seg == nil {
+		logger.WarnCF("pet", "sendAudioSegmentAsync: seg is nil!", nil)
+		return
+	}
+
+	// 检查是否有错误
+	if seg.Error != "" {
+		logger.WarnCF("pet", "sendAudioSegmentAsync: TTS error", map[string]any{
+			"seq":   seg.Seq,
+			"error": seg.Error,
+		})
+		data := map[string]any{
+			"seq":      seg.Seq,
+			"text":     seg.Text,
+			"audio":    "",
+			"duration": 0,
+			"is_final": isFinal,
+			"error":    seg.Error,
+		}
+		s.channel.sendVoicePush(s.sessionID, "audio_and_voice", data)
+		return
+	}
+
+	// Base64编码音频
+	encoded := base64.StdEncoding.EncodeToString(seg.AudioData)
+
+	data := map[string]any{
+		"seq":      seg.Seq,
+		"text":     seg.Text,
+		"audio":    encoded,
+		"duration": seg.Duration,
+		"is_final": isFinal,
+	}
+
+	logger.DebugCF("pet", "sendAudioSegmentAsync", map[string]any{
+		"seq":       seg.Seq,
+		"text":      seg.Text,
+		"audio_len": len(encoded),
+		"duration":  seg.Duration,
+	})
+
+	s.channel.sendVoicePush(s.sessionID, "audio_and_voice", data)
+
+	logger.DebugCF("pet", "sent audio segment async", map[string]any{
+		"seq":      seg.Seq,
+		"duration": seg.Duration,
+	})
+
+	// 重置等待计时器（使用音频实际时长）
+	s.waitMu.Lock()
+	if seg.Duration > 0 {
+		s.waitTimer.Reset(time.Duration(seg.Duration) * time.Millisecond)
+	} else {
+		s.waitTimer.Reset(defaultAudioWaitTimeout)
+	}
+	s.waitMu.Unlock()
+}
+
+// HandleAudioDone 处理前端音频播放完毕的通知
+func (s *petStreamer) HandleAudioDone(seq int64) {
+	select {
+	case s.audioDone <- seq:
+	default:
+	}
 }
