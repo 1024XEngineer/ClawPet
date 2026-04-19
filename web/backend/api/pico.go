@@ -1,12 +1,15 @@
 package api
 
 import (
+	"bytes"
 	"crypto/rand"
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"io"
 	"net/http"
 	"net/http/httputil"
+	"strings"
 	"time"
 
 	"github.com/sipeed/picoclaw/pkg/config"
@@ -18,10 +21,12 @@ func (h *Handler) registerPicoRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("GET /api/pet/token", h.handleGetPicoToken)
 	mux.HandleFunc("POST /api/pet/token", h.handleRegenPicoToken)
 	mux.HandleFunc("POST /api/pet/setup", h.handlePicoSetup)
+	mux.HandleFunc("POST /api/pet/onboarding", h.handlePetOnboarding)
 
 	mux.HandleFunc("GET /api/pico/token", h.handleGetPicoToken)
 	mux.HandleFunc("POST /api/pico/token", h.handleRegenPicoToken)
 	mux.HandleFunc("POST /api/pico/setup", h.handlePicoSetup)
+	mux.HandleFunc("POST /api/pico/onboarding", h.handlePetOnboarding)
 
 	// WebSocket proxy: forward /pico/ws to gateway
 	// This allows the frontend to connect via the same port as the web UI,
@@ -105,13 +110,19 @@ func (h *Handler) handleGetPicoToken(w http.ResponseWriter, r *http.Request) {
 		cfg.Channels.Pico.SetToken(token)
 	}
 
+	protocol := "pico"
 	wsURL := h.buildWsURL(r)
+	if strings.Contains(r.URL.Path, "/api/pet/") {
+		protocol = "pet"
+		wsURL = h.buildChannelWsURL(r, "/pet/ws")
+	}
 
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(map[string]any{
-		"token":   cfg.Channels.Pico.Token.String(),
-		"ws_url":  wsURL,
-		"enabled": cfg.Channels.Pico.Enabled,
+		"token":    cfg.Channels.Pico.Token.String(),
+		"ws_url":   wsURL,
+		"enabled":  cfg.Channels.Pico.Enabled,
+		"protocol": protocol,
 	})
 }
 
@@ -138,12 +149,18 @@ func (h *Handler) handleRegenPicoToken(w http.ResponseWriter, r *http.Request) {
 	gateway.picoToken = token
 	gateway.mu.Unlock()
 
+	protocol := "pico"
 	wsURL := h.buildWsURL(r)
+	if strings.Contains(r.URL.Path, "/api/pet/") {
+		protocol = "pet"
+		wsURL = h.buildChannelWsURL(r, "/pet/ws")
+	}
 
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(map[string]any{
-		"token":  token,
-		"ws_url": wsURL,
+		"token":    token,
+		"ws_url":   wsURL,
+		"protocol": protocol,
 	})
 }
 
@@ -207,14 +224,20 @@ func (h *Handler) handlePicoSetup(w http.ResponseWriter, r *http.Request) {
 		refreshPicoToken(cfg)
 	}
 
+	protocol := "pico"
 	wsURL := h.buildWsURL(r)
+	if strings.Contains(r.URL.Path, "/api/pet/") {
+		protocol = "pet"
+		wsURL = h.buildChannelWsURL(r, "/pet/ws")
+	}
 
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(map[string]any{
-		"token":   cfg.Channels.Pico.Token.String(),
-		"ws_url":  wsURL,
-		"enabled": true,
-		"changed": changed,
+		"token":    cfg.Channels.Pico.Token.String(),
+		"ws_url":   wsURL,
+		"enabled":  true,
+		"changed":  changed,
+		"protocol": protocol,
 	})
 }
 
@@ -226,4 +249,35 @@ func generateSecureToken() string {
 		return fmt.Sprintf("%032x", time.Now().UnixNano())
 	}
 	return hex.EncodeToString(b)
+}
+
+func (h *Handler) handlePetOnboarding(w http.ResponseWriter, r *http.Request) {
+	body, err := io.ReadAll(io.LimitReader(r.Body, 1<<20))
+	if err != nil {
+		http.Error(w, "failed to read request body", http.StatusBadRequest)
+		return
+	}
+	defer r.Body.Close()
+
+	target := h.gatewayProxyURL()
+	target.Path = "/pet/onboarding"
+
+	req, err := http.NewRequest(http.MethodPost, target.String(), bytes.NewReader(body))
+	if err != nil {
+		http.Error(w, fmt.Sprintf("failed to build request: %v", err), http.StatusInternalServerError)
+		return
+	}
+	req.Header.Set("Content-Type", "application/json")
+
+	client := http.Client{Timeout: 15 * time.Second}
+	resp, err := client.Do(req)
+	if err != nil {
+		http.Error(w, fmt.Sprintf("failed to call gateway onboarding endpoint: %v", err), http.StatusBadGateway)
+		return
+	}
+	defer resp.Body.Close()
+
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(resp.StatusCode)
+	_, _ = io.Copy(w, resp.Body)
 }

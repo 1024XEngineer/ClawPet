@@ -198,6 +198,36 @@ func getGatewayHealthByURL(url string, timeout time.Duration) (*health.StatusRes
 	return &healthResponse, resp.StatusCode, nil
 }
 
+func (h *Handler) currentGatewayBaseURL(cfg *config.Config, runtimePIDData *ppid.PidFileData) string {
+	port := 18790
+	host := ""
+
+	if runtimePIDData != nil {
+		if runtimePIDData.Port > 0 {
+			port = runtimePIDData.Port
+		}
+		host = strings.TrimSpace(runtimePIDData.Host)
+	} else {
+		gateway.mu.Lock()
+		if d := gateway.pidData; d != nil {
+			if d.Port > 0 {
+				port = d.Port
+			}
+			host = strings.TrimSpace(d.Host)
+		}
+		gateway.mu.Unlock()
+	}
+
+	if port == 18790 && cfg != nil && cfg.Gateway.Port != 0 {
+		port = cfg.Gateway.Port
+	}
+	if host == "" {
+		host = gatewayProbeHost(h.effectiveGatewayBindHost(cfg))
+	}
+
+	return "http://" + net.JoinHostPort(host, strconv.Itoa(port))
+}
+
 // registerGatewayRoutes binds gateway lifecycle endpoints to the ServeMux.
 func (h *Handler) registerGatewayRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("GET /api/gateway/status", h.handleGatewayStatus)
@@ -244,7 +274,19 @@ func (h *Handler) TryAutoStartGateway() {
 	defer gateway.mu.Unlock()
 
 	if gateway.cmd != nil && gateway.cmd.Process != nil {
+		if isCmdProcessAliveLocked(gateway.cmd) {
+			logger.InfoC(
+				"gateway",
+				fmt.Sprintf("Gateway auto-start skipped: process already starting/running (PID: %d)", gateway.cmd.Process.Pid),
+			)
+			return
+		}
+
 		gateway.cmd = nil
+		gateway.owned = false
+		gateway.bootDefaultModel = ""
+		gateway.bootConfigSignature = ""
+		gateway.pidData = nil
 	}
 
 	ready, reason, err := h.gatewayStartReady()
@@ -764,7 +806,21 @@ func (h *Handler) handleGatewayStart(w http.ResponseWriter, r *http.Request) {
 	defer gateway.mu.Unlock()
 
 	if gateway.cmd != nil && gateway.cmd.Process != nil {
+		if isCmdProcessAliveLocked(gateway.cmd) {
+			w.Header().Set("Content-Type", "application/json")
+			json.NewEncoder(w).Encode(map[string]any{
+				"status":         "ok",
+				"pid":            gateway.cmd.Process.Pid,
+				"gateway_status": gatewayStatusWithoutHealthLocked(),
+			})
+			return
+		}
+
 		gateway.cmd = nil
+		gateway.owned = false
+		gateway.bootDefaultModel = ""
+		gateway.bootConfigSignature = ""
+		gateway.pidData = nil
 		setGatewayRuntimeStatusLocked("stopped")
 	}
 
@@ -987,6 +1043,10 @@ func (h *Handler) gatewayStatusData() map[string]any {
 		data["gateway_status"] = gatewayStatusWithoutHealthLocked()
 		gateway.pidData = nil
 		gateway.mu.Unlock()
+	}
+
+	if cfg != nil {
+		data["gateway_base_url"] = h.currentGatewayBaseURL(cfg, pidData)
 	}
 
 	gatewayStatus, _ := data["gateway_status"].(string)

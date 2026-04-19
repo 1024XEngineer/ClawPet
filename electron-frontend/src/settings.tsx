@@ -16,6 +16,12 @@ interface ChatMessage {
   action?: string
 }
 
+interface ConversationSummary {
+  id: string
+  name: string
+  time: string
+}
+
 interface InitStatus {
   need_config: boolean
   has_character: boolean
@@ -106,7 +112,8 @@ interface PendingAudioStream {
   chunks: Uint8Array[]
 }
 
-const API_BASE = 'http://127.0.0.1:18790'
+const API_BASE =
+  window.electronAPI?.getBackendBaseUrl?.()?.trim() || 'http://127.0.0.1:18800'
 
 const ASSET_PREFIX =
   typeof window !== 'undefined' &&
@@ -131,6 +138,8 @@ const FORCE_TEST_ONBOARDING = (() => {
   }
 })()
 const ONBOARDING_DONE_KEY = 'clawpet.onboardingDone'
+const CHAT_HISTORY_STORAGE_KEY = 'clawpet.desktop.chatHistory'
+const CONVERSATION_HISTORY_STORAGE_KEY = 'clawpet.desktop.conversationHistory'
 
 const ALLOWED_PERSONA_TYPES = new Set(['gentle', 'playful', 'cool'])
 const MIN_PET_NAME_LENGTH = 2
@@ -216,6 +225,22 @@ function timeText() {
 
 function titleCase(v: string) {
   return v.split('_').join(' ').replace(/\b\w/g, (m: string) => m.toUpperCase())
+}
+
+function loadStoredJSON<T>(key: string, fallback: T): T {
+  if (typeof window === 'undefined') {
+    return fallback
+  }
+
+  try {
+    const raw = window.localStorage.getItem(key)
+    if (!raw) {
+      return fallback
+    }
+    return JSON.parse(raw) as T
+  } catch {
+    return fallback
+  }
 }
 
 async function fetchJSON<T>(url: string, init?: RequestInit): Promise<T> {
@@ -310,7 +335,9 @@ export default function PetClawApp() {
   const [page, setPage] = useState<PageType>('chat')
   const [menu, setMenu] = useState<MainMenu>('chat')
   const [inputText, setInputText] = useState('')
-  const [chatHistory, setChatHistory] = useState<ChatMessage[]>([])
+  const [chatHistory, setChatHistory] = useState<ChatMessage[]>(() =>
+    loadStoredJSON<ChatMessage[]>(CHAT_HISTORY_STORAGE_KEY, []),
+  )
   const [streamingText, setStreamingText] = useState('')
   const [petGif, setPetGif] = useState('/standby1.gif')
   const [connStatus, setConnStatus] = useState<'connecting' | 'connected' | 'disconnected'>('connecting')
@@ -320,7 +347,9 @@ export default function PetClawApp() {
   const [petName, setPetName] = useState('ClawPet')
   const [petPersona, setPetPersona] = useState('温柔体贴，善于倾听。')
   const [petPersonaType, setPetPersonaType] = useState('gentle')
-  const [conversationHistory, setConversationHistory] = useState<{ id: string; name: string; time: string }[]>([])
+  const [conversationHistory, setConversationHistory] = useState<ConversationSummary[]>(() =>
+    loadStoredJSON<ConversationSummary[]>(CONVERSATION_HISTORY_STORAGE_KEY, []),
+  )
 
   const [skills, setSkills] = useState<SkillItem[]>(MOCK_SKILLS)
   const [tools, setTools] = useState<ToolItem[]>(MOCK_TOOLS)
@@ -360,6 +389,25 @@ export default function PetClawApp() {
       msgListRef.current.scrollTop = msgListRef.current.scrollHeight
     }
   }, [chatHistory, streamingText])
+
+  useEffect(() => {
+    try {
+      window.localStorage.setItem(CHAT_HISTORY_STORAGE_KEY, JSON.stringify(chatHistory))
+    } catch {
+      // ignore localStorage failures
+    }
+  }, [chatHistory])
+
+  useEffect(() => {
+    try {
+      window.localStorage.setItem(
+        CONVERSATION_HISTORY_STORAGE_KEY,
+        JSON.stringify(conversationHistory),
+      )
+    } catch {
+      // ignore localStorage failures
+    }
+  }, [conversationHistory])
 
   const clearResponseTimeout = useCallback(() => {
     if (responseTimeoutRef.current) {

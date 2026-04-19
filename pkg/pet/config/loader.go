@@ -72,6 +72,9 @@ func (l *ConfigLoader) Load() error {
 	if cfg.Memory == nil {
 		cfg.Memory = DefaultMemoryConfig()
 	}
+	if cfg.Memory.Types == nil {
+		cfg.Memory.Types = DefaultMemoryTypes()
+	}
 	if cfg.Compression == nil {
 		cfg.Compression = DefaultCompressionConfig()
 	}
@@ -159,6 +162,14 @@ func (l *ConfigLoader) GetMemory() *MemoryConfig {
 	}
 	cfg := *l.config.Memory
 	return &cfg
+}
+
+// GetMemoryTypes 获取可用记忆类型 map
+func (l *ConfigLoader) GetMemoryTypes() map[string]string {
+	if l.config == nil || l.config.Memory == nil || l.config.Memory.Types == nil {
+		return DefaultMemoryTypes()
+	}
+	return l.config.Memory.Types
 }
 
 // GetCompression 获取压缩配置

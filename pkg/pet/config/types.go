@@ -45,15 +45,37 @@ func DefaultAppConfig() *AppConfig {
 // MemoryConfig 记忆配置
 // 控制记忆存储和显示的相关参数
 type MemoryConfig struct {
-	MaxMemories int `json:"max_memories"` // 最大显示记忆数，注入到prompt时限制条数
+	MaxMemories int               `json:"max_memories"` // 最大显示记忆数
+	Types       map[string]string `json:"types"`        // 可用记忆类型 map[类型名]描述
 }
 
 // DefaultMemoryConfig 返回默认的记忆配置
 func DefaultMemoryConfig() *MemoryConfig {
 	return &MemoryConfig{
-		MaxMemories: 500, // 默认最多显示500条记忆
+		MaxMemories: 500,
+		Types:       DefaultMemoryTypes(),
 	}
 }
+
+// DefaultMemoryTypes 返回默认的记忆类型定义
+func DefaultMemoryTypes() map[string]string {
+	return map[string]string{
+		MemoryTypeConversation:   "对话记忆",
+		MemoryTypePreference:     "宠物偏好",
+		MemoryTypeFact:           "事实知识",
+		MemoryTypeUserProfile:    "用户基础信息",
+		MemoryTypeUserPreference: "用户偏好",
+	}
+}
+
+// 推荐记忆类型常量（供 LLM 和开发者参考，不强制）
+const (
+	MemoryTypeConversation   = "conversation"    // 对话记忆
+	MemoryTypePreference     = "preference"      // 宠物偏好
+	MemoryTypeFact           = "fact"            // 事实知识
+	MemoryTypeUserProfile    = "user_profile"    // 用户基础信息
+	MemoryTypeUserPreference = "user_preference" // 用户偏好
+)
 
 // DefaultCompressionConfig 返回默认的压缩配置
 // 委托给 compression 包提供默认值
