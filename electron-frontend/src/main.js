@@ -83,12 +83,12 @@ function hideRuntimeWindowsForOnboarding() {
   }
 }
 
-function enterOnboardingMode(reason = 'manual') {
+function enterOnboardingMode(reason = 'manual', { rerun = false } = {}) {
   onboardingLocked = true;
   markOnboardingPending(reason);
   stopAllMediaPlayback(reason);
   hideRuntimeWindowsForOnboarding();
-  createOnboardingWindow(buildSettingsWindowUrl({ onboarding: true }));
+  createOnboardingWindow(buildSettingsWindowUrl({ onboarding: true, rerun }));
 }
 
 function leaveOnboardingMode({ completed } = { completed: false }) {
@@ -270,9 +270,9 @@ function buildDashboardUrl(pathname = '') {
   return withLauncherToken(resolved);
 }
 
-function buildSettingsWindowUrl({ onboarding = false } = {}) {
+function buildSettingsWindowUrl({ onboarding = false, rerun = false } = {}) {
   return onboarding
-    ? buildDashboardUrl('/onboarding?mode=rerun')
+    ? buildDashboardUrl(rerun ? '/onboarding?mode=rerun' : '/onboarding')
     : buildDashboardUrl();
 }
 
@@ -412,7 +412,7 @@ function createOnboardingWindow(targetUrl = buildSettingsWindowUrl({ onboarding:
 ipcMain.on('open-settings', () => {
   logToFile('[IPC] open-settings');
   if (onboardingLocked) {
-    enterOnboardingMode('open-settings-while-locked');
+    enterOnboardingMode('open-settings-while-locked', { rerun: false });
     return;
   }
   createSettingsWindow(buildSettingsWindowUrl());
@@ -420,13 +420,16 @@ ipcMain.on('open-settings', () => {
 
 ipcMain.on('open-onboarding', () => {
   logToFile('[IPC] open-onboarding');
-  enterOnboardingMode('manual-rerun');
+  enterOnboardingMode('manual-rerun', { rerun: true });
 });
 
 ipcMain.on('set-onboarding-mode', (event, enabled) => {
   logToFile(`[IPC] set-onboarding-mode ${Boolean(enabled)}`);
   if (enabled) {
-    enterOnboardingMode('renderer-request');
+    const currentUrl = event.sender.getURL();
+    enterOnboardingMode('renderer-request', {
+      rerun: /[?&]mode=rerun\b/i.test(currentUrl),
+    });
     const target = BrowserWindow.fromWebContents(event.sender);
     if (target === onboardingWindow && onboardingWindow && !onboardingWindow.isDestroyed()) {
       onboardingWindow.focus();

@@ -3,11 +3,15 @@ package api
 import (
 	"bytes"
 	"encoding/json"
+	"io"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
+	"time"
 
 	"github.com/sipeed/picoclaw/pkg/config"
+	ppid "github.com/sipeed/picoclaw/pkg/pid"
 )
 
 func TestCronAPI_CRUDLifecycle(t *testing.T) {
@@ -68,7 +72,7 @@ func TestCronAPI_CRUDLifecycle(t *testing.T) {
 		t.Fatalf("expected 1 job, got %d", len(listResp.Jobs))
 	}
 
-	updateBody := `{"description":"Run every 5 minutes","scheduleType":"every","everySeconds":300,"command":"echo hi"}`
+	updateBody := `{"description":"Run every 5 minutes","scheduleType":"every","everySeconds":300}`
 	updateRec := httptest.NewRecorder()
 	updateReq := httptest.NewRequest(
 		http.MethodPut,
@@ -91,10 +95,6 @@ func TestCronAPI_CRUDLifecycle(t *testing.T) {
 	if updateResp.Job.ScheduleType != "every" || updateResp.Job.EverySeconds == nil || *updateResp.Job.EverySeconds != 300 {
 		t.Fatalf("unexpected updated schedule: %#v", updateResp.Job)
 	}
-	if updateResp.Job.Command != "echo hi" {
-		t.Fatalf("unexpected updated command: %#v", updateResp.Job)
-	}
-
 	toggleRec := httptest.NewRecorder()
 	toggleReq := httptest.NewRequest(
 		http.MethodPost,
@@ -143,6 +143,142 @@ func TestCronAPI_CRUDLifecycle(t *testing.T) {
 
 	if deleteRec.Code != http.StatusOK {
 		t.Fatalf("delete status = %d, want %d, body=%s", deleteRec.Code, http.StatusOK, deleteRec.Body.String())
+	}
+}
+
+func TestCronAPI_CreateRejectsCommandOutsideInternalChannel(t *testing.T) {
+	configPath, cleanup := setupOAuthTestEnv(t)
+	defer cleanup()
+
+	cfg, err := config.LoadConfig(configPath)
+	if err != nil {
+		t.Fatalf("LoadConfig() error = %v", err)
+	}
+	cfg.Tools.Cron.Enabled = true
+	cfg.Tools.Exec.Enabled = true
+	cfg.Tools.Cron.AllowCommand = true
+	if err := config.SaveConfig(configPath, cfg); err != nil {
+		t.Fatalf("SaveConfig() error = %v", err)
+	}
+
+	h := NewHandler(configPath)
+	mux := http.NewServeMux()
+	h.RegisterRoutes(mux)
+
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(
+		http.MethodPost,
+		"/api/cron",
+		bytes.NewBufferString(`{"name":"shell","description":"run shell","scheduleType":"every","everySeconds":60,"command":"echo hi"}`),
+	)
+	req.Header.Set("Content-Type", "application/json")
+	mux.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("status = %d, want %d, body=%s", rec.Code, http.StatusBadRequest, rec.Body.String())
+	}
+	if !strings.Contains(rec.Body.String(), "restricted to internal channels") {
+		t.Fatalf("body = %q, want internal-channel restriction", rec.Body.String())
+	}
+}
+
+func TestCronAPI_CreateRejectsCommandWhenAllowCommandDisabled(t *testing.T) {
+	configPath, cleanup := setupOAuthTestEnv(t)
+	defer cleanup()
+
+	cfg, err := config.LoadConfig(configPath)
+	if err != nil {
+		t.Fatalf("LoadConfig() error = %v", err)
+	}
+	cfg.Tools.Cron.Enabled = true
+	cfg.Tools.Exec.Enabled = true
+	cfg.Tools.Cron.AllowCommand = false
+	if err := config.SaveConfig(configPath, cfg); err != nil {
+		t.Fatalf("SaveConfig() error = %v", err)
+	}
+
+	h := NewHandler(configPath)
+	mux := http.NewServeMux()
+	h.RegisterRoutes(mux)
+
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(
+		http.MethodPost,
+		"/api/cron",
+		bytes.NewBufferString(`{"name":"shell","description":"run shell","scheduleType":"every","everySeconds":60,"command":"echo hi","channel":"cli"}`),
+	)
+	req.Header.Set("Content-Type", "application/json")
+	mux.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("status = %d, want %d, body=%s", rec.Code, http.StatusBadRequest, rec.Body.String())
+	}
+	if !strings.Contains(rec.Body.String(), "command_confirm=true") {
+		t.Fatalf("body = %q, want allow_command rejection", rec.Body.String())
+	}
+}
+
+func TestCronAPI_CreateReloadsRunningGateway(t *testing.T) {
+	resetGatewayTestState(t)
+
+	configPath, cleanup := setupOAuthTestEnv(t)
+	defer cleanup()
+
+	cfg, err := config.LoadConfig(configPath)
+	if err != nil {
+		t.Fatalf("LoadConfig() error = %v", err)
+	}
+	cfg.Tools.Cron.Enabled = true
+	if err := config.SaveConfig(configPath, cfg); err != nil {
+		t.Fatalf("SaveConfig() error = %v", err)
+	}
+
+	originalReloadPost := gatewayReloadPost
+	t.Cleanup(func() {
+		gatewayReloadPost = originalReloadPost
+	})
+
+	var gotURL string
+	var gotAuth string
+	gatewayReloadPost = func(url string, authToken string, timeout time.Duration) (*http.Response, error) {
+		gotURL = url
+		gotAuth = authToken
+		return &http.Response{
+			StatusCode: http.StatusOK,
+			Body:       io.NopCloser(strings.NewReader(`{"status":"reload triggered"}`)),
+		}, nil
+	}
+
+	gateway.mu.Lock()
+	gateway.pidData = &ppid.PidFileData{
+		Host:  "127.0.0.1",
+		Port:  18999,
+		Token: "reload-token",
+	}
+	setGatewayRuntimeStatusLocked("running")
+	gateway.mu.Unlock()
+
+	h := NewHandler(configPath)
+	mux := http.NewServeMux()
+	h.RegisterRoutes(mux)
+
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(
+		http.MethodPost,
+		"/api/cron",
+		bytes.NewBufferString(`{"name":"Morning reminder","description":"Send a daily check-in","scheduleType":"cron","schedule":"0 9 * * *"}`),
+	)
+	req.Header.Set("Content-Type", "application/json")
+	mux.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusCreated {
+		t.Fatalf("status = %d, want %d, body=%s", rec.Code, http.StatusCreated, rec.Body.String())
+	}
+	if gotURL != "http://127.0.0.1:18999/reload" {
+		t.Fatalf("reload url = %q, want %q", gotURL, "http://127.0.0.1:18999/reload")
+	}
+	if gotAuth != "reload-token" {
+		t.Fatalf("reload auth = %q, want %q", gotAuth, "reload-token")
 	}
 }
 

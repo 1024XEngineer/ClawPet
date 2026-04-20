@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/sipeed/picoclaw/pkg/config"
+	"github.com/sipeed/picoclaw/pkg/constants"
 	cronpkg "github.com/sipeed/picoclaw/pkg/cron"
 )
 
@@ -65,7 +66,7 @@ func (h *Handler) registerCronRoutes(mux *http.ServeMux) {
 }
 
 func (h *Handler) handleListCronJobs(w http.ResponseWriter, r *http.Request) {
-	cs, err := h.newCronService()
+	_, cs, err := h.newCronService()
 	if err != nil {
 		writeCronServiceError(w, err)
 		return
@@ -124,9 +125,13 @@ func (h *Handler) handleCreateCronJob(w http.ResponseWriter, r *http.Request) {
 	channel := strings.TrimSpace(derefString(req.Channel))
 	to := strings.TrimSpace(derefString(req.To))
 
-	cs, err := h.newCronService()
+	cfg, cs, err := h.newCronService()
 	if err != nil {
 		writeCronServiceError(w, err)
+		return
+	}
+	if err := validateCronCommandPolicy(cfg, strings.TrimSpace(derefString(req.Command)), channel); err != nil {
+		writeCronError(w, http.StatusBadRequest, err.Error())
 		return
 	}
 
@@ -151,6 +156,10 @@ func (h *Handler) handleCreateCronJob(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
+	if err := h.reloadGatewayCronRuntime(cfg); err != nil {
+		writeCronError(w, http.StatusBadGateway, err.Error())
+		return
+	}
 
 	writeCronJSON(w, http.StatusCreated, map[string]any{"job": buildCronJobResponse(*job)})
 }
@@ -162,7 +171,7 @@ func (h *Handler) handleUpdateCronJob(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	cs, err := h.newCronService()
+	cfg, cs, err := h.newCronService()
 	if err != nil {
 		writeCronServiceError(w, err)
 		return
@@ -216,9 +225,17 @@ func (h *Handler) handleUpdateCronJob(w http.ResponseWriter, r *http.Request) {
 	if req.To != nil {
 		existing.Payload.To = strings.TrimSpace(*req.To)
 	}
+	if err := validateCronCommandPolicy(cfg, existing.Payload.Command, existing.Payload.Channel); err != nil {
+		writeCronError(w, http.StatusBadRequest, err.Error())
+		return
+	}
 
 	if err := cs.UpdateJob(existing); err != nil {
 		writeCronError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	if err := h.reloadGatewayCronRuntime(cfg); err != nil {
+		writeCronError(w, http.StatusBadGateway, err.Error())
 		return
 	}
 
@@ -226,7 +243,7 @@ func (h *Handler) handleUpdateCronJob(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *Handler) handleDeleteCronJob(w http.ResponseWriter, r *http.Request) {
-	cs, err := h.newCronService()
+	cfg, cs, err := h.newCronService()
 	if err != nil {
 		writeCronServiceError(w, err)
 		return
@@ -235,6 +252,10 @@ func (h *Handler) handleDeleteCronJob(w http.ResponseWriter, r *http.Request) {
 	jobID := r.PathValue("id")
 	if !cs.RemoveJob(jobID) {
 		writeCronError(w, http.StatusNotFound, fmt.Sprintf("Cron job %q not found", jobID))
+		return
+	}
+	if err := h.reloadGatewayCronRuntime(cfg); err != nil {
+		writeCronError(w, http.StatusBadGateway, err.Error())
 		return
 	}
 
@@ -255,7 +276,7 @@ func (h *Handler) handleToggleCronJob(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	cs, err := h.newCronService()
+	cfg, cs, err := h.newCronService()
 	if err != nil {
 		writeCronServiceError(w, err)
 		return
@@ -267,6 +288,10 @@ func (h *Handler) handleToggleCronJob(w http.ResponseWriter, r *http.Request) {
 		writeCronError(w, http.StatusNotFound, fmt.Sprintf("Cron job %q not found", jobID))
 		return
 	}
+	if err := h.reloadGatewayCronRuntime(cfg); err != nil {
+		writeCronError(w, http.StatusBadGateway, err.Error())
+		return
+	}
 
 	writeCronJSON(w, http.StatusOK, map[string]any{
 		"success": true,
@@ -274,19 +299,30 @@ func (h *Handler) handleToggleCronJob(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
-func (h *Handler) newCronService() (*cronpkg.CronService, error) {
+func (h *Handler) newCronService() (*config.Config, *cronpkg.CronService, error) {
 	cfg, err := config.LoadConfig(h.configPath)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	if !cfg.Tools.Cron.Enabled {
-		return nil, errCronDisabled
+		return nil, nil, errCronDisabled
 	}
 	storePath := filepath.Join(cfg.WorkspacePath(), "cron", "jobs.json")
-	return cronpkg.NewCronService(storePath, nil), nil
+	return cfg, cronpkg.NewCronService(storePath, nil), nil
 }
 
 var errCronDisabled = fmt.Errorf("cron tool is disabled")
+var gatewayReloadPost = func(url string, authToken string, timeout time.Duration) (*http.Response, error) {
+	client := http.Client{Timeout: timeout}
+	req, err := http.NewRequest(http.MethodPost, url, nil)
+	if err != nil {
+		return nil, err
+	}
+	if authToken != "" {
+		req.Header.Set("Authorization", "Bearer "+authToken)
+	}
+	return client.Do(req)
+}
 
 func writeCronServiceError(w http.ResponseWriter, err error) {
 	if err == nil {
@@ -440,6 +476,62 @@ func derefString(value *string) string {
 		return ""
 	}
 	return *value
+}
+
+func validateCronCommandPolicy(cfg *config.Config, command string, channel string) error {
+	command = strings.TrimSpace(command)
+	channel = strings.TrimSpace(channel)
+	if command == "" {
+		return nil
+	}
+	if cfg == nil {
+		return fmt.Errorf("missing cron configuration")
+	}
+	if !cfg.Tools.Exec.Enabled {
+		return fmt.Errorf("command execution is disabled")
+	}
+	if !constants.IsInternalChannel(channel) {
+		return fmt.Errorf("scheduling command execution is restricted to internal channels")
+	}
+	if !cfg.Tools.Cron.AllowCommand {
+		return fmt.Errorf("command_confirm=true is required when allow_command is disabled")
+	}
+	return nil
+}
+
+func (h *Handler) reloadGatewayCronRuntime(cfg *config.Config) error {
+	gateway.mu.Lock()
+	runtimePIDData := gateway.pidData
+	runtimeState := gatewayStatusWithoutHealthLocked()
+	gateway.mu.Unlock()
+
+	if runtimeState != "running" {
+		return nil
+	}
+
+	baseURL := h.currentGatewayBaseURL(cfg, runtimePIDData)
+	reloadURL := strings.TrimRight(baseURL, "/") + "/reload"
+	authToken := ""
+	if runtimePIDData != nil {
+		authToken = strings.TrimSpace(runtimePIDData.Token)
+	}
+
+	resp, err := gatewayReloadPost(reloadURL, authToken, 3*time.Second)
+	if err != nil {
+		return fmt.Errorf("cron job saved but gateway reload failed: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		body, _ := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
+		message := strings.TrimSpace(string(body))
+		if message == "" {
+			message = resp.Status
+		}
+		return fmt.Errorf("cron job saved but gateway reload failed: %s", message)
+	}
+
+	return nil
 }
 
 func writeCronJSON(w http.ResponseWriter, status int, payload any) {
