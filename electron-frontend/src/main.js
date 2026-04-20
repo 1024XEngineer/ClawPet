@@ -403,11 +403,8 @@ function createOnboardingWindow(targetUrl = buildSettingsWindowUrl({ onboarding:
   onboardingWindow.on('closed', () => {
     onboardingWindow = null;
     if (onboardingLocked) {
-      setTimeout(() => {
-        if (onboardingLocked) {
-          createOnboardingWindow(buildSettingsWindowUrl({ onboarding: true }));
-        }
-      }, 120);
+      logToFile('[ONBOARDING] window closed while locked, quitting app');
+      app.quit();
     }
   });
 }
