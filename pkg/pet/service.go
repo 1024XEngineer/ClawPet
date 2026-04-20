@@ -18,6 +18,7 @@ import (
 	petconfig "github.com/sipeed/picoclaw/pkg/pet/config"
 	"github.com/sipeed/picoclaw/pkg/pet/memory"
 	"github.com/sipeed/picoclaw/pkg/pet/modelconfig"
+	"github.com/sipeed/picoclaw/pkg/pet/userprofile"
 	"github.com/sipeed/picoclaw/pkg/pet/voice"
 	"github.com/sipeed/picoclaw/pkg/providers"
 )
@@ -39,6 +40,7 @@ type PetService struct {
 	compressionSvc     *compression.CompressionService
 	modelConfigManager *modelconfig.Manager
 	cronService        *cron.CronService
+	userProfileManager *userprofile.Manager
 
 	connSessions map[string]string
 
@@ -122,41 +124,45 @@ func NewPetService(msgBus *bus.MessageBus, cfg PetServiceConfig) (*PetService, e
 				logger.Warnf("pet: failed to create conversation store: %v", err)
 			}
 
-			// 如果压缩功能启用，创建压缩服务
-			if cfg.Config != nil && compressionConfig != nil && compressionConfig.Enabled {
-				modelName := compressionConfig.Model
-				var provider providers.LLMProvider
-				var modelCfg *config.ModelConfig
-
-				// 获取模型配置（从 picoclaw 的 model_list 中查找）
-				if modelName != "" {
-					modelCfg, err = cfg.Config.GetModelConfig(modelName)
-					if err != nil {
-						logger.Warnf("pet: compression model %q not found: %v, compression disabled", modelName, err)
+			// 统一使用 Agents.Defaults 的模型
+			var provider providers.LLMProvider
+			var modelCfg *config.ModelConfig
+			if cfg.Config != nil {
+				rawModel := cfg.Config.Agents.Defaults.GetModelName()
+				for _, m := range cfg.Config.ModelList {
+					if m.Model == rawModel {
+						modelCfg = m
+						break
 					}
 				}
-
-				// 创建 LLM Provider（使用 modelCfg 中的配置）
 				if modelCfg != nil {
 					provider, _, err = providers.CreateProviderFromConfig(modelCfg)
 					if err != nil {
-						logger.Warnf("pet: failed to create compression provider: %v, compression disabled", err)
+						logger.Warnf("pet: failed to create provider for agents default model: %v", err)
 					}
 				}
-
-				// 创建压缩服务并设置 Provider
-				if provider != nil {
-					s.provider = provider
-					s.compressionSvc = compression.NewCompressionService(compressionConfig, s.memoryStore, s.conversationStore)
-					s.compressionSvc.SetProvider(provider, modelCfg)
-				}
 			}
-		}
 
+			// 创建压缩服务并设置 Provider（仅当压缩功能启用时）
+			if compressionConfig != nil && compressionConfig.Enabled && provider != nil {
+				s.provider = provider
+				s.compressionSvc = compression.NewCompressionService(compressionConfig, s.memoryStore, s.conversationStore)
+				s.compressionSvc.SetProvider(provider, modelCfg)
+			}
+
+			// 创建用户画像管理器
+			s.userProfileManager = userprofile.NewManager(
+				workspacePath,
+				s.memoryStore,
+				s.charManager,
+				provider,
+				cfg.Config.Agents.Defaults.GetModelName(),
+			)
+		}
 		if cfg.ConfigPath != "" {
 			s.modelConfigManager = modelconfig.NewManager(cfg.ConfigPath)
 		}
-
+		// 初始化 cron 服务
 		cronStorePath := filepath.Join(workspacePath, "cron", "jobs.json")
 		s.cronService = cron.NewCronService(cronStorePath, nil)
 		logger.DebugCF("pet", "PetService: cron service initialized, store=", map[string]any{
@@ -247,6 +253,10 @@ func (s *PetService) ConversationStore() *compression.ConversationStore {
 
 func (s *PetService) VoiceLoader() *voice.Loader {
 	return s.voiceLoader
+}
+
+func (s *PetService) UserProfileManager() *userprofile.Manager {
+	return s.userProfileManager
 }
 
 func (s *PetService) SetPushHandler(handler PushHandler) {
@@ -392,6 +402,8 @@ func (s *PetService) HandleRequest(connID string, req Request) error {
 		return s.handleChat(sessionID, req)
 	case ActionOnboardingConfig:
 		return s.handleOnboardingConfig(sessionID, req)
+	case ActionUserProfileUpdate:
+		return s.handleUserProfileUpdate(sessionID, req)
 	case ActionCharacterGet:
 		return s.handleCharacterGet(sessionID, req)
 	case ActionCharacterUpdate:
@@ -596,6 +608,21 @@ func (s *PetService) handleHealthCheck(sessionID string, req Request) error {
 		Status:    "ok",
 		Timestamp: time.Now().Unix(),
 	})
+}
+
+func (s *PetService) handleUserProfileUpdate(sessionID string, req Request) error {
+	if s.userProfileManager == nil {
+		return s.sendError(sessionID, req.Action, "user profile manager not available")
+	}
+
+	var data userprofile.UserProfileUpdateRequest
+	if err := json.Unmarshal(req.Data, &data); err != nil {
+		return s.sendError(sessionID, req.Action, "invalid user profile data")
+	}
+
+	s.userProfileManager.UpdateProfile(&data)
+
+	return s.sendResponse(sessionID, req.Action, map[string]string{"status": "ok"})
 }
 
 func (s *PetService) sendResponse(sessionID, action string, data interface{}) error {
