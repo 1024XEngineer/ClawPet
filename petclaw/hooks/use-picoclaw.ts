@@ -17,6 +17,7 @@ import {
   type Skill,
   type Tool,
   type CronJob,
+  type CronJobInput,
   type Config,
 } from '@/lib/api'
 
@@ -154,12 +155,12 @@ export function useCronJobs() {
 export function useCronMutations() {
   const create = useSWRMutation(
     'cron-jobs',
-    (_, { arg }: { arg: Omit<CronJob, 'id' | 'lastRun' | 'nextRun'> }) =>
+    (_, { arg }: { arg: CronJobInput }) =>
       cronApi.create(arg)
   )
   const update = useSWRMutation(
     'cron-jobs',
-    (_, { arg }: { arg: { id: string; job: Partial<CronJob> } }) =>
+    (_, { arg }: { arg: { id: string; job: Partial<CronJobInput> } }) =>
       cronApi.update(arg.id, arg.job)
   )
   const remove = useSWRMutation('cron-jobs', (_, { arg }: { arg: string }) =>

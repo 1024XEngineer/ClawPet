@@ -15,16 +15,19 @@ export function WindowControls({ title }: WindowControlsProps) {
   }, [])
 
   return (
-    <div className="z-20 flex h-10 select-none items-center justify-between border-b border-border/70 bg-card px-3" style={{ userSelect: "none" } as CSSProperties}>
-      <div className="min-w-0 flex-1 truncate text-xs font-medium text-muted-foreground" data-electron-drag-region="true">
+    <div
+      className="window-chrome z-20 select-none px-3 sm:px-4"
+      style={{ userSelect: "none" } as CSSProperties}
+    >
+      <div className="window-chrome-title" data-electron-drag-region="true">
         {title}
       </div>
-      <div className="ml-2 flex items-center gap-1" data-electron-no-drag="true">
+      <div className="window-chrome-actions ml-2" data-electron-no-drag="true">
         <button
           type="button"
           onClick={() => window.electronAPI?.minimizeWindow?.()}
           disabled={!hasElectronApi}
-          className="rounded-md p-1.5 text-muted-foreground hover:bg-accent hover:text-foreground disabled:cursor-not-allowed disabled:opacity-40"
+          className="window-chrome-button"
           title="最小化"
         >
           <Minus className="h-3.5 w-3.5" />
@@ -33,7 +36,7 @@ export function WindowControls({ title }: WindowControlsProps) {
           type="button"
           onClick={() => window.electronAPI?.toggleMaximizeWindow?.()}
           disabled={!hasElectronApi}
-          className="rounded-md p-1.5 text-muted-foreground hover:bg-accent hover:text-foreground disabled:cursor-not-allowed disabled:opacity-40"
+          className="window-chrome-button"
           title="最大化 / 还原"
         >
           <Square className="h-3.5 w-3.5" />
@@ -49,7 +52,7 @@ export function WindowControls({ title }: WindowControlsProps) {
               window.close()
             }
           }}
-          className="rounded-md p-1.5 text-muted-foreground hover:bg-red-500 hover:text-white"
+          className="window-chrome-button window-chrome-button--danger"
           title="关闭"
         >
           <X className="h-3.5 w-3.5" />

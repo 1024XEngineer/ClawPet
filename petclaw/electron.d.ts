@@ -10,7 +10,10 @@ declare global {
   interface Window {
     electronAPI?: {
       openOnboarding?: () => void
+      completeOnboarding?: () => void
+      openSettings?: () => void
       setOnboardingMode?: (enabled: boolean) => void
+      setPetClickThrough?: (enabled: boolean) => void
       getBackendBaseUrl?: () => string
       minimizeWindow?: () => void
       toggleMaximizeWindow?: () => void
@@ -19,6 +22,7 @@ declare global {
         (payload: BubblePayload): void
         (text: string | null, emotion: string, audio?: string): void
       }
+      onForceStopMedia?: (callback: () => void) => () => void
     }
   }
 }

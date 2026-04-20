@@ -162,6 +162,10 @@ export function useChat(options: UseChatOptions = {}): UseChatResult {
   const currentAudioRef = useRef<HTMLAudioElement | null>(null)
   const lastAssistantTextRef = useRef("")
   const lastEmotionRef = useRef("neutral")
+  const lastPlayedAudioRef = useRef<{ value: string; at: number }>({
+    value: "",
+    at: 0,
+  })
 
   const updateSessionMessages = useCallback(
     (sessionId: string, updater: (messages: ChatMessage[]) => ChatMessage[]) => {
@@ -198,6 +202,18 @@ export function useChat(options: UseChatOptions = {}): UseChatResult {
     (audioBase64: string) => {
       if (!audioBase64) {
         return
+      }
+
+      if (
+        lastPlayedAudioRef.current.value === audioBase64 &&
+        Date.now() - lastPlayedAudioRef.current.at < 4000
+      ) {
+        return
+      }
+
+      lastPlayedAudioRef.current = {
+        value: audioBase64,
+        at: Date.now(),
       }
 
       if (window.electronAPI?.showBubble) {
@@ -297,13 +313,19 @@ export function useChat(options: UseChatOptions = {}): UseChatResult {
 
           let currentStream = audioStreamRef.current
           if (hasExplicitChatId) {
-            if (currentStream.chatId !== incomingChatId) {
+            if (
+              currentStream.chatId !== null &&
+              currentStream.chatId !== incomingChatId
+            ) {
               currentStream = { chatId: incomingChatId, chunks: [] }
               audioStreamRef.current = currentStream
+            } else if (currentStream.chatId === null) {
+              currentStream = {
+                chatId: incomingChatId,
+                chunks: currentStream.chunks,
+              }
+              audioStreamRef.current = currentStream
             }
-          } else if (currentStream.chatId !== null) {
-            currentStream = { chatId: null, chunks: [] }
-            audioStreamRef.current = currentStream
           }
 
           if (data.text) {
@@ -372,6 +394,14 @@ export function useChat(options: UseChatOptions = {}): UseChatResult {
 
     return () => {
       unsubscribe()
+      ws.disconnect()
+      if (currentAudioRef.current) {
+        currentAudioRef.current.pause()
+        currentAudioRef.current = null
+      }
+      audioStreamRef.current = { chatId: null, chunks: [] }
+      lastAssistantTextRef.current = ""
+      lastPlayedAudioRef.current = { value: "", at: 0 }
     }
   }, [
     connectWithBootstrap,
@@ -416,6 +446,7 @@ export function useChat(options: UseChatOptions = {}): UseChatResult {
     if (currentAudioRef.current) {
       currentAudioRef.current.pause()
     }
+    lastPlayedAudioRef.current = { value: "", at: 0 }
     lastAssistantTextRef.current = ""
     audioStreamRef.current = { chatId: null, chunks: [] }
     setIsTyping(false)
@@ -447,6 +478,7 @@ export function useChat(options: UseChatOptions = {}): UseChatResult {
       if (currentAudioRef.current) {
         currentAudioRef.current.pause()
       }
+      lastPlayedAudioRef.current = { value: "", at: 0 }
       audioStreamRef.current = { chatId: null, chunks: [] }
       lastAssistantTextRef.current = ""
       setIsTyping(false)
@@ -471,6 +503,25 @@ export function useChat(options: UseChatOptions = {}): UseChatResult {
 
   const clearError = useCallback(() => {
     setError(null)
+  }, [])
+
+  useEffect(() => {
+    const unlisten = window.electronAPI?.onForceStopMedia?.(() => {
+      if (currentAudioRef.current) {
+        currentAudioRef.current.pause()
+        currentAudioRef.current = null
+      }
+      wsRef.current.disconnect()
+      audioStreamRef.current = { chatId: null, chunks: [] }
+      lastAssistantTextRef.current = ""
+      lastPlayedAudioRef.current = { value: "", at: 0 }
+      setIsTyping(false)
+      setError(null)
+    })
+
+    return () => {
+      unlisten?.()
+    }
   }, [])
 
   const activeSession =

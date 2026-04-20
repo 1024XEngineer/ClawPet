@@ -270,17 +270,11 @@ export function OnboardingWizard({ onFinish }: OnboardingWizardProps) {
       if (![200, 401].includes(gatewayRes.status)) throw new Error(`网关检查失败（${gatewayRes.status}）`)
 
       setSetupTasks((prev) => withStatus(withStatus(prev, "gateway", "done"), "pico", "running"))
-      let setupRes = await fetchWithAuthRetry(`${baseUrl}${API_ENDPOINTS.PET.SETUP}`, { method: "POST", credentials: "include" })
-      if (setupRes.status === 404) {
-        setupRes = await fetchWithAuthRetry(`${baseUrl}${API_ENDPOINTS.PICO.SETUP}`, { method: "POST", credentials: "include" })
-      }
+      const setupRes = await fetchWithAuthRetry(`${baseUrl}${API_ENDPOINTS.PET.SETUP}`, { method: "POST", credentials: "include" })
       if (!setupRes.ok) throw new Error(`Pet Channel 初始化失败（${setupRes.status}）`)
 
       setSetupTasks((prev) => withStatus(withStatus(prev, "pico", "done"), "token", "running"))
-      let tokenRes = await fetchWithAuthRetry(`${baseUrl}${API_ENDPOINTS.PET.TOKEN}`, { credentials: "include" })
-      if (tokenRes.status === 404) {
-        tokenRes = await fetchWithAuthRetry(`${baseUrl}${API_ENDPOINTS.PICO.TOKEN}`, { credentials: "include" })
-      }
+      const tokenRes = await fetchWithAuthRetry(`${baseUrl}${API_ENDPOINTS.PET.TOKEN}`, { credentials: "include" })
       if (!tokenRes.ok) throw new Error(`连接验证失败（${tokenRes.status}）`)
 
       setSetupTasks((prev) => withStatus(prev, "token", "done"))
@@ -497,23 +491,26 @@ export function OnboardingWizard({ onFinish }: OnboardingWizardProps) {
 
   return (
     <div
-      className={`onboarding-flow-bg relative h-full w-full overflow-hidden rounded-[2rem] border border-[#e8dccd] bg-gradient-to-br ${moodTheme.shellGradient} shadow-[0_30px_90px_-50px_rgba(130,84,23,0.5)] transition-[background-color,box-shadow,opacity,transform] duration-700 ease-out ${isFinishing ? "opacity-0 scale-[0.992]" : "opacity-100 scale-100"}`}
+      className={`onboarding-flow-bg relative h-full min-h-0 w-full overflow-hidden bg-gradient-to-br transition-[background-color,border-color,box-shadow,opacity,transform] duration-700 ease-out ${hasElectronApi ? "rounded-none border-0 shadow-none" : "rounded-[2rem] border border-[#e8dccd] shadow-[0_30px_90px_-50px_rgba(130,84,23,0.5)]"} ${isFinishing ? "opacity-0 scale-[0.992]" : "opacity-100 scale-100"}`}
       style={{ backgroundColor: moodTheme.shellTint, backgroundBlendMode: 'normal' }}
     >
       <div className="pointer-events-none absolute inset-0 bg-[radial-gradient(circle_at_15%_20%,rgba(255,255,255,0.5),transparent_35%),radial-gradient(circle_at_85%_25%,rgba(248,192,255,0.25),transparent_38%),radial-gradient(circle_at_50%_85%,rgba(123,211,255,0.2),transparent_42%)]" />
-      <div className="grid h-full min-h-0 grid-cols-1 md:grid-cols-[1.25fr_0.75fr]">
+      <div className="grid h-full min-h-0 grid-cols-1 lg:grid-cols-[1.18fr_0.82fr]">
         <div className="flex h-full min-h-0 flex-col">
-          <div className="border-b border-[#eadfce] px-6 py-5 md:px-8">
-            <div className="mb-3 flex items-start justify-between gap-4">
+          <div
+            className="shrink-0 border-b border-[#eadfce] bg-[linear-gradient(180deg,rgba(255,250,243,0.96),rgba(255,245,235,0.88))] px-4 py-4 shadow-[inset_0_-1px_0_rgba(255,255,255,0.56)] backdrop-blur-xl sm:px-6 xl:px-8"
+            data-electron-drag-region={hasElectronApi ? "true" : undefined}
+          >
+            <div className="mb-3 flex flex-wrap items-start justify-between gap-4">
               <div className="flex items-center gap-2">
                 {steps.map((_, index) => (
                   <span key={index} className={`h-1.5 rounded-full transition-all ${index <= step ? "w-11 bg-[#9c5f22]" : "w-9 bg-[#e2d6c6]"}`} />
                 ))}
               </div>
-              <div className="flex items-center gap-1 rounded-xl border border-[#e4d4c0] bg-white/80 p-1 shadow-sm">
+              <div className={`${hasElectronApi ? "window-chrome-actions flex" : "hidden"} items-center gap-1`} data-electron-no-drag="true">
                 <button
                   type="button"
-                  className="rounded-md p-1.5 text-gradient-milestone hover:bg-[#f6ebdd] disabled:cursor-not-allowed disabled:opacity-40"
+                  className="window-chrome-button"
                   onClick={() => window.electronAPI?.minimizeWindow?.()}
                   disabled={!hasElectronApi}
                   title="最小化"
@@ -522,7 +519,7 @@ export function OnboardingWizard({ onFinish }: OnboardingWizardProps) {
                 </button>
                 <button
                   type="button"
-                  className="rounded-md p-1.5 text-gradient-milestone hover:bg-[#f6ebdd] disabled:cursor-not-allowed disabled:opacity-40"
+                  className="window-chrome-button"
                   onClick={() => window.electronAPI?.toggleMaximizeWindow?.()}
                   disabled={!hasElectronApi}
                   title="最大化 / 还原"
@@ -531,7 +528,7 @@ export function OnboardingWizard({ onFinish }: OnboardingWizardProps) {
                 </button>
                 <button
                   type="button"
-                  className="rounded-md p-1.5 text-gradient-milestone hover:bg-[#f8d9d6] hover:text-[#b42318]"
+                  className="window-chrome-button window-chrome-button--danger"
                   onClick={() => {
                     if (hasElectronApi) {
                       window.electronAPI?.closeWindow?.()
@@ -545,11 +542,11 @@ export function OnboardingWizard({ onFinish }: OnboardingWizardProps) {
                 </button>
               </div>
             </div>
-            <h1 className="text-2xl font-semibold text-gradient-warm text-shadow-warm md:text-3xl animate-float">{steps[step]}</h1>
+            <h1 className="animate-float text-xl font-semibold text-gradient-warm text-shadow-warm sm:text-2xl xl:text-3xl">{steps[step]}</h1>
             <p className="mt-1 text-sm text-gradient-milestone font-decorated">阶段：<span className="animate-text-shimmer">{milestones[step]}</span> · 已完成 {step + 1}/3</p>
           </div>
 
-          <div className="min-h-0 flex-1 overflow-y-auto px-6 py-6 md:px-8">
+          <div className="min-h-0 flex-1 overflow-y-auto overscroll-contain px-4 py-4 sm:px-6 sm:py-5 xl:px-8 xl:py-6">
             {step === 2 && (
               <div className="space-y-5">
                 <div className={`rounded-2xl border border-white/70 bg-[linear-gradient(120deg,rgba(255,255,255,0.9),rgba(255,246,228,0.82),rgba(255,238,251,0.82))] p-5 ${moodTheme.cardGlow}`}>
@@ -815,8 +812,8 @@ export function OnboardingWizard({ onFinish }: OnboardingWizardProps) {
             )}
           </div>
 
-          <div className="shrink-0 border-t border-[#eadfce] bg-[#fff8ef]/95 px-6 py-5 backdrop-blur md:px-8">
-            <div className="flex items-center justify-between">
+          <div className="shrink-0 border-t border-[#eadfce] bg-[#fff8ef]/95 px-4 py-4 backdrop-blur sm:px-6 xl:px-8">
+            <div className="flex flex-wrap items-center justify-between gap-3">
             <Button variant="ghost" onClick={() => setStep((prev) => Math.max(0, prev - 1))} disabled={step === 0 || setupRunning} className="text-[#6a5644]">
               上一步
             </Button>
@@ -838,11 +835,11 @@ export function OnboardingWizard({ onFinish }: OnboardingWizardProps) {
         </div>
 
         <div
-          className={`hidden h-full border-l border-[#eadfce] ${moodTheme.sidePanel} p-8 transition-colors duration-700 ease-out md:block`}
+          className={`hidden h-full border-l border-[#eadfce] ${moodTheme.sidePanel} p-6 transition-colors duration-700 ease-out lg:block xl:p-8`}
           style={{ backgroundColor: moodTheme.sideTint }}
         >
           <div className="mb-6 flex items-center gap-2 rounded-full bg-white/80 px-3 py-1 text-xs text-gradient-primary backdrop-blur">
-            <Sparkles className="h-3.5 w-3.5 animate-text-shimmer" />PetClaw <span className="font-semibold">初始化向导</span>
+            <Sparkles className="h-3.5 w-3.5 animate-text-shimmer" />ClawPet <span className="font-semibold">初始化向导</span>
           </div>
           <div className="rounded-2xl border border-[#e8dccd] bg-white/90 px-4 py-3 text-sm leading-relaxed text-gradient-primary shadow-sm">
             {companionFeedback}

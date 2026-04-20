@@ -168,6 +168,75 @@ html[data-mood-level='critical'] {
   }
 }
 
+.window-chrome {
+  display: flex;
+  min-height: 3rem;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.75rem;
+  border-bottom: 1px solid rgba(234, 223, 206, 0.92);
+  background:
+    linear-gradient(180deg, rgba(255, 250, 243, 0.96), rgba(255, 245, 235, 0.88)),
+    radial-gradient(circle at top left, rgba(255, 255, 255, 0.42), transparent 42%);
+  backdrop-filter: blur(18px);
+  box-shadow: inset 0 -1px 0 rgba(255, 255, 255, 0.56);
+}
+
+.window-chrome-title {
+  min-width: 0;
+  flex: 1 1 auto;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 0.78rem;
+  font-weight: 600;
+  letter-spacing: 0.01em;
+  color: rgba(113, 86, 63, 0.88);
+}
+
+.window-chrome-actions {
+  display: flex;
+  align-items: center;
+  gap: 0.25rem;
+}
+
+.window-chrome-button {
+  display: inline-flex;
+  height: 2rem;
+  width: 2rem;
+  align-items: center;
+  justify-content: center;
+  border: 1px solid rgba(225, 208, 186, 0.96);
+  border-radius: 0.8rem;
+  background: rgba(255, 255, 255, 0.78);
+  color: rgba(131, 98, 70, 0.82);
+  transition:
+    background-color 180ms ease,
+    border-color 180ms ease,
+    color 180ms ease,
+    transform 180ms ease,
+    box-shadow 180ms ease;
+  box-shadow: 0 1px 2px rgba(122, 83, 39, 0.05);
+}
+
+.window-chrome-button:hover:not(:disabled) {
+  transform: translateY(-1px);
+  border-color: rgba(212, 169, 121, 0.94);
+  background: rgba(255, 248, 239, 0.98);
+  color: rgba(95, 63, 35, 0.92);
+}
+
+.window-chrome-button:disabled {
+  cursor: not-allowed;
+  opacity: 0.42;
+}
+
+.window-chrome-button--danger:hover:not(:disabled) {
+  border-color: rgba(234, 102, 86, 0.95);
+  background: rgba(245, 95, 84, 0.92);
+  color: #fff;
+}
+
 .pet-slider {
   background-image:
     linear-gradient(90deg, #ffe9c9 0%, #ffd8ad 28%, #ffc7bc 56%, #c6dbff 100%),
@@ -363,4 +432,109 @@ html[data-mood-level='critical'] {
 .font-playful {
   font-family: 'Geist', 'Comic Sans MS', cursive, sans-serif;
   letter-spacing: 0.01em;
+}
+
+@keyframes dashboard-rise-in {
+  0% {
+    opacity: 0;
+    transform: translateY(18px) scale(0.985);
+  }
+  100% {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+}
+
+@keyframes dashboard-float-slow {
+  0%, 100% {
+    transform: translateY(0);
+  }
+  50% {
+    transform: translateY(-6px);
+  }
+}
+
+@keyframes dashboard-glow-pulse {
+  0%, 100% {
+    box-shadow: 0 18px 36px -28px rgba(121, 85, 44, 0.2);
+  }
+  50% {
+    box-shadow: 0 24px 42px -26px rgba(217, 119, 6, 0.28);
+  }
+}
+
+.dashboard-enter {
+  animation: dashboard-rise-in 520ms cubic-bezier(0.2, 0.8, 0.2, 1) both;
+}
+
+.dashboard-float-slow {
+  animation: dashboard-float-slow 5.6s ease-in-out infinite;
+}
+
+.dashboard-pulse-glow {
+  animation: dashboard-glow-pulse 3.8s ease-in-out infinite;
+}
+
+.dashboard-card {
+  position: relative;
+  overflow: hidden;
+  backdrop-filter: blur(14px);
+  transition:
+    transform 220ms ease,
+    box-shadow 220ms ease,
+    border-color 220ms ease,
+    background-color 220ms ease;
+}
+
+.dashboard-card::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  background: linear-gradient(135deg, rgba(255, 255, 255, 0.28), transparent 35%, rgba(255, 235, 210, 0.12));
+  opacity: 0;
+  transition: opacity 220ms ease;
+}
+
+.dashboard-card:hover::before {
+  opacity: 1;
+}
+
+.dashboard-card:hover {
+  transform: translateY(-3px);
+}
+
+nextjs-portal {
+  display: none !important;
+}
+
+* {
+  scrollbar-width: thin;
+  scrollbar-color: rgba(196, 138, 86, 0.78) rgba(252, 241, 230, 0.78);
+}
+
+*::-webkit-scrollbar {
+  width: 11px;
+  height: 11px;
+}
+
+*::-webkit-scrollbar-track {
+  border-radius: 999px;
+  background: linear-gradient(180deg, rgba(255, 248, 239, 0.96), rgba(249, 236, 220, 0.92));
+  border: 1px solid rgba(236, 212, 186, 0.8);
+}
+
+*::-webkit-scrollbar-thumb {
+  border-radius: 999px;
+  border: 2px solid rgba(255, 247, 237, 0.94);
+  background: linear-gradient(180deg, rgba(217, 150, 93, 0.92), rgba(188, 123, 71, 0.92));
+  box-shadow: inset 0 0 0 1px rgba(255, 237, 214, 0.5);
+}
+
+*::-webkit-scrollbar-thumb:hover {
+  background: linear-gradient(180deg, rgba(227, 161, 104, 0.98), rgba(198, 130, 76, 0.98));
+}
+
+*::-webkit-scrollbar-corner {
+  background: rgba(255, 248, 239, 0.96);
 }

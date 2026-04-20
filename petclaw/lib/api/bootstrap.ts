@@ -13,6 +13,11 @@ interface GatewayStatusResponse {
   gateway_start_reason?: string
 }
 
+interface TokenStatusResponse {
+  enabled?: boolean
+  ws_url?: string
+}
+
 interface ModelListResponse {
   default_model?: string
   models?: Array<{
@@ -112,37 +117,25 @@ async function waitGatewayRunning(maxAttempts = 12, delayMs = 800): Promise<bool
   return false
 }
 
-async function isWsProxyReady(wsPath: string): Promise<boolean> {
-  const url = `${getApiBaseUrl()}${wsPath}?session_id=preflight`
+async function isLauncherTokenReady(tokenPath: string): Promise<boolean> {
+  const url = `${getApiBaseUrl()}${tokenPath}`
   const res = await fetch(url, withLauncherAuthRequest(url, { method: 'GET' }))
-
-  // Without upgrade headers this endpoint is expected to return 400/403,
-  // but should not return 503 when gateway proxy is unavailable.
-  return res.status !== 503
+  if (!res.ok) {
+    return false
+  }
+  const data = (await res.json()) as TokenStatusResponse
+  return Boolean(data.enabled && data.ws_url)
 }
 
 async function ensureWsProxyReady(): Promise<boolean> {
-  const petReady = await isWsProxyReady(API_ENDPOINTS.CHAT.WS).catch(() => false)
-  if (petReady) {
-    return true
-  }
-
-  const picoReady = await isWsProxyReady(API_ENDPOINTS.CHAT.WS_LEGACY).catch(() => false)
-  return picoReady
+  return isLauncherTokenReady(API_ENDPOINTS.PET.TOKEN).catch(() => false)
 }
 
 async function ensureChannelSetup(): Promise<void> {
-  let setupRes = await fetchWithAuthRetry(`${getApiBaseUrl()}${API_ENDPOINTS.PET.SETUP}`, {
+  const setupRes = await fetchWithAuthRetry(`${getApiBaseUrl()}${API_ENDPOINTS.PET.SETUP}`, {
     method: 'POST',
     credentials: 'include',
   })
-
-  if (setupRes.status === 404) {
-    setupRes = await fetchWithAuthRetry(`${getApiBaseUrl()}${API_ENDPOINTS.PICO.SETUP}`, {
-      method: 'POST',
-      credentials: 'include',
-    })
-  }
 
   if (!setupRes.ok) {
     throw new Error(`channel setup failed: ${setupRes.status}`)
@@ -278,6 +271,9 @@ export async function ensureBackendReadyForChat(): Promise<BackendBootstrapResul
 
   const status = await getGatewayStatus()
   if (status.gateway_status === 'running') {
+    if (await isDirectGatewayReady()) {
+      return { ok: true }
+    }
     const wsReady = await ensureWsProxyReady()
     return wsReady
       ? { ok: true }
@@ -299,6 +295,10 @@ export async function ensureBackendReadyForChat(): Promise<BackendBootstrapResul
       ok: false,
       reason: latest.gateway_start_reason || 'gateway not running after bootstrap',
     }
+  }
+
+  if (await isDirectGatewayReady()) {
+    return { ok: true }
   }
 
   const wsReady = await ensureWsProxyReady()
