@@ -420,3 +420,94 @@ export const logsApi = {
   clear: () =>
     request<{ success: boolean }>(API_ENDPOINTS.LOGS.CLEAR, { method: 'POST' }),
 }
+
+export type OnboardingStep = 1 | 2 | 3
+export type Chronotype = 'morning' | 'balanced' | 'night'
+export type ReminderCadence = 'light' | 'standard' | 'intensive'
+export type PressureLevel = 'low' | 'medium' | 'high' | 'critical'
+
+export interface OnboardingPayloadV1 {
+  schemaVersion: 1
+  onboardingId: string
+  step: OnboardingStep
+  profile: {
+    displayName: string
+    role: string
+    language: string
+  }
+  pet: {
+    petName: string
+    personality: string
+    voiceStyle: string
+  }
+  app: {
+    autoConnectOnLaunch: boolean
+    enableDesktopBubble: boolean
+    openConsoleOnPetClick: boolean
+  }
+  studentInsights?: {
+    learningRhythm: {
+      chronotype: Chronotype
+      focusWindows: string[]
+      quietWindows: string[]
+      reminderCadence: ReminderCadence
+      summary: string
+    }
+    pressurePlan: {
+      level: PressureLevel
+      strategy: string
+      reminderIntervalsMinutes: number[]
+      toneGuide: string
+      templates: {
+        soft: string
+        normal: string
+        strong: string
+      }
+    }
+  }
+}
+
+export interface OnboardingStatusData {
+  completed: boolean
+  completedAt: string | null
+  hasDraft: boolean
+  step: OnboardingStep | null
+  onboardingId: string | null
+  schemaVersion: 1 | null
+  draftUpdatedAt: string | null
+  payload: OnboardingPayloadV1 | null
+}
+
+export const onboardingApi = {
+  status: () =>
+    request<{ code?: string; data?: OnboardingStatusData } | OnboardingStatusData>(
+      API_ENDPOINTS.ONBOARDING.STATUS,
+    ),
+
+  saveDraft: (payload: OnboardingPayloadV1) =>
+    request<{ code?: string; data?: { saved: boolean; draftUpdatedAt?: string } }>(
+      API_ENDPOINTS.ONBOARDING.DRAFT,
+      {
+        method: 'PUT',
+        body: JSON.stringify(payload),
+      },
+    ),
+
+  complete: (params: { schemaVersion: 1; onboardingId: string }) =>
+    request<{ code?: string; data?: { completed: boolean; completedAt?: string } }>(
+      API_ENDPOINTS.ONBOARDING.COMPLETE,
+      {
+        method: 'POST',
+        body: JSON.stringify(params),
+      },
+    ),
+
+  reset: (reason = 'manual-rerun') =>
+    request<{ code?: string; data?: { completed: boolean; hasDraft: boolean } }>(
+      API_ENDPOINTS.ONBOARDING.RESET,
+      {
+        method: 'POST',
+        body: JSON.stringify({ reason }),
+      },
+    ),
+}

@@ -196,4 +196,10 @@ export const API_ENDPOINTS = {
     TOKEN: '/api/pico/token',
     SETUP: '/api/pico/setup',
   },
+  ONBOARDING: {
+    STATUS: '/api/v1/onboarding/status',
+    DRAFT: '/api/v1/onboarding/draft',
+    COMPLETE: '/api/v1/onboarding/complete',
+    RESET: '/api/v1/onboarding/reset',
+  },
 } as const
