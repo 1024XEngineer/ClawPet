@@ -300,38 +300,51 @@ func (cs *CronService) executeJobByID(jobID string) {
 	}
 }
 
-func (cs *CronService) computeNextRun(schedule *CronSchedule, nowMS int64) *int64 {
+func (cs *CronService) computeAndValidateNextRun(schedule *CronSchedule, nowMS int64) (*int64, error) {
+	if schedule == nil {
+		return nil, fmt.Errorf("schedule is required")
+	}
+
 	switch schedule.Kind {
 	case "at":
-		if schedule.AtMS != nil && *schedule.AtMS > nowMS {
-			return schedule.AtMS
+		if schedule.AtMS == nil {
+			return nil, fmt.Errorf("at schedule requires atMs")
 		}
-		return nil
+		if *schedule.AtMS <= nowMS {
+			return nil, fmt.Errorf("at schedule must be in the future")
+		}
+		return schedule.AtMS, nil
 	case "every":
 		if schedule.EveryMS == nil || *schedule.EveryMS <= 0 {
-			return nil
+			return nil, fmt.Errorf("every schedule requires a positive interval")
 		}
 		next := nowMS + *schedule.EveryMS
-		return &next
+		return &next, nil
 	case "cron":
 		if schedule.Expr == "" {
-			return nil
+			return nil, fmt.Errorf("cron schedule requires expr")
 		}
 
-		// Use gronx to calculate next run time
 		now := time.UnixMilli(nowMS)
 		nextTime, err := gronx.NextTickAfter(schedule.Expr, now, false)
 		if err != nil {
-			log.Printf("[cron] failed to compute next run for expr '%s': %v", schedule.Expr, err)
-			return nil
+			return nil, fmt.Errorf("invalid cron expression: %w", err)
 		}
 
 		nextMS := nextTime.UnixMilli()
-		return &nextMS
+		return &nextMS, nil
 	default:
-		log.Printf("[cron] unknown schedule kind '%s'", schedule.Kind)
+		return nil, fmt.Errorf("unknown schedule kind %q", schedule.Kind)
+	}
+}
+
+func (cs *CronService) computeNextRun(schedule *CronSchedule, nowMS int64) *int64 {
+	nextRun, err := cs.computeAndValidateNextRun(schedule, nowMS)
+	if err != nil {
+		log.Printf("[cron] failed to compute next run for schedule %#v: %v", schedule, err)
 		return nil
 	}
+	return nextRun
 }
 
 // wake up the loop to re-evaluate next wake time immediately (e.g. after add/update/remove jobs)
@@ -414,6 +427,10 @@ func (cs *CronService) AddJob(
 	defer cs.mu.Unlock()
 
 	now := time.Now().UnixMilli()
+	nextRun, err := cs.computeAndValidateNextRun(&schedule, now)
+	if err != nil {
+		return nil, err
+	}
 
 	// One-time tasks (at) should be deleted after execution
 	deleteAfterRun := (schedule.Kind == "at")
@@ -430,7 +447,7 @@ func (cs *CronService) AddJob(
 			To:      to,
 		},
 		State: CronJobState{
-			NextRunAtMS: cs.computeNextRun(&schedule, now),
+			NextRunAtMS: nextRun,
 		},
 		CreatedAtMS:    now,
 		UpdatedAtMS:    now,
@@ -451,10 +468,26 @@ func (cs *CronService) UpdateJob(job *CronJob) error {
 	cs.mu.Lock()
 	defer cs.mu.Unlock()
 
+	if job == nil {
+		return fmt.Errorf("job is required")
+	}
+
+	now := time.Now().UnixMilli()
+	nextRun, err := cs.computeAndValidateNextRun(&job.Schedule, now)
+	if err != nil {
+		return err
+	}
+	if !job.Enabled {
+		nextRun = nil
+	}
+
+	job.State.NextRunAtMS = nextRun
+	job.DeleteAfterRun = job.Schedule.Kind == "at"
+
 	for i := range cs.store.Jobs {
 		if cs.store.Jobs[i].ID == job.ID {
 			cs.store.Jobs[i] = *job
-			cs.store.Jobs[i].UpdatedAtMS = time.Now().UnixMilli()
+			cs.store.Jobs[i].UpdatedAtMS = now
 
 			cs.notify()
 

@@ -208,7 +208,11 @@ func (h *Handler) picoWebUIAddr(r *http.Request) string {
 }
 
 func (h *Handler) buildWsURL(r *http.Request) string {
-	return requestWSScheme(r) + "://" + h.picoWebUIAddr(r) + "/pico/ws"
+	wsPath := "/pico/ws"
+	if r != nil && strings.HasPrefix(r.URL.Path, "/api/pet/") {
+		wsPath = "/pet/ws"
+	}
+	return requestWSScheme(r) + "://" + h.picoWebUIAddr(r) + wsPath
 }
 
 func (h *Handler) buildPicoEventsURL(r *http.Request) string {

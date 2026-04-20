@@ -6,6 +6,28 @@
   margin: 0;
   padding: 0;
   box-sizing: border-box;
+  scrollbar-width: thin;
+  scrollbar-color: #9c6f4a #2a2633;
+}
+
+*::-webkit-scrollbar {
+  width: 10px;
+  height: 10px;
+}
+
+*::-webkit-scrollbar-track {
+  border-radius: 999px;
+  background: linear-gradient(180deg, rgba(41, 36, 50, 0.92), rgba(31, 28, 41, 0.92));
+}
+
+*::-webkit-scrollbar-thumb {
+  border-radius: 999px;
+  border: 2px solid rgba(34, 30, 43, 0.95);
+  background: linear-gradient(180deg, rgba(183, 130, 90, 0.92), rgba(137, 94, 63, 0.92));
+}
+
+*::-webkit-scrollbar-thumb:hover {
+  background: linear-gradient(180deg, rgba(200, 144, 102, 0.96), rgba(149, 101, 68, 0.96));
 }
 
 html, body, #root {

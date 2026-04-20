@@ -1,0 +1,47 @@
+{
+  "version": 1,
+  "description": "Sample request and response payloads for the current PetClaw integration flow.",
+  "groups": [
+    {
+      "name": "launcher-http",
+      "files": [
+        "launcher-auth-login.request.json",
+        "launcher-auth-status.response.authenticated.json",
+        "launcher-auth-status.response.unauthenticated.json",
+        "launcher-gateway-status.response.running.json",
+        "launcher-gateway-start.response.ok.json",
+        "launcher-gateway-start.response.precondition-failed.json",
+        "launcher-pet-setup.response.json",
+        "launcher-pet-token.response.json"
+      ]
+    },
+    {
+      "name": "gateway-http",
+      "files": [
+        "gateway-health.response.json",
+        "gateway-ready.response.json",
+        "gateway-pet-token.response.json"
+      ]
+    },
+    {
+      "name": "pet-websocket",
+      "files": [
+        "ws-chat.request.json",
+        "ws-onboarding-config.request.json",
+        "ws-emotion-get.request.json",
+        "ws-response-ok.json",
+        "ws-response-error.json",
+        "ws-push-init-status.json",
+        "ws-push-ai-chat.chunk.json",
+        "ws-push-ai-chat.final.json",
+        "ws-push-audio.chunk.json",
+        "ws-push-audio.final.json",
+        "ws-push-emotion-change.json",
+        "ws-push-action-trigger.json",
+        "ws-push-heartbeat.json",
+        "ws-push-character-switch.json"
+      ]
+    }
+  ]
+}
+

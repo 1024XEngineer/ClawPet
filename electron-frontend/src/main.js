@@ -5,12 +5,18 @@ const fs = require('fs');
 
 let petWindow = null;
 let settingsWindow = null;
+let onboardingWindow = null;
+let lastBubbleFingerprint = '';
+let lastBubbleAt = 0;
+let petHoverMonitorTimer = null;
+let onboardingLocked = true;
 
 const PET_WIDTH = 280;
 const PET_HEIGHT = 380;
 
 const userDataPath = path.join(os.homedir(), '.goclaw');
 app.setPath('userData', userDataPath);
+const onboardingStatePath = path.join(userDataPath, 'onboarding-state.json');
 
 if (!fs.existsSync(userDataPath)) {
   fs.mkdirSync(userDataPath, { recursive: true });
@@ -18,6 +24,93 @@ if (!fs.existsSync(userDataPath)) {
 
 const logFilePath = path.join(userDataPath, 'logs.txt');
 const logStream = fs.createWriteStream(logFilePath, { flags: 'a' });
+
+function loadOnboardingState() {
+  try {
+    if (!fs.existsSync(onboardingStatePath)) {
+      return null;
+    }
+    const raw = fs.readFileSync(onboardingStatePath, 'utf-8');
+    if (!raw.trim()) {
+      return null;
+    }
+    return JSON.parse(raw);
+  } catch (error) {
+    logToFile(`[ONBOARDING] failed to read onboarding state: ${String(error)}`);
+    return null;
+  }
+}
+
+function saveOnboardingState(state) {
+  try {
+    fs.writeFileSync(onboardingStatePath, JSON.stringify(state, null, 2), 'utf-8');
+  } catch (error) {
+    logToFile(`[ONBOARDING] failed to save onboarding state: ${String(error)}`);
+  }
+}
+
+function markOnboardingCompleted() {
+  saveOnboardingState({
+    completed: true,
+    completedAt: new Date().toISOString(),
+  });
+}
+
+function markOnboardingPending(reason = 'unknown') {
+  saveOnboardingState({
+    completed: false,
+    requestedAt: new Date().toISOString(),
+    reason,
+  });
+}
+
+function stopAllMediaPlayback(reason = 'unknown') {
+  logToFile(`[ONBOARDING] force-stop-media (${reason})`);
+  if (settingsWindow && !settingsWindow.isDestroyed()) {
+    settingsWindow.webContents.send('force-stop-media');
+  }
+  if (petWindow && !petWindow.isDestroyed()) {
+    petWindow.webContents.send('force-stop-media');
+  }
+}
+
+function hideRuntimeWindowsForOnboarding() {
+  if (settingsWindow && !settingsWindow.isDestroyed()) {
+    settingsWindow.hide();
+  }
+  if (petWindow && !petWindow.isDestroyed()) {
+    petWindow.hide();
+  }
+}
+
+function enterOnboardingMode(reason = 'manual') {
+  onboardingLocked = true;
+  markOnboardingPending(reason);
+  stopAllMediaPlayback(reason);
+  hideRuntimeWindowsForOnboarding();
+  createOnboardingWindow(buildSettingsWindowUrl({ onboarding: true }));
+}
+
+function leaveOnboardingMode({ completed } = { completed: false }) {
+  if (completed) {
+    onboardingLocked = false;
+    markOnboardingCompleted();
+  }
+
+  if (onboardingWindow && !onboardingWindow.isDestroyed()) {
+    onboardingWindow.close();
+    onboardingWindow = null;
+  }
+
+  if (petWindow && !petWindow.isDestroyed()) {
+    resetPetWindow();
+    petWindow.show();
+  }
+
+  if (completed) {
+    createSettingsWindow(buildSettingsWindowUrl());
+  }
+}
 
 function logToFile(message) {
   const timestamp = new Date().toISOString();
@@ -28,10 +121,18 @@ function logToFile(message) {
 
 logToFile('Electron application started');
 
+const persistedOnboarding = loadOnboardingState();
+onboardingLocked = !(persistedOnboarding && persistedOnboarding.completed === true);
+logToFile(`[ONBOARDING] startup locked=${onboardingLocked}`);
+
 const rendererBaseUrl = (process.env.ELECTRON_RENDERER_URL || 'http://localhost:5173').trim().replace(/\/+$/, '');
 const dashboardBaseUrl = (process.env.GOCLAW_DASHBOARD_URL || 'http://127.0.0.1:3000').trim().replace(/\/+$/, '');
 const launcherToken = (process.env.GOCLAW_LAUNCHER_TOKEN || process.env.PICOCLAW_LAUNCHER_TOKEN || '').trim();
 const shouldOpenDevTools = process.env.ELECTRON_OPEN_DEVTOOLS === '1';
+
+function isOnboardingUrl(targetUrl) {
+  return /\/onboarding(?:[/?]|$)|[?&]onboarding=1\b|[?&]mode=rerun\b/i.test(targetUrl || '');
+}
 
 function getPetBounds() {
   const display = screen.getPrimaryDisplay();
@@ -42,6 +143,52 @@ function getPetBounds() {
     width: PET_WIDTH,
     height: PET_HEIGHT,
   };
+}
+
+function setPetWindowClickThrough(enabled) {
+  if (!petWindow || petWindow.isDestroyed()) {
+    return;
+  }
+
+  petWindow.setAlwaysOnTop(true, 'screen-saver');
+  petWindow.setVisibleOnAllWorkspaces(true, { visibleOnFullScreen: true });
+
+  try {
+    petWindow.setIgnoreMouseEvents(Boolean(enabled), { forward: Boolean(enabled) });
+  } catch (error) {
+    logToFile(`[PET WINDOW] setIgnoreMouseEvents fallback: ${String(error)}`);
+    petWindow.setIgnoreMouseEvents(Boolean(enabled));
+  }
+}
+
+function startPetHoverMonitor() {
+  if (petHoverMonitorTimer) {
+    clearInterval(petHoverMonitorTimer);
+    petHoverMonitorTimer = null;
+  }
+
+  petHoverMonitorTimer = setInterval(() => {
+    if (!petWindow || petWindow.isDestroyed()) {
+      return;
+    }
+
+    const cursor = screen.getCursorScreenPoint();
+    const bounds = petWindow.getBounds();
+    const hovered =
+      cursor.x >= bounds.x &&
+      cursor.x < bounds.x + bounds.width &&
+      cursor.y >= bounds.y &&
+      cursor.y < bounds.y + bounds.height;
+
+    setPetWindowClickThrough(!hovered);
+  }, 80);
+}
+
+function stopPetHoverMonitor() {
+  if (petHoverMonitorTimer) {
+    clearInterval(petHoverMonitorTimer);
+    petHoverMonitorTimer = null;
+  }
 }
 
 function createPetWindow() {
@@ -67,10 +214,15 @@ function createPetWindow() {
   });
 
   petWindow.once('ready-to-show', () => {
-    petWindow.show();
+    setPetWindowClickThrough(true);
+    startPetHoverMonitor();
+    if (!onboardingLocked) {
+      petWindow.show();
+    }
   });
 
   petWindow.on('closed', () => {
+    stopPetHoverMonitor();
     petWindow = null;
     app.quit();
   });
@@ -85,17 +237,18 @@ function resetPetWindow() {
   petWindow.setAlwaysOnTop(true);
   petWindow.setSkipTaskbar(true);
   petWindow.setBounds(getPetBounds(), true);
+  setPetWindowClickThrough(true);
+  startPetHoverMonitor();
 }
 
 function withLauncherToken(rawUrl) {
-  if (!launcherToken) {
-    return rawUrl;
-  }
-
   try {
     const parsed = new URL(rawUrl);
+    parsed.searchParams.set('ui_rev', '20260420_3');
     if (!parsed.searchParams.has('token')) {
-      parsed.searchParams.set('token', launcherToken);
+      if (launcherToken) {
+        parsed.searchParams.set('token', launcherToken);
+      }
     }
     return parsed.toString();
   } catch {
@@ -123,30 +276,39 @@ function buildSettingsWindowUrl({ onboarding = false } = {}) {
     : buildDashboardUrl();
 }
 
-function createSettingsWindow(targetUrl = buildSettingsWindowUrl()) {
-  if (settingsWindow && !settingsWindow.isDestroyed()) {
-    if (targetUrl && settingsWindow.webContents.getURL() !== targetUrl) {
-      settingsWindow.loadURL(targetUrl).catch((err) => {
-        logToFile(`[SETTINGS WINDOW] reload failed: ${String(err)}`);
-      });
-    }
-    if (settingsWindow.isMinimized()) {
-      settingsWindow.restore();
-    }
-    settingsWindow.show();
-    settingsWindow.focus();
+function showWindow(targetWindow, targetUrl, logPrefix) {
+  if (!targetWindow || targetWindow.isDestroyed()) {
+    return false;
+  }
+
+  if (targetUrl && targetWindow.webContents.getURL() !== targetUrl) {
+    targetWindow.loadURL(targetUrl).catch((err) => {
+      logToFile(`[${logPrefix}] reload failed: ${String(err)}`);
+    });
+  }
+  if (targetWindow.isMinimized()) {
+    targetWindow.restore();
+  }
+  targetWindow.show();
+  targetWindow.focus();
+  return true;
+}
+
+function createSettingsWindow(targetUrl = buildDashboardUrl()) {
+  if (showWindow(settingsWindow, targetUrl, 'SETTINGS WINDOW')) {
     return;
   }
 
   const { width, height } = screen.getPrimaryDisplay().workAreaSize;
-  const settingsWidth = Math.round(width * 0.7);
-  const settingsHeight = Math.round(height * 0.7);
+  const settingsWidth = Math.round(width * 0.72);
+  const settingsHeight = Math.round(height * 0.76);
 
   settingsWindow = new BrowserWindow({
     width: settingsWidth,
     height: settingsHeight,
     minWidth: 600,
     minHeight: 400,
+    center: true,
     show: false,
     frame: false,
     transparent: false,
@@ -188,24 +350,103 @@ function createSettingsWindow(targetUrl = buildSettingsWindowUrl()) {
   });
 }
 
+function createOnboardingWindow(targetUrl = buildSettingsWindowUrl({ onboarding: true })) {
+  if (showWindow(onboardingWindow, targetUrl, 'ONBOARDING WINDOW')) {
+    return;
+  }
+
+  const { width, height } = screen.getPrimaryDisplay().workAreaSize;
+  const onboardingWidth = Math.min(width - 24, Math.max(1180, Math.round(width * 0.9)));
+  const onboardingHeight = Math.min(height - 24, Math.max(820, Math.round(height * 0.92)));
+
+  onboardingWindow = new BrowserWindow({
+    width: onboardingWidth,
+    height: onboardingHeight,
+    minWidth: 980,
+    minHeight: 720,
+    center: true,
+    show: false,
+    frame: false,
+    transparent: false,
+    backgroundColor: '#f7ecdf',
+    alwaysOnTop: false,
+    autoHideMenuBar: true,
+    webPreferences: {
+      nodeIntegration: false,
+      contextIsolation: true,
+      preload: path.join(__dirname, 'preload.js')
+    }
+  });
+
+  logToFile(`[ONBOARDING WINDOW] opening ${targetUrl}`);
+
+  onboardingWindow.webContents.on('did-fail-load', (_event, code, desc, url) => {
+    logToFile(`[ONBOARDING WINDOW] did-fail-load code=${code} desc=${desc} url=${url}`);
+  });
+
+  onboardingWindow.webContents.on('did-finish-load', () => {
+    logToFile('[ONBOARDING WINDOW] did-finish-load');
+  });
+
+  onboardingWindow.loadURL(targetUrl).catch((err) => {
+    logToFile(`[ONBOARDING WINDOW] loadURL failed: ${String(err)}`);
+  });
+
+  onboardingWindow.once('ready-to-show', () => {
+    onboardingWindow.show();
+    onboardingWindow.focus();
+    if (shouldOpenDevTools) {
+      onboardingWindow.webContents.openDevTools({ mode: 'detach' });
+    }
+  });
+
+  onboardingWindow.on('closed', () => {
+    onboardingWindow = null;
+    if (onboardingLocked) {
+      setTimeout(() => {
+        if (onboardingLocked) {
+          createOnboardingWindow(buildSettingsWindowUrl({ onboarding: true }));
+        }
+      }, 120);
+    }
+  });
+}
+
 ipcMain.on('open-settings', () => {
   logToFile('[IPC] open-settings');
+  if (onboardingLocked) {
+    enterOnboardingMode('open-settings-while-locked');
+    return;
+  }
   createSettingsWindow(buildSettingsWindowUrl());
 });
 
 ipcMain.on('open-onboarding', () => {
   logToFile('[IPC] open-onboarding');
-  createSettingsWindow(buildSettingsWindowUrl({ onboarding: true }));
+  enterOnboardingMode('manual-rerun');
 });
 
 ipcMain.on('set-onboarding-mode', (event, enabled) => {
   logToFile(`[IPC] set-onboarding-mode ${Boolean(enabled)}`);
-  const target = BrowserWindow.fromWebContents(event.sender);
-  if (target === petWindow) {
-    resetPetWindow();
+  if (enabled) {
+    enterOnboardingMode('renderer-request');
+    const target = BrowserWindow.fromWebContents(event.sender);
+    if (target === onboardingWindow && onboardingWindow && !onboardingWindow.isDestroyed()) {
+      onboardingWindow.focus();
+    }
     return;
   }
-  logToFile('[IPC] set-onboarding-mode ignored for non-pet window');
+  logToFile('[IPC] set-onboarding-mode false ignored (completion required)');
+});
+
+ipcMain.on('complete-onboarding', () => {
+  logToFile('[IPC] complete-onboarding');
+  leaveOnboardingMode({ completed: true });
+});
+
+ipcMain.on('set-pet-click-through', (_event, enabled) => {
+  logToFile(`[IPC] set-pet-click-through ${Boolean(enabled)}`);
+  setPetWindowClickThrough(Boolean(enabled));
 });
 
 ipcMain.on('window-minimize', (event) => {
@@ -284,6 +525,20 @@ ipcMain.on('chat-history', (_event, history) => {
 });
 
 ipcMain.on('show-bubble', (_event, data) => {
+  const audio = typeof data?.audio === 'string' ? data.audio.trim() : '';
+  const text = typeof data?.text === 'string' ? data.text.trim() : '';
+  const emotion = typeof data?.emotion === 'string' ? data.emotion.trim() : '';
+  const fingerprint = `${audio}|${text}|${emotion}`;
+  const now = Date.now();
+
+  if (fingerprint && fingerprint === lastBubbleFingerprint && now - lastBubbleAt < 2500) {
+    logToFile('[IPC] show-bubble dropped duplicated payload');
+    return;
+  }
+
+  lastBubbleFingerprint = fingerprint;
+  lastBubbleAt = now;
+
   if (petWindow && !petWindow.isDestroyed()) {
     petWindow.webContents.send('bubble-show', data);
   }
@@ -297,6 +552,9 @@ ipcMain.on('connection-alive', () => {
 
 app.whenReady().then(() => {
   createPetWindow();
+  if (onboardingLocked) {
+    enterOnboardingMode('first-run');
+  }
 });
 
 app.on('window-all-closed', () => {

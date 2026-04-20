@@ -1,0 +1,8 @@
+{
+  "type": "push",
+  "push_type": "character_switch",
+  "data": {
+    "character_id": "pet_002"
+  },
+  "timestamp": 1710000007
+}

@@ -1,0 +1,14 @@
+{
+  "type": "push",
+  "push_type": "ai_chat",
+  "data": {
+    "chat_id": 1,
+    "type": "final",
+    "text": "",
+    "emotion": "joy",
+    "action": "wave"
+  },
+  "timestamp": 1710000001,
+  "is_final": true
+}
+

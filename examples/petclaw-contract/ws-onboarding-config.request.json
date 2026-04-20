@@ -1,0 +1,10 @@
+{
+  "action": "onboarding_config",
+  "data": {
+    "pet_name": "Airi",
+    "pet_persona": "Gentle and supportive study companion.",
+    "pet_persona_type": "gentle"
+  },
+  "request_id": "req-onboarding-1"
+}
+

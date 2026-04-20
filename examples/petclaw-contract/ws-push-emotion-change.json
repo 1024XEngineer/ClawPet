@@ -1,0 +1,11 @@
+{
+  "type": "push",
+  "push_type": "emotion_change",
+  "data": {
+    "emotion": "joy",
+    "score": 75,
+    "description": "happy"
+  },
+  "timestamp": 1710000004
+}
+

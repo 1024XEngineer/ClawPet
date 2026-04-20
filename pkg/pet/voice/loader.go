@@ -67,9 +67,7 @@ func (l *Loader) Load() error {
 	// 创建TTS提供者（目前仅支持Minimax）
 	// 先尝试从环境变量解析，再从 security.yml 解析
 	apiKey := resolveEnvVar(modelCfg.APIKey)
-	if apiKey == "" {
-		apiKey = resolveSecurityRef(apiKey, modelCfg.Name)
-	}
+	apiKey = resolveSecurityRef(apiKey, modelCfg.Name)
 	if apiKey == "" || apiKey == "$security:minimax-tts" {
 		logger.Warnf("pet voice: API key not resolved, security ref may have failed")
 	}
@@ -110,16 +108,32 @@ func resolveSecurityRef(value string, modelName string) string {
 	}
 
 	// 获取用户目录
-	homeDir, err := os.UserHomeDir()
-	if err != nil {
-		logger.Warnf("pet voice: failed to get user home dir: %v", err)
-		return value
+	securityPaths := []string{}
+	if configPath := strings.TrimSpace(os.Getenv("PICOCLAW_CONFIG")); configPath != "" {
+		securityPaths = append(securityPaths, filepath.Join(filepath.Dir(configPath), ".security.yml"))
+	}
+	if picoHome := strings.TrimSpace(os.Getenv("PICOCLAW_HOME")); picoHome != "" {
+		securityPaths = append(securityPaths, filepath.Join(picoHome, ".security.yml"))
+	}
+	if homeDir, err := os.UserHomeDir(); err == nil {
+		securityPaths = append(securityPaths, filepath.Join(homeDir, ".picoclaw", ".security.yml"))
 	}
 
-	securityPath := filepath.Join(homeDir, ".picoclaw", ".security.yml")
-	data, err := os.ReadFile(securityPath)
-	if err != nil {
-		logger.Warnf("pet voice: failed to read .security.yml: %v", err)
+	var data []byte
+	var err error
+	var resolvedPath string
+	for _, securityPath := range securityPaths {
+		if strings.TrimSpace(securityPath) == "" {
+			continue
+		}
+		data, err = os.ReadFile(securityPath)
+		if err == nil {
+			resolvedPath = securityPath
+			break
+		}
+	}
+	if len(data) == 0 {
+		logger.Warnf("pet voice: failed to read .security.yml from candidate paths")
 		return value
 	}
 
@@ -136,7 +150,7 @@ func resolveSecurityRef(value string, modelName string) string {
 
 	if model, ok := secCfg.ModelList[refName]; ok {
 		if len(model.APIKeys) > 0 {
-			logger.Infof("pet voice: resolved API key from .security.yml for %s", refName)
+			logger.Infof("pet voice: resolved API key from %s for %s", resolvedPath, refName)
 			return model.APIKeys[0]
 		}
 	}

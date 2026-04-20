@@ -1,0 +1,8 @@
+{
+  "action": "emotion_get",
+  "data": {
+    "pet_id": "pet_001"
+  },
+  "request_id": "req-emotion-1"
+}
+

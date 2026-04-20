@@ -2,6 +2,28 @@
   margin: 0;
   padding: 0;
   box-sizing: border-box;
+  scrollbar-width: thin;
+  scrollbar-color: rgba(198, 130, 76, 0.9) rgba(255, 244, 233, 0.82);
+}
+
+*::-webkit-scrollbar {
+  width: 10px;
+  height: 10px;
+}
+
+*::-webkit-scrollbar-track {
+  border-radius: 999px;
+  background: linear-gradient(180deg, rgba(255, 247, 237, 0.92), rgba(247, 230, 211, 0.92));
+}
+
+*::-webkit-scrollbar-thumb {
+  border-radius: 999px;
+  border: 2px solid rgba(255, 246, 236, 0.95);
+  background: linear-gradient(180deg, rgba(223, 156, 99, 0.95), rgba(189, 122, 69, 0.95));
+}
+
+*::-webkit-scrollbar-thumb:hover {
+  background: linear-gradient(180deg, rgba(234, 166, 108, 0.98), rgba(199, 131, 76, 0.98));
 }
 
 html, body, #root {
@@ -41,6 +63,7 @@ body {
   align-items: center;
   gap: 8px;
   -webkit-app-region: no-drag;
+  pointer-events: auto;
 }
 
 .btn {
@@ -144,6 +167,7 @@ body {
   color: #444;
   word-break: break-word;
   text-align: center;
+  pointer-events: none;
 }
 
 @keyframes bubbleIn {
@@ -161,20 +185,18 @@ body {
   display: flex;
   align-items: center;
   justify-content: center;
-  cursor: grab;
+  cursor: move;
   padding: 40px;
   margin: -20px;
   -webkit-app-region: drag;
-}
-
-.pet-area:active {
-  cursor: grabbing;
+  pointer-events: auto;
 }
 
 .pet-image {
   width: 160px;
   height: 160px;
   object-fit: contain;
+  pointer-events: none;
 }
 
 .input-container {

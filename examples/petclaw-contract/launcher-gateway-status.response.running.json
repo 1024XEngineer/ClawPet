@@ -1,0 +1,8 @@
+{
+  "config_default_model": "glm-4-flash",
+  "gateway_status": "running",
+  "gateway_restart_required": false,
+  "gateway_start_allowed": true,
+  "pid": 14320
+}
+

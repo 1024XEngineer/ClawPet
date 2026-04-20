@@ -1,102 +1,99 @@
-# Binaries
-# Go build artifacts
-bin/
-*.exe
-*.dll
-*.so
-*.dylib
-*.test
-*.out
-/picoclaw
-/picoclaw-test
-cmd/**/workspace
-
-# Picoclaw specific
-
-# PicoClaw
-.picoclaw/
-config.json
-sessions/
-
-# Coverage
-
-# Secrets & Config (keep templates, ignore actual secrets)
-.env
-config/config.json
-.security.yml
-onboard
-
-
-# Test
-coverage.txt
-coverage.html
-
-# OS
+# -----------------------------
+# OS / Editor
+# -----------------------------
 .DS_Store
+Thumbs.db
+Desktop.ini
 
-# Ralph workspace
-ralph/
-.ralph/
-tasks/
-
-# Plans
-docs/plans/
-docs/superpowers/
-
-# Editors
-.vscode/
-.idea/
-
-# Added by goreleaser init:
-dist/
-*.vite/
-
-# Windows Application Icon/Resource
-*.syso
-
-# Test telegram integration
-cmd/telegram/
-
-# Keep embedded backend dist directory placeholder in VCS
-!web/backend/dist/
-web/backend/dist/*
-!web/backend/dist/.gitkeep
-
-.claude/
-
-docker/data
-
-.omc/
-
-# Binaries
-*.exe
-*.dll
-*.so
-*.dylib
-
-# Test binary
-*.test
-
-# Output of go coverage
-*.out
-
-# Dependency directories
-vendor/
-
-# IDE
 .idea/
 .vscode/
 *.swp
 *.swo
 
-# Node
-node_modules/
-dist/
-
-# Logs
+# -----------------------------
+# Logs / temp
+# -----------------------------
 *.log
+*.tmp
+*.temp
+*.pid
 *.exe~
 
-# Environment
+# -----------------------------
+# Secrets / local config
+# -----------------------------
 .env
-.env.local
+.env.*
+!.env.example
+
+config/config.json
+config.json
+.security.yml
+
+# Local runtime data
+.goclaw-runtime/
+.picoclaw/
+sessions/
+onboard
+docker/data/
+
+# Local tool state
+.claude/
+.omc/
+.ralph/
+ralph/
+tasks/
+
+# -----------------------------
+# Go artifacts
+# -----------------------------
+bin/
+dist/
+vendor/
+
+*.exe
+*.dll
+*.so
+*.dylib
+*.test
+*.out
+*.syso
+
+/picoclaw
+/picoclaw-test
+cmd/**/workspace
+cmd/telegram/
+
+coverage.txt
+coverage.html
+
+# -----------------------------
+# Node / frontend artifacts
+# -----------------------------
+node_modules/
+
+# Next.js
+.next/
+out/
+
+# Vite / build outputs
+*.vite/
+electron-frontend/dist/
+petclaw/dist/
+
+# Test and cache outputs
+.turbo/
+.cache/
+coverage/
+
+# -----------------------------
+# Project docs generated locally
+# -----------------------------
+docs/plans/
+docs/superpowers/
+
+# -----------------------------
+# Keep embedded backend dist placeholder in VCS
+# -----------------------------
+web/backend/dist/*
+!web/backend/dist/.gitkeep

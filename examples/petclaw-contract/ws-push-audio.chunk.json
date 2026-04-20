@@ -1,0 +1,13 @@
+{
+  "type": "push",
+  "push_type": "audio",
+  "data": {
+    "chat_id": 1,
+    "type": "audio",
+    "text": "SUQzBAAAAAAA",
+    "is_final": false
+  },
+  "timestamp": 1710000002,
+  "is_final": false
+}
+

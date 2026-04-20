@@ -43,6 +43,13 @@ func (s *Sender) SendAudioChunk(sessionID string, chatID int64, chunk AudioChunk
 		return err
 	}
 
+	logger.InfoCF("pet-voice", "audio chunk sent", map[string]any{
+		"session_id": sessionID,
+		"chat_id":    chatID,
+		"is_final":   chunk.IsLast,
+		"size":       len(chunk.Data),
+	})
+
 	if chunk.IsLast {
 		logger.DebugCF("pet-voice", "sent final audio chunk", map[string]any{
 			"session_id": sessionID,

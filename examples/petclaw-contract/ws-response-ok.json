@@ -1,0 +1,17 @@
+{
+  "status": "ok",
+  "action": "emotion_get",
+  "data": {
+    "pet_id": "pet_001",
+    "emotion": "neutral",
+    "joy": 50,
+    "anger": 50,
+    "sadness": 50,
+    "disgust": 50,
+    "surprise": 50,
+    "fear": 50,
+    "description": "calm"
+  },
+  "request_id": "req-emotion-1"
+}
+

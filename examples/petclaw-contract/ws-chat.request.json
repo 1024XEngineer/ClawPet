@@ -1,0 +1,9 @@
+{
+  "action": "chat",
+  "data": {
+    "text": "hello",
+    "session_key": "session-1710000000000"
+  },
+  "request_id": "req-chat-1"
+}
+

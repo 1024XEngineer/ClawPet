@@ -1,0 +1,7 @@
+{
+  "status": "error",
+  "action": "chat",
+  "error": "LLM call failed",
+  "request_id": "req-chat-1"
+}
+

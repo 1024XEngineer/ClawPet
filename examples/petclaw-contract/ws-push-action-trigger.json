@@ -1,0 +1,10 @@
+{
+  "type": "push",
+  "push_type": "action_trigger",
+  "data": {
+    "action": "wave",
+    "expression": "wave_01"
+  },
+  "timestamp": 1710000005
+}
+

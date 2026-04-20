@@ -240,3 +240,16 @@ func TestBuildWsURLUsesRequestHostNotGatewayBindLoopback(t *testing.T) {
 		t.Fatalf("buildWsURL() = %q, want %q", got, "ws://localhost:18800/pico/ws")
 	}
 }
+
+func TestBuildWsURLUsesPetPathForPetTokenRoute(t *testing.T) {
+	configPath := filepath.Join(t.TempDir(), "config.json")
+	h := NewHandler(configPath)
+	h.SetServerOptions(18800, false, false, nil)
+
+	req := httptest.NewRequest("GET", "http://localhost:18800/api/pet/token", nil)
+	req.Host = "localhost:18800"
+
+	if got := h.buildWsURL(req); got != "ws://localhost:18800/pet/ws" {
+		t.Fatalf("buildWsURL() = %q, want %q", got, "ws://localhost:18800/pet/ws")
+	}
+}

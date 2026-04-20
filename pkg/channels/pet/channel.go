@@ -249,6 +249,17 @@ func (c *PetChannel) ReasoningChannelID() string {
 	return ""
 }
 
+func (c *PetChannel) VoiceCapabilities() channels.VoiceCapabilities {
+	caps := channels.VoiceCapabilities{}
+	if c.service != nil {
+		if loader := c.service.VoiceLoader(); loader != nil {
+			caps.ASR = loader.IsASREnabled()
+		}
+	}
+	caps.TTS = c.voiceSynthesizer != nil
+	return caps
+}
+
 // runHeartbeat 定期发送心跳
 func (c *PetChannel) runHeartbeat() {
 	ticker := time.NewTicker(30 * time.Second)
@@ -573,6 +584,12 @@ func (s *petStreamer) Update(ctx context.Context, content string) error {
 			}
 			rawText := s.textVoiceBuffer.String()
 			parsedText := parsePureText(rawText)
+			logger.InfoCF("pet-voice", "stream voice synthesis triggered", map[string]any{
+				"session_id":  s.sessionID,
+				"chat_id":     s.chatID,
+				"text_len":    len(parsedText),
+				"has_content": parsedText != "",
+			})
 			go s.voiceSynthesizer.ParseAndSynthesize(s.sessionID, s.chatID, parsedText, emotion)
 		}
 		s.textVoiceBuffer.Reset()
@@ -617,6 +634,29 @@ func (s *petStreamer) Finalize(ctx context.Context, content string) error {
 
 	if s == nil || s.channel == nil {
 		return nil
+	}
+
+	if s.voiceSynthesizer != nil && s.channel.service != nil {
+		appConfig := s.channel.service.AppConfig()
+		if appConfig != nil && appConfig.VoiceEnabled {
+			finalText := strings.TrimSpace(parsePureText(content))
+			if finalText == "" {
+				finalText = strings.TrimSpace(parsePureText(s.textVoiceBuffer.String()))
+			}
+			logger.InfoCF("pet-voice", "finalize voice synthesis check", map[string]any{
+				"session_id":  s.sessionID,
+				"chat_id":     s.chatID,
+				"text_len":    len(finalText),
+				"has_content": finalText != "",
+			})
+			if finalText != "" {
+				emotion := ""
+				if char := s.channel.service.CharManager().GetCurrent(); char != nil {
+					emotion, _ = char.GetEmotionEngine().GetDominantEmotion()
+				}
+				go s.voiceSynthesizer.ParseAndSynthesize(s.sessionID, s.chatID, finalText, emotion)
+			}
+		}
 	}
 
 	// 清空状态，不发送任何文本

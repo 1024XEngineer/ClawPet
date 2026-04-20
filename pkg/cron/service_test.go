@@ -82,6 +82,50 @@ func TestCronService_CRUD(t *testing.T) {
 	}
 }
 
+func TestCronService_AddJobRejectsInvalidSchedule(t *testing.T) {
+	cs, path := setupService(nil)
+	defer os.Remove(path)
+
+	_, err := cs.AddJob("Invalid", CronSchedule{Kind: "cron", Expr: "invalid"}, "msg", "", "")
+	if err == nil {
+		t.Fatal("AddJob should reject invalid cron expressions")
+	}
+}
+
+func TestCronService_UpdateJobRecomputesNextRun(t *testing.T) {
+	cs, path := setupService(nil)
+	defer os.Remove(path)
+
+	everyMS := int64(1000)
+	job, err := cs.AddJob("Task1", CronSchedule{Kind: "every", EveryMS: &everyMS}, "msg", "ch", "to")
+	if err != nil {
+		t.Fatalf("AddJob failed: %v", err)
+	}
+	if job.State.NextRunAtMS == nil {
+		t.Fatal("expected initial next run to be set")
+	}
+	originalNextRun := *job.State.NextRunAtMS
+
+	time.Sleep(10 * time.Millisecond)
+
+	updatedEveryMS := int64(5000)
+	job.Schedule = CronSchedule{Kind: "every", EveryMS: &updatedEveryMS}
+	if err := cs.UpdateJob(job); err != nil {
+		t.Fatalf("UpdateJob failed: %v", err)
+	}
+
+	jobs := cs.ListJobs(true)
+	if len(jobs) != 1 {
+		t.Fatalf("expected 1 job, got %d", len(jobs))
+	}
+	if jobs[0].State.NextRunAtMS == nil {
+		t.Fatal("expected next run to remain set after update")
+	}
+	if *jobs[0].State.NextRunAtMS <= originalNextRun {
+		t.Fatalf("expected recomputed next run to move forward, got %d <= %d", *jobs[0].State.NextRunAtMS, originalNextRun)
+	}
+}
+
 // 2. Test Cron Expression Calculation Logic
 func TestCronService_ComputeNextRun(t *testing.T) {
 	cs, path := setupService(nil)

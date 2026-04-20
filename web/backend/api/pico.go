@@ -40,11 +40,9 @@ func (h *Handler) createWsProxy(origProtocol string, token string) *httputil.Rev
 			r.Out.Header.Set(protocolKey, tokenPrefix+token)
 		},
 		ModifyResponse: func(r *http.Response) error {
-			if prot := r.Header.Values(protocolKey); len(prot) > 0 {
-				r.Header.Del(protocolKey)
-				if origProtocol != "" {
-					r.Header.Set(protocolKey, origProtocol)
-				}
+			r.Header.Del(protocolKey)
+			if origProtocol != "" {
+				r.Header.Set(protocolKey, origProtocol)
 			}
 			return nil
 		},

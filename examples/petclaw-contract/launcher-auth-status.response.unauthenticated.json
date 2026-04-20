@@ -1,0 +1,11 @@
+{
+  "authenticated": false,
+  "token_help": {
+    "env_var_name": "PICOCLAW_LAUNCHER_TOKEN",
+    "log_file": "C:\\Users\\user\\.picoclaw\\logs\\launcher.log",
+    "config_file": "C:\\Users\\user\\.picoclaw\\launcher-config.json",
+    "tray_copy_menu": true,
+    "console_stdout": true
+  }
+}
+

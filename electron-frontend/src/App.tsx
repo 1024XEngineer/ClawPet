@@ -127,6 +127,19 @@ function App() {
   }, [])
 
   useEffect(() => {
+    const stopMediaNow = () => {
+      if (bubbleTimerRef.current) {
+        clearTimeout(bubbleTimerRef.current)
+        bubbleTimerRef.current = null
+      }
+      if (audioRef.current) {
+        audioRef.current.pause()
+        audioRef.current = null
+      }
+      setBubble('')
+      transitionTo('standby')
+    }
+
     const handleBubbleShow = (data: BubbleData) => {
       if (bubbleTimerRef.current) {
         clearTimeout(bubbleTimerRef.current)
@@ -163,9 +176,17 @@ function App() {
       }
     }
 
-    window.electronAPI?.onBubbleShow(handleBubbleShow)
-    window.electronAPI?.onSettingsUpdate(() => {})
-    document.title = 'PetClaw'
+    const unlistenBubble = window.electronAPI?.onBubbleShow(handleBubbleShow)
+    const unlistenSettings = window.electronAPI?.onSettingsUpdate(() => {})
+    const unlistenForceStopMedia = window.electronAPI?.onForceStopMedia?.(stopMediaNow)
+    document.title = 'ClawPet'
+
+    return () => {
+      unlistenBubble?.()
+      unlistenSettings?.()
+      unlistenForceStopMedia?.()
+      stopMediaNow()
+    }
   }, [transitionTo])
 
   const openSettings = () => {
@@ -175,14 +196,21 @@ function App() {
   return (
     <div className="app">
       <div className="pet-container">
-        <div className="controls">
-          <button className="btn" onClick={openSettings} title="Settings">S</button>
-          <button className="btn close" onClick={() => window.close()} title="Close">X</button>
+        <div className="controls" data-pet-interactive="true">
+          <button className="btn" data-pet-interactive="true" onClick={openSettings} title="Settings">S</button>
+          <button
+            className="btn close"
+            data-pet-interactive="true"
+            onClick={() => window.electronAPI?.closeWindow?.()}
+            title="Close"
+          >
+            X
+          </button>
         </div>
 
         {bubble && <div className="bubble">{bubble}</div>}
 
-        <div className="pet-area">
+        <div className="pet-area" data-pet-interactive="true" title="按住可拖动桌宠">
           <img className="pet-image" src={currentImage} alt="Pet" />
           <span style={{ display: 'none' }}>{petState}</span>
         </div>

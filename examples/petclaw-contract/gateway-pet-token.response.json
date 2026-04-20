@@ -1,0 +1,7 @@
+{
+  "enabled": true,
+  "protocol": "pet",
+  "token": "",
+  "ws_url": "ws://127.0.0.1:18793/pet/ws"
+}
+

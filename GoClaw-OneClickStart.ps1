@@ -76,8 +76,10 @@ if ($Mode -ne "launcher") {
         "-ExecutionPolicy", "Bypass",
         "-File", $runGoclawDev,
         "-Restart",
-        "-PetclawMode", "dev"
+        "-PetclawMode", "prod"
     )
+
+    Write-Host "Delegating to scripts\\run-goclaw-dev.ps1 with PetclawMode=prod"
 
     if ($NoBrowser) {
         Write-Warning "-NoBrowser is not used by scripts\\run-goclaw-dev.ps1 and will be ignored"

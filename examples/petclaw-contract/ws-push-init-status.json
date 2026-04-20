@@ -1,0 +1,27 @@
+{
+  "type": "push",
+  "push_type": "init_status",
+  "data": {
+    "need_config": true,
+    "has_character": false,
+    "mbti": {
+      "ie": 50,
+      "sn": 50,
+      "tf": 50,
+      "jp": 50
+    },
+    "emotion_state": {
+      "pet_id": "pet_001",
+      "emotion": "neutral",
+      "joy": 50,
+      "anger": 50,
+      "sadness": 50,
+      "disgust": 50,
+      "surprise": 50,
+      "fear": 50,
+      "description": "calm"
+    }
+  },
+  "timestamp": 1710000000
+}
+

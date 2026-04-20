@@ -477,13 +477,13 @@ export default function PetClawApp() {
 
       let currentStream = audioStreamRef.current
       if (hasExplicitChatId) {
-        if (currentStream.chatId !== incomingChatId) {
+        if (currentStream.chatId !== null && currentStream.chatId !== incomingChatId) {
           currentStream = { chatId: incomingChatId, chunks: [] }
           audioStreamRef.current = currentStream
+        } else if (currentStream.chatId === null) {
+          currentStream = { chatId: incomingChatId, chunks: currentStream.chunks }
+          audioStreamRef.current = currentStream
         }
-      } else if (currentStream.chatId !== null) {
-        currentStream = { chatId: null, chunks: [] }
-        audioStreamRef.current = currentStream
       }
 
       if (data.text) {
