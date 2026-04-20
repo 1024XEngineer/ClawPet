@@ -19,27 +19,28 @@ type Request struct {
 
 // Action 请求动作类型
 const (
-	ActionChat             = "chat"              // 聊天交互
-	ActionOnboardingConfig = "onboarding_config" // 提交初始化配置
-	ActionCharacterGet     = "character_get"     // 获取角色配置
-	ActionCharacterUpdate  = "character_update"  // 更新角色配置
-	ActionCharacterSwitch  = "character_switch"  // 切换角色
-	ActionConfigGet        = "config_get"        // 获取应用配置
-	ActionConfigUpdate     = "config_update"     // 更新应用配置
-	ActionEmotionGet       = "emotion_get"       // 获取情绪状态
-	ActionHealthCheck      = "health_check"      // 健康检查
-	ActionMemorySearch     = "memory_search"     // 搜索记忆
-	ActionConversationList = "conversation_list" // 对话列表
-	ActionModelListGet     = "model_list_get"    // 获取模型列表
-	ActionModelAdd         = "model_add"         // 添加模型
-	ActionModelUpdate      = "model_update"      // 更新模型
-	ActionModelDelete      = "model_delete"      // 删除模型
-	ActionModelSetDefault  = "model_set_default" // 设置默认模型
-	ActionCronAdd          = "cron_add"          // 添加定时任务
-	ActionCronList         = "cron_list"         // 列出定时任务
-	ActionCronRemove       = "cron_remove"       // 删除定时任务
-	ActionCronEnable       = "cron_enable"       // 启用定时任务
-	ActionCronDisable      = "cron_disable"      // 禁用定时任务
+	ActionChat              = "chat"                // 聊天交互
+	ActionOnboardingConfig  = "onboarding_config"   // 提交初始化配置
+	ActionUserProfileUpdate = "user_profile_update" // 用户画像更新
+	ActionCharacterGet      = "character_get"       // 获取角色配置
+	ActionCharacterUpdate   = "character_update"    // 更新角色配置
+	ActionCharacterSwitch   = "character_switch"    // 切换角色
+	ActionConfigGet         = "config_get"          // 获取应用配置
+	ActionConfigUpdate      = "config_update"       // 更新应用配置
+	ActionEmotionGet        = "emotion_get"         // 获取情绪状态
+	ActionHealthCheck       = "health_check"        // 健康检查
+	ActionMemorySearch      = "memory_search"       // 搜索记忆
+	ActionConversationList  = "conversation_list"   // 对话列表
+	ActionModelListGet      = "model_list_get"      // 获取模型列表
+	ActionModelAdd          = "model_add"           // 添加模型
+	ActionModelUpdate       = "model_update"        // 更新模型
+	ActionModelDelete       = "model_delete"        // 删除模型
+	ActionModelSetDefault   = "model_set_default"   // 设置默认模型
+	ActionCronAdd           = "cron_add"            // 添加定时任务
+	ActionCronList          = "cron_list"           // 列出定时任务
+	ActionCronRemove        = "cron_remove"         // 删除定时任务
+	ActionCronEnable        = "cron_enable"         // 启用定时任务
+	ActionCronDisable       = "cron_disable"        // 禁用定时任务
 )
 
 // =============================================================================
@@ -105,6 +106,26 @@ type OnboardingConfigRequest struct {
 	PetName        string `json:"pet_name"`         // 桌宠名称
 	PetPersona     string `json:"pet_persona"`      // 性格描述
 	PetPersonaType string `json:"pet_persona_type"` // 性格类型
+}
+
+// UserProfileUpdateRequest 用户画像更新请求
+type UserProfileUpdateRequest struct {
+	DisplayName     string         `json:"display_name"`
+	Role            string         `json:"role"`
+	Language        string         `json:"language"`
+	Chronotype      string         `json:"chronotype"`
+	PersonalityTone string         `json:"personality_tone"`
+	AnxietyLevel    int            `json:"anxiety_level"`
+	PressureLevel   string         `json:"pressure_level"`
+	Extra           map[string]any `json:"extra"`
+}
+
+// UserProfileDataRequest 用户实时状态更新请求
+type UserProfileDataRequest struct {
+	CurrentMood     string `json:"current_mood"`
+	EnergyLevel     int    `json:"energy_level"`
+	EngagementLevel int    `json:"engagement_level"`
+	StressTrend     string `json:"stress_trend"`
 }
 
 // CharacterGetRequest 角色获取请求数据
