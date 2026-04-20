@@ -358,11 +358,11 @@ func (h *PetHook) AfterLLM(ctx context.Context, resp *agent.LLMHookResponse) (*a
 	parseText := textTags[0].Text
 	resp.Response.Content = content
 
-	// 6. 分析用户情绪（如果配置了用户画像管理器）
+	// 6. 分析用户情绪（异步，不阻塞响应）
 	if h.userProfileMgr != nil && h.lastUserMessage != "" {
 		char := h.charManager.GetCurrent()
 		if char != nil {
-			h.userProfileMgr.AnalyzeAfterChat(char.ID, h.lastUserMessage, parseText)
+			go h.userProfileMgr.AnalyzeAfterChat(char.ID, h.lastUserMessage, parseText)
 		}
 	}
 
