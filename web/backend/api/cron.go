@@ -67,7 +67,7 @@ func (h *Handler) registerCronRoutes(mux *http.ServeMux) {
 func (h *Handler) handleListCronJobs(w http.ResponseWriter, r *http.Request) {
 	cs, err := h.newCronService()
 	if err != nil {
-		writeCronError(w, http.StatusInternalServerError, fmt.Sprintf("Failed to load cron store: %v", err))
+		writeCronServiceError(w, err)
 		return
 	}
 	if err := cs.Load(); err != nil {
@@ -126,7 +126,7 @@ func (h *Handler) handleCreateCronJob(w http.ResponseWriter, r *http.Request) {
 
 	cs, err := h.newCronService()
 	if err != nil {
-		writeCronError(w, http.StatusInternalServerError, fmt.Sprintf("Failed to load cron store: %v", err))
+		writeCronServiceError(w, err)
 		return
 	}
 
@@ -164,7 +164,7 @@ func (h *Handler) handleUpdateCronJob(w http.ResponseWriter, r *http.Request) {
 
 	cs, err := h.newCronService()
 	if err != nil {
-		writeCronError(w, http.StatusInternalServerError, fmt.Sprintf("Failed to load cron store: %v", err))
+		writeCronServiceError(w, err)
 		return
 	}
 
@@ -228,7 +228,7 @@ func (h *Handler) handleUpdateCronJob(w http.ResponseWriter, r *http.Request) {
 func (h *Handler) handleDeleteCronJob(w http.ResponseWriter, r *http.Request) {
 	cs, err := h.newCronService()
 	if err != nil {
-		writeCronError(w, http.StatusInternalServerError, fmt.Sprintf("Failed to load cron store: %v", err))
+		writeCronServiceError(w, err)
 		return
 	}
 
@@ -257,7 +257,7 @@ func (h *Handler) handleToggleCronJob(w http.ResponseWriter, r *http.Request) {
 
 	cs, err := h.newCronService()
 	if err != nil {
-		writeCronError(w, http.StatusInternalServerError, fmt.Sprintf("Failed to load cron store: %v", err))
+		writeCronServiceError(w, err)
 		return
 	}
 
@@ -279,8 +279,25 @@ func (h *Handler) newCronService() (*cronpkg.CronService, error) {
 	if err != nil {
 		return nil, err
 	}
+	if !cfg.Tools.Cron.Enabled {
+		return nil, errCronDisabled
+	}
 	storePath := filepath.Join(cfg.WorkspacePath(), "cron", "jobs.json")
 	return cronpkg.NewCronService(storePath, nil), nil
+}
+
+var errCronDisabled = fmt.Errorf("cron tool is disabled")
+
+func writeCronServiceError(w http.ResponseWriter, err error) {
+	if err == nil {
+		writeCronError(w, http.StatusInternalServerError, "Failed to load cron store")
+		return
+	}
+	if err == errCronDisabled {
+		writeCronError(w, http.StatusServiceUnavailable, "cron tool is disabled")
+		return
+	}
+	writeCronError(w, http.StatusInternalServerError, fmt.Sprintf("Failed to load cron store: %v", err))
 }
 
 func buildCronJobResponse(job cronpkg.CronJob) cronJobResponse {

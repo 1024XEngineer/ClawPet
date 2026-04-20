@@ -175,3 +175,73 @@ func TestCronAPI_CreateRejectsInvalidCron(t *testing.T) {
 		t.Fatalf("expected error message, got %#v", resp)
 	}
 }
+
+func TestCronAPI_DisabledReturnsServiceUnavailable(t *testing.T) {
+	configPath, cleanup := setupOAuthTestEnv(t)
+	defer cleanup()
+
+	cfg, err := config.LoadConfig(configPath)
+	if err != nil {
+		t.Fatalf("LoadConfig() error = %v", err)
+	}
+	cfg.Tools.Cron.Enabled = false
+	if err := config.SaveConfig(configPath, cfg); err != nil {
+		t.Fatalf("SaveConfig() error = %v", err)
+	}
+
+	h := NewHandler(configPath)
+	mux := http.NewServeMux()
+	h.RegisterRoutes(mux)
+
+	testCases := []struct {
+		name   string
+		method string
+		path   string
+		body   string
+	}{
+		{name: "list", method: http.MethodGet, path: "/api/cron"},
+		{
+			name:   "create",
+			method: http.MethodPost,
+			path:   "/api/cron",
+			body:   `{"name":"job","description":"msg","scheduleType":"every","everySeconds":60}`,
+		},
+		{
+			name:   "update",
+			method: http.MethodPut,
+			path:   "/api/cron/job-1",
+			body:   `{"description":"msg"}`,
+		},
+		{name: "delete", method: http.MethodDelete, path: "/api/cron/job-1"},
+		{
+			name:   "toggle",
+			method: http.MethodPost,
+			path:   "/api/cron/job-1/toggle",
+			body:   `{"enabled":false}`,
+		},
+	}
+
+	for _, tc := range testCases {
+		t.Run(tc.name, func(t *testing.T) {
+			rec := httptest.NewRecorder()
+			req := httptest.NewRequest(tc.method, tc.path, bytes.NewBufferString(tc.body))
+			if tc.body != "" {
+				req.Header.Set("Content-Type", "application/json")
+			}
+
+			mux.ServeHTTP(rec, req)
+
+			if rec.Code != http.StatusServiceUnavailable {
+				t.Fatalf("status = %d, want %d, body=%s", rec.Code, http.StatusServiceUnavailable, rec.Body.String())
+			}
+
+			var resp map[string]string
+			if err := json.Unmarshal(rec.Body.Bytes(), &resp); err != nil {
+				t.Fatalf("unmarshal error = %v", err)
+			}
+			if resp["message"] != "cron tool is disabled" {
+				t.Fatalf("message = %q, want %q", resp["message"], "cron tool is disabled")
+			}
+		})
+	}
+}

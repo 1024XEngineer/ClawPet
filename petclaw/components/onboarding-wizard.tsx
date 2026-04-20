@@ -436,7 +436,7 @@ export function OnboardingWizard({ onFinish }: OnboardingWizardProps) {
     }
     if (step === 0) {
       if (icsFileName) {
-        return `收到课表 ${icsFileName}，我会尽量避开上课时段提醒你。`
+        return `已记录课表文件 ${icsFileName}，后续会把它作为你的作息参考占位信息。`
       }
       if (selectedBreakers.length > 3) {
         return "我看到你的压力点比较密集，后续提醒会更聚焦、少废话。"
@@ -665,6 +665,28 @@ export function OnboardingWizard({ onFinish }: OnboardingWizardProps) {
     const finalNickname = customNickname.trim() || nickname
     const voiceStyle = activityLevel >= 65 ? "活泼碎碎念" : "温和陪伴型"
 
+    const completedPayload = getPayloadForStep(2)
+    const finalSessionId = completedPayload.onboardingId
+
+    const draftOk = await saveDraft(2)
+    if (!draftOk) {
+      setSummonInProgress(false)
+      setDisplayProgress(0)
+      return
+    }
+
+    try {
+      await onboardingApi.complete({
+        schemaVersion: 1,
+        onboardingId: finalSessionId,
+      })
+    } catch (error) {
+      setSetupError(`初始化提交失败：${getErrorMessage(error)}`)
+      setSummonInProgress(false)
+      setDisplayProgress(0)
+      return
+    }
+
     try {
       window.localStorage.setItem("petclaw.userIdentity", "student")
     } catch {
@@ -705,28 +727,6 @@ export function OnboardingWizard({ onFinish }: OnboardingWizardProps) {
         pressurePlan: pressurePlanInsight,
       },
     })
-
-    const completedPayload = getPayloadForStep(2)
-    const finalSessionId = completedPayload.onboardingId
-
-    const draftOk = await saveDraft(2)
-    if (!draftOk) {
-      setSummonInProgress(false)
-      setDisplayProgress(0)
-      return
-    }
-
-    try {
-      await onboardingApi.complete({
-        schemaVersion: 1,
-        onboardingId: finalSessionId,
-      })
-    } catch (error) {
-      setSetupError(`初始化提交失败：${getErrorMessage(error)}`)
-      setSummonInProgress(false)
-      setDisplayProgress(0)
-      return
-    }
 
     setIsFinishing(true)
     window.setTimeout(() => {
@@ -924,7 +924,7 @@ export function OnboardingWizard({ onFinish }: OnboardingWizardProps) {
 
                 <div className={`rounded-2xl border border-white/70 bg-[linear-gradient(130deg,rgba(255,255,255,0.9),rgba(255,246,232,0.9),rgba(237,249,255,0.82))] p-5 ${moodTheme.cardGlow}`}>
                   <p className="mb-3 text-2xl font-semibold text-gradient-warm text-shadow-soft">课表导入（.ics）</p>
-                  <p className="mb-2 text-sm text-gradient-milestone">导入后可自动识别上课时段，避免在上课时高频打扰。</p>
+                  <p className="mb-2 text-sm text-gradient-milestone">当前仅记录课表文件名，作为后续课表配置的占位信息。</p>
                   <label
                     onDragOver={(e) => {
                       e.preventDefault()
