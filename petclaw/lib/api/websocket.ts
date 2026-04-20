@@ -201,6 +201,12 @@ export class PicoClawWebSocket {
         wsPath: API_ENDPOINTS.CHAT.WS,
         useLauncherAuth: true,
       },
+      {
+        baseUrl: getApiBaseUrl(),
+        tokenPath: API_ENDPOINTS.PICO.TOKEN,
+        wsPath: API_ENDPOINTS.CHAT.WS_LEGACY,
+        useLauncherAuth: true,
+      },
     ]
 
     let lastError = "PET channel not available"

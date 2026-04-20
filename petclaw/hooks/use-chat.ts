@@ -48,6 +48,12 @@ interface AudioPushData {
   is_final?: boolean
 }
 
+interface AudioPlaybackScope {
+  sessionId: string
+  responseScope: number
+  chatId: number | null
+}
+
 const EMPTY_SESSION_TITLE = "新对话"
 function normalizeTimestamp(value: number | string): number {
   const numeric = typeof value === "number" ? value : Number(value)
@@ -142,6 +148,22 @@ function bytesToBase64(bytes: Uint8Array): string {
   return window.btoa(binary)
 }
 
+function createEmptyPlayedAudioState(): {
+  sessionId: string
+  responseScope: number
+  chatId: number | null
+  value: string
+  at: number
+} {
+  return {
+    sessionId: "",
+    responseScope: 0,
+    chatId: null,
+    value: "",
+    at: 0,
+  }
+}
+
 export function useChat(options: UseChatOptions = {}): UseChatResult {
   const [isConnected, setIsConnected] = useState(false)
   const [isTyping, setIsTyping] = useState(false)
@@ -162,10 +184,8 @@ export function useChat(options: UseChatOptions = {}): UseChatResult {
   const currentAudioRef = useRef<HTMLAudioElement | null>(null)
   const lastAssistantTextRef = useRef("")
   const lastEmotionRef = useRef("neutral")
-  const lastPlayedAudioRef = useRef<{ value: string; at: number }>({
-    value: "",
-    at: 0,
-  })
+  const responseScopeRef = useRef(0)
+  const lastPlayedAudioRef = useRef(createEmptyPlayedAudioState())
 
   const updateSessionMessages = useCallback(
     (sessionId: string, updater: (messages: ChatMessage[]) => ChatMessage[]) => {
@@ -199,12 +219,15 @@ export function useChat(options: UseChatOptions = {}): UseChatResult {
   }, [])
 
   const playAudioBase64 = useCallback(
-    (audioBase64: string) => {
+    (audioBase64: string, scope: AudioPlaybackScope) => {
       if (!audioBase64) {
         return
       }
 
       if (
+        lastPlayedAudioRef.current.sessionId === scope.sessionId &&
+        lastPlayedAudioRef.current.responseScope === scope.responseScope &&
+        lastPlayedAudioRef.current.chatId === scope.chatId &&
         lastPlayedAudioRef.current.value === audioBase64 &&
         Date.now() - lastPlayedAudioRef.current.at < 4000
       ) {
@@ -212,6 +235,9 @@ export function useChat(options: UseChatOptions = {}): UseChatResult {
       }
 
       lastPlayedAudioRef.current = {
+        sessionId: scope.sessionId,
+        responseScope: scope.responseScope,
+        chatId: scope.chatId,
         value: audioBase64,
         at: Date.now(),
       }
@@ -347,7 +373,11 @@ export function useChat(options: UseChatOptions = {}): UseChatResult {
           audioStreamRef.current = { chatId: null, chunks: [] }
           const audioBase64 = bytesToBase64(merged)
           if (audioBase64) {
-            playAudioBase64(audioBase64)
+            playAudioBase64(audioBase64, {
+              sessionId: activeSessionIdRef.current,
+              responseScope: responseScopeRef.current,
+              chatId: currentStream.chatId,
+            })
           }
           break
         }
@@ -401,7 +431,8 @@ export function useChat(options: UseChatOptions = {}): UseChatResult {
       }
       audioStreamRef.current = { chatId: null, chunks: [] }
       lastAssistantTextRef.current = ""
-      lastPlayedAudioRef.current = { value: "", at: 0 }
+      responseScopeRef.current = 0
+      lastPlayedAudioRef.current = createEmptyPlayedAudioState()
     }
   }, [
     connectWithBootstrap,
@@ -433,6 +464,7 @@ export function useChat(options: UseChatOptions = {}): UseChatResult {
       ])
       setIsTyping(true)
       setError(null)
+      responseScopeRef.current += 1
 
       wsRef.current.send(content.trim())
     },
@@ -446,7 +478,8 @@ export function useChat(options: UseChatOptions = {}): UseChatResult {
     if (currentAudioRef.current) {
       currentAudioRef.current.pause()
     }
-    lastPlayedAudioRef.current = { value: "", at: 0 }
+    responseScopeRef.current = 0
+    lastPlayedAudioRef.current = createEmptyPlayedAudioState()
     lastAssistantTextRef.current = ""
     audioStreamRef.current = { chatId: null, chunks: [] }
     setIsTyping(false)
@@ -478,7 +511,8 @@ export function useChat(options: UseChatOptions = {}): UseChatResult {
       if (currentAudioRef.current) {
         currentAudioRef.current.pause()
       }
-      lastPlayedAudioRef.current = { value: "", at: 0 }
+      responseScopeRef.current = 0
+      lastPlayedAudioRef.current = createEmptyPlayedAudioState()
       audioStreamRef.current = { chatId: null, chunks: [] }
       lastAssistantTextRef.current = ""
       setIsTyping(false)
@@ -514,7 +548,8 @@ export function useChat(options: UseChatOptions = {}): UseChatResult {
       wsRef.current.disconnect()
       audioStreamRef.current = { chatId: null, chunks: [] }
       lastAssistantTextRef.current = ""
-      lastPlayedAudioRef.current = { value: "", at: 0 }
+      responseScopeRef.current = 0
+      lastPlayedAudioRef.current = createEmptyPlayedAudioState()
       setIsTyping(false)
       setError(null)
     })

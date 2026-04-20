@@ -29,6 +29,10 @@ interface ModelListResponse {
   }>
 }
 
+function shouldFallbackToLegacyEndpoint(status: number): boolean {
+  return status === 404 || status === 501
+}
+
 export interface BackendBootstrapResult {
   ok: boolean
   reason?: string
@@ -128,7 +132,22 @@ async function isLauncherTokenReady(tokenPath: string): Promise<boolean> {
 }
 
 async function ensureWsProxyReady(): Promise<boolean> {
-  return isLauncherTokenReady(API_ENDPOINTS.PET.TOKEN).catch(() => false)
+  try {
+    const primaryUrl = `${getApiBaseUrl()}${API_ENDPOINTS.PET.TOKEN}`
+    const primaryRes = await fetch(primaryUrl, withLauncherAuthRequest(primaryUrl, { method: 'GET' }))
+    if (primaryRes.ok) {
+      const data = (await primaryRes.json()) as TokenStatusResponse
+      return Boolean(data.enabled && data.ws_url)
+    }
+
+    if (!shouldFallbackToLegacyEndpoint(primaryRes.status)) {
+      return false
+    }
+
+    return isLauncherTokenReady(API_ENDPOINTS.PICO.TOKEN)
+  } catch {
+    return false
+  }
 }
 
 async function ensureChannelSetup(): Promise<void> {
@@ -137,8 +156,21 @@ async function ensureChannelSetup(): Promise<void> {
     credentials: 'include',
   })
 
-  if (!setupRes.ok) {
+  if (setupRes.ok) {
+    return
+  }
+
+  if (!shouldFallbackToLegacyEndpoint(setupRes.status)) {
     throw new Error(`channel setup failed: ${setupRes.status}`)
+  }
+
+  const legacySetupRes = await fetchWithAuthRetry(`${getApiBaseUrl()}${API_ENDPOINTS.PICO.SETUP}`, {
+    method: 'POST',
+    credentials: 'include',
+  })
+
+  if (!legacySetupRes.ok) {
+    throw new Error(`channel setup failed: ${legacySetupRes.status}`)
   }
 }
 
