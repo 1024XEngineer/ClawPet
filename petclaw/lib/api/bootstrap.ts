@@ -135,7 +135,6 @@ async function isLauncherTokenReady(tokenPath: string): Promise<boolean> {
 async function ensureWsProxyReady(): Promise<boolean> {
   return isLauncherTokenReady(API_ENDPOINTS.PET.TOKEN).catch(() => false)
 }
-}
 
 async function ensureChannelSetup(): Promise<void> {
   const setupRes = await fetchWithAuthRetry(`${getApiBaseUrl()}${API_ENDPOINTS.PET.SETUP}`, {
