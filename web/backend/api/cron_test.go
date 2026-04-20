@@ -282,6 +282,231 @@ func TestCronAPI_CreateReloadsRunningGateway(t *testing.T) {
 	}
 }
 
+func TestCronAPI_CreateSucceedsWhenReloadFails(t *testing.T) {
+	resetGatewayTestState(t)
+
+	configPath, cleanup := setupOAuthTestEnv(t)
+	defer cleanup()
+
+	cfg, err := config.LoadConfig(configPath)
+	if err != nil {
+		t.Fatalf("LoadConfig() error = %v", err)
+	}
+	cfg.Tools.Cron.Enabled = true
+	if err := config.SaveConfig(configPath, cfg); err != nil {
+		t.Fatalf("SaveConfig() error = %v", err)
+	}
+
+	originalReloadPost := gatewayReloadPost
+	t.Cleanup(func() {
+		gatewayReloadPost = originalReloadPost
+	})
+	gatewayReloadPost = func(url string, authToken string, timeout time.Duration) (*http.Response, error) {
+		return nil, io.ErrUnexpectedEOF
+	}
+
+	gateway.mu.Lock()
+	gateway.pidData = &ppid.PidFileData{
+		Host:  "127.0.0.1",
+		Port:  18999,
+		Token: "reload-token",
+	}
+	setGatewayRuntimeStatusLocked("running")
+	gateway.mu.Unlock()
+
+	h := NewHandler(configPath)
+	mux := http.NewServeMux()
+	h.RegisterRoutes(mux)
+
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(
+		http.MethodPost,
+		"/api/cron",
+		bytes.NewBufferString(`{"name":"Morning reminder","description":"Send a daily check-in","scheduleType":"cron","schedule":"0 9 * * *"}`),
+	)
+	req.Header.Set("Content-Type", "application/json")
+	mux.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusCreated {
+		t.Fatalf("status = %d, want %d, body=%s", rec.Code, http.StatusCreated, rec.Body.String())
+	}
+
+	var resp struct {
+		Job     cronJobResponse `json:"job"`
+		Warning string          `json:"warning"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("unmarshal error = %v", err)
+	}
+	if resp.Job.ID == "" {
+		t.Fatalf("expected created job, body=%s", rec.Body.String())
+	}
+	if !strings.Contains(resp.Warning, "cron job saved but gateway reload failed") {
+		t.Fatalf("warning = %q, want reload failure", resp.Warning)
+	}
+
+	listRec := httptest.NewRecorder()
+	listReq := httptest.NewRequest(http.MethodGet, "/api/cron", nil)
+	mux.ServeHTTP(listRec, listReq)
+
+	if listRec.Code != http.StatusOK {
+		t.Fatalf("list status = %d, want %d, body=%s", listRec.Code, http.StatusOK, listRec.Body.String())
+	}
+
+	var listResp struct {
+		Jobs []cronJobResponse `json:"jobs"`
+	}
+	if err := json.Unmarshal(listRec.Body.Bytes(), &listResp); err != nil {
+		t.Fatalf("list unmarshal error = %v", err)
+	}
+	if len(listResp.Jobs) != 1 {
+		t.Fatalf("expected persisted job after reload failure, got %d", len(listResp.Jobs))
+	}
+}
+
+func TestCronAPI_MutationsSucceedWhenReloadFails(t *testing.T) {
+	resetGatewayTestState(t)
+
+	configPath, cleanup := setupOAuthTestEnv(t)
+	defer cleanup()
+
+	cfg, err := config.LoadConfig(configPath)
+	if err != nil {
+		t.Fatalf("LoadConfig() error = %v", err)
+	}
+	cfg.Tools.Cron.Enabled = true
+	if err := config.SaveConfig(configPath, cfg); err != nil {
+		t.Fatalf("SaveConfig() error = %v", err)
+	}
+
+	originalReloadPost := gatewayReloadPost
+	t.Cleanup(func() {
+		gatewayReloadPost = originalReloadPost
+	})
+	gatewayReloadPost = func(url string, authToken string, timeout time.Duration) (*http.Response, error) {
+		return &http.Response{
+			StatusCode: http.StatusBadGateway,
+			Status:     "502 Bad Gateway",
+			Body:       io.NopCloser(strings.NewReader("reload failed")),
+		}, nil
+	}
+
+	gateway.mu.Lock()
+	gateway.pidData = &ppid.PidFileData{
+		Host:  "127.0.0.1",
+		Port:  18999,
+		Token: "reload-token",
+	}
+	setGatewayRuntimeStatusLocked("running")
+	gateway.mu.Unlock()
+
+	h := NewHandler(configPath)
+	mux := http.NewServeMux()
+	h.RegisterRoutes(mux)
+
+	createRec := httptest.NewRecorder()
+	createReq := httptest.NewRequest(
+		http.MethodPost,
+		"/api/cron",
+		bytes.NewBufferString(`{"name":"Morning reminder","description":"Send a daily check-in","scheduleType":"cron","schedule":"0 9 * * *"}`),
+	)
+	createReq.Header.Set("Content-Type", "application/json")
+	mux.ServeHTTP(createRec, createReq)
+	if createRec.Code != http.StatusCreated {
+		t.Fatalf("create status = %d, want %d, body=%s", createRec.Code, http.StatusCreated, createRec.Body.String())
+	}
+
+	var createResp struct {
+		Job cronJobResponse `json:"job"`
+	}
+	if err := json.Unmarshal(createRec.Body.Bytes(), &createResp); err != nil {
+		t.Fatalf("create unmarshal error = %v", err)
+	}
+
+	t.Run("update", func(t *testing.T) {
+		rec := httptest.NewRecorder()
+		req := httptest.NewRequest(
+			http.MethodPut,
+			"/api/cron/"+createResp.Job.ID,
+			bytes.NewBufferString(`{"description":"Updated","scheduleType":"every","everySeconds":300}`),
+		)
+		req.Header.Set("Content-Type", "application/json")
+		mux.ServeHTTP(rec, req)
+
+		if rec.Code != http.StatusOK {
+			t.Fatalf("status = %d, want %d, body=%s", rec.Code, http.StatusOK, rec.Body.String())
+		}
+
+		var resp struct {
+			Job     cronJobResponse `json:"job"`
+			Warning string          `json:"warning"`
+		}
+		if err := json.Unmarshal(rec.Body.Bytes(), &resp); err != nil {
+			t.Fatalf("unmarshal error = %v", err)
+		}
+		if resp.Job.Description != "Updated" {
+			t.Fatalf("description = %q, want %q", resp.Job.Description, "Updated")
+		}
+		if !strings.Contains(resp.Warning, "cron job saved but gateway reload failed") {
+			t.Fatalf("warning = %q, want reload failure", resp.Warning)
+		}
+	})
+
+	t.Run("toggle", func(t *testing.T) {
+		rec := httptest.NewRecorder()
+		req := httptest.NewRequest(
+			http.MethodPost,
+			"/api/cron/"+createResp.Job.ID+"/toggle",
+			bytes.NewBufferString(`{"enabled":false}`),
+		)
+		req.Header.Set("Content-Type", "application/json")
+		mux.ServeHTTP(rec, req)
+
+		if rec.Code != http.StatusOK {
+			t.Fatalf("status = %d, want %d, body=%s", rec.Code, http.StatusOK, rec.Body.String())
+		}
+
+		var resp struct {
+			Success bool            `json:"success"`
+			Job     cronJobResponse `json:"job"`
+			Warning string          `json:"warning"`
+		}
+		if err := json.Unmarshal(rec.Body.Bytes(), &resp); err != nil {
+			t.Fatalf("unmarshal error = %v", err)
+		}
+		if !resp.Success || resp.Job.Enabled {
+			t.Fatalf("toggle response = %#v", resp)
+		}
+		if !strings.Contains(resp.Warning, "cron job saved but gateway reload failed") {
+			t.Fatalf("warning = %q, want reload failure", resp.Warning)
+		}
+	})
+
+	t.Run("delete", func(t *testing.T) {
+		rec := httptest.NewRecorder()
+		req := httptest.NewRequest(http.MethodDelete, "/api/cron/"+createResp.Job.ID, nil)
+		mux.ServeHTTP(rec, req)
+
+		if rec.Code != http.StatusOK {
+			t.Fatalf("status = %d, want %d, body=%s", rec.Code, http.StatusOK, rec.Body.String())
+		}
+
+		var resp struct {
+			Success bool   `json:"success"`
+			Warning string `json:"warning"`
+		}
+		if err := json.Unmarshal(rec.Body.Bytes(), &resp); err != nil {
+			t.Fatalf("unmarshal error = %v", err)
+		}
+		if !resp.Success {
+			t.Fatalf("expected success, body=%s", rec.Body.String())
+		}
+		if !strings.Contains(resp.Warning, "cron job saved but gateway reload failed") {
+			t.Fatalf("warning = %q, want reload failure", resp.Warning)
+		}
+	})
+}
+
 func TestCronAPI_CreateRejectsInvalidCron(t *testing.T) {
 	configPath, cleanup := setupOAuthTestEnv(t)
 	defer cleanup()
