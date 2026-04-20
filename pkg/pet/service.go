@@ -109,12 +109,14 @@ func NewPetService(msgBus *bus.MessageBus, cfg PetServiceConfig) (*PetService, e
 				threshold = compressionConfig.Threshold
 			}
 
-			// 对话存储的回调函数：当对话数达到阈值时触发压缩
+			// 对话存储的回调函数：当对话数达到阈值时触发压缩（异步）
 			callback := func(characterID string, entries []*compression.ConversationEntry) {
 				if s.compressionSvc != nil {
-					if err := s.compressionSvc.Compress(characterID, entries); err != nil {
-						logger.Warnf("compression: failed to compress: %v", err)
-					}
+					go func() {
+						if err := s.compressionSvc.Compress(characterID, entries); err != nil {
+							logger.Warnf("compression: failed to compress: %v", err)
+						}
+					}()
 				}
 			}
 
