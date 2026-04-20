@@ -1050,9 +1050,10 @@ func (s *petStreamer) audioPlayLoop() {
 			// TTS 合成完毕通知
 			s.waitMu.Lock()
 			logger.DebugCF("pet", "audioPlayLoop: audio ready", map[string]any{"seq": seq})
-			if s.trySendNextLocked() {
+			if seq == 1 {
 				// 发送成功 → 这是第一个
 				s.hasSentFirst = true
+				s.trySendNextLocked()
 			} else {
 				// 没发送 → 不是第一个，增加计数
 				s.hasReadyAudioCount++
@@ -1073,7 +1074,7 @@ func (s *petStreamer) audioPlayLoop() {
 			//	logger.DebugCF("pet", "audioPlayLoop: marked sent", map[string]any{"seq": front.Seq})
 			//}
 			// 有待发送音频则发送
-			if s.hasReadyAudioCount > 0 {
+			if s.hasReadyAudioCount > 0 && s.hasSentFirst {
 				s.hasReadyAudioCount--
 				s.trySendNextLocked()
 			}
@@ -1094,7 +1095,7 @@ func (s *petStreamer) audioPlayLoop() {
 			//	logger.DebugCF("pet", "audioPlayLoop: marked sent", map[string]any{"seq": front.Seq})
 			//}
 			// 有待发送音频则发送
-			if s.hasReadyAudioCount > 0 {
+			if s.hasReadyAudioCount > 0 && s.hasSentFirst {
 				s.hasReadyAudioCount--
 				s.trySendNextLocked()
 			}
