@@ -156,12 +156,12 @@ func (h *Handler) handleCreateCronJob(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
-	payload := map[string]any{"job": buildCronJobResponse(*job)}
-	if warning := h.gatewayCronReloadWarning(cfg); warning != "" {
-		payload["warning"] = warning
+	if err := h.reloadGatewayCronRuntime(cfg); err != nil {
+		writeCronError(w, http.StatusBadGateway, err.Error())
+		return
 	}
 
-	writeCronJSON(w, http.StatusCreated, payload)
+	writeCronJSON(w, http.StatusCreated, map[string]any{"job": buildCronJobResponse(*job)})
 }
 
 func (h *Handler) handleUpdateCronJob(w http.ResponseWriter, r *http.Request) {
@@ -234,12 +234,12 @@ func (h *Handler) handleUpdateCronJob(w http.ResponseWriter, r *http.Request) {
 		writeCronError(w, http.StatusBadRequest, err.Error())
 		return
 	}
-	payload := map[string]any{"job": buildCronJobResponse(*existing)}
-	if warning := h.gatewayCronReloadWarning(cfg); warning != "" {
-		payload["warning"] = warning
+	if err := h.reloadGatewayCronRuntime(cfg); err != nil {
+		writeCronError(w, http.StatusBadGateway, err.Error())
+		return
 	}
 
-	writeCronJSON(w, http.StatusOK, payload)
+	writeCronJSON(w, http.StatusOK, map[string]any{"job": buildCronJobResponse(*existing)})
 }
 
 func (h *Handler) handleDeleteCronJob(w http.ResponseWriter, r *http.Request) {
@@ -254,12 +254,12 @@ func (h *Handler) handleDeleteCronJob(w http.ResponseWriter, r *http.Request) {
 		writeCronError(w, http.StatusNotFound, fmt.Sprintf("Cron job %q not found", jobID))
 		return
 	}
-	payload := map[string]any{"success": true}
-	if warning := h.gatewayCronReloadWarning(cfg); warning != "" {
-		payload["warning"] = warning
+	if err := h.reloadGatewayCronRuntime(cfg); err != nil {
+		writeCronError(w, http.StatusBadGateway, err.Error())
+		return
 	}
 
-	writeCronJSON(w, http.StatusOK, payload)
+	writeCronJSON(w, http.StatusOK, map[string]any{"success": true})
 }
 
 func (h *Handler) handleToggleCronJob(w http.ResponseWriter, r *http.Request) {
@@ -288,15 +288,15 @@ func (h *Handler) handleToggleCronJob(w http.ResponseWriter, r *http.Request) {
 		writeCronError(w, http.StatusNotFound, fmt.Sprintf("Cron job %q not found", jobID))
 		return
 	}
-	payload := map[string]any{
-		"success": true,
-		"job":     buildCronJobResponse(*job),
-	}
-	if warning := h.gatewayCronReloadWarning(cfg); warning != "" {
-		payload["warning"] = warning
+	if err := h.reloadGatewayCronRuntime(cfg); err != nil {
+		writeCronError(w, http.StatusBadGateway, err.Error())
+		return
 	}
 
-	writeCronJSON(w, http.StatusOK, payload)
+	writeCronJSON(w, http.StatusOK, map[string]any{
+		"success": true,
+		"job":     buildCronJobResponse(*job),
+	})
 }
 
 func (h *Handler) newCronService() (*config.Config, *cronpkg.CronService, error) {
@@ -532,13 +532,6 @@ func (h *Handler) reloadGatewayCronRuntime(cfg *config.Config) error {
 	}
 
 	return nil
-}
-
-func (h *Handler) gatewayCronReloadWarning(cfg *config.Config) string {
-	if err := h.reloadGatewayCronRuntime(cfg); err != nil {
-		return err.Error()
-	}
-	return ""
 }
 
 func writeCronJSON(w http.ResponseWriter, status int, payload any) {
