@@ -49,6 +49,7 @@ func newMinimaxTTS(apiBase, apiKey, model string) *MinimaxTTS {
 // 返回一个通道，用于接收流式音频数据块
 func (t *MinimaxTTS) Synthesize(text string, params VoiceParams) (<-chan AudioChunk, error) {
 	logger.DebugCF("pet-voice", "MinimaxTTS.Synthesize", map[string]any{
+		"text":     text,
 		"text_len": len(text),
 		"params":   params,
 	})

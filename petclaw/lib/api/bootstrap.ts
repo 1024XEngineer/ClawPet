@@ -1,14 +1,15 @@
 import {
   API_ENDPOINTS,
+  cacheDirectGatewayBaseUrl,
   DIRECT_PET_TOKEN_PATH,
   getApiBaseUrl,
   getDirectGatewayBaseUrl,
-  withLauncherAuthRequest,
 } from './config'
 import { ensureLauncherAuthSession, fetchWithAuthRetry } from './auth-bootstrap'
 
 interface GatewayStatusResponse {
   gateway_status?: string
+  gateway_base_url?: string
   gateway_start_allowed?: boolean
   gateway_start_reason?: string
 }
@@ -63,7 +64,11 @@ async function getGatewayStatus(): Promise<GatewayStatusResponse> {
   if (!res.ok) {
     throw new Error(`gateway status failed: ${res.status}`)
   }
-  return (await res.json()) as GatewayStatusResponse
+  const data = (await res.json()) as GatewayStatusResponse
+  if (data.gateway_base_url) {
+    cacheDirectGatewayBaseUrl(data.gateway_base_url)
+  }
+  return data
 }
 
 async function isDirectGatewayHealthy(): Promise<boolean> {
@@ -129,6 +134,7 @@ async function isLauncherTokenReady(tokenPath: string): Promise<boolean> {
 
 async function ensureWsProxyReady(): Promise<boolean> {
   return isLauncherTokenReady(API_ENDPOINTS.PET.TOKEN).catch(() => false)
+}
 }
 
 async function ensureChannelSetup(): Promise<void> {
@@ -277,7 +283,7 @@ export async function ensureBackendReadyForChat(): Promise<BackendBootstrapResul
     const wsReady = await ensureWsProxyReady()
     return wsReady
       ? { ok: true }
-      : { ok: false, reason: 'websocket proxy unavailable (gateway not ready)' }
+      : { ok: false, reason: 'pet channel token unavailable (gateway not ready)' }
   }
 
   if (await isDirectGatewayReady()) {
@@ -297,7 +303,7 @@ export async function ensureBackendReadyForChat(): Promise<BackendBootstrapResul
     }
   }
 
-  if (await isDirectGatewayReady()) {
+if (await isDirectGatewayReady()) {
     return { ok: true }
   }
 
@@ -305,7 +311,7 @@ export async function ensureBackendReadyForChat(): Promise<BackendBootstrapResul
   if (!wsReady) {
     return {
       ok: false,
-      reason: 'websocket proxy unavailable (gateway not ready)',
+      reason: 'pet channel token unavailable (gateway not ready)',
     }
   }
 

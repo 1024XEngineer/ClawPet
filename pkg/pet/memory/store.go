@@ -29,11 +29,13 @@ type Memory struct {
 	UpdatedAt   time.Time // 更新时间
 }
 
-// 记忆类型常量
+// 记忆类型常量（实际存储时可使用任意字符串，类型由配置决定）
 const (
-	MemoryTypeConversation = "conversation" // 对话记忆
-	MemoryTypePreference   = "preference"   // 偏好记忆
-	MemoryTypeFact         = "fact"         // 事实记忆
+	MemoryTypeConversation   = "conversation"    // 对话记忆
+	MemoryTypePreference     = "preference"      // 宠物偏好
+	MemoryTypeFact           = "fact"            // 事实知识
+	MemoryTypeUserProfile    = "user_profile"    // 用户基础信息
+	MemoryTypeUserPreference = "user_preference" // 用户偏好
 )
 
 // NewStore 创建记忆存储实例

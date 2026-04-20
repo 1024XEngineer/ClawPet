@@ -306,6 +306,37 @@ func TestHandlePicoSetup_Response(t *testing.T) {
 	}
 }
 
+func TestHandleGetPicoToken_PetEndpointReturnsPetProtocolAndWSURL(t *testing.T) {
+	configPath := filepath.Join(t.TempDir(), "config.json")
+	h := NewHandler(configPath)
+
+	if _, err := h.EnsurePicoChannel(""); err != nil {
+		t.Fatalf("EnsurePicoChannel() error = %v", err)
+	}
+
+	req := httptest.NewRequest(http.MethodGet, "http://127.0.0.1:18800/api/pet/token", nil)
+	req.Host = "127.0.0.1:18800"
+	rec := httptest.NewRecorder()
+
+	h.handleGetPicoToken(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want %d", rec.Code, http.StatusOK)
+	}
+
+	var resp map[string]any
+	if err := json.NewDecoder(rec.Body).Decode(&resp); err != nil {
+		t.Fatalf("failed to decode response: %v", err)
+	}
+
+	if got := resp["protocol"]; got != "pet" {
+		t.Fatalf("protocol = %#v, want %q", got, "pet")
+	}
+	if got := resp["ws_url"]; got != "ws://127.0.0.1:18800/pet/ws" {
+		t.Fatalf("ws_url = %#v, want %q", got, "ws://127.0.0.1:18800/pet/ws")
+	}
+}
+
 func TestHandleWebSocketProxyReloadsGatewayTargetFromConfig(t *testing.T) {
 	configPath := filepath.Join(t.TempDir(), "config.json")
 	h := NewHandler(configPath)
