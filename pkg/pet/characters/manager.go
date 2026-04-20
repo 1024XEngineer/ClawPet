@@ -58,7 +58,7 @@ func NewManager(cfg []*config.CharacterConfig, configManager *config.Manager) (*
 						Surprise: privateCfg.EmotionState.Surprise,
 						Fear:     privateCfg.EmotionState.Fear,
 					})
-					char.SetPersonality(MBTIPersonality{
+					char.EmotionEngine.SetPersonality(emotion.MBTIPersonality{
 						IE: privateCfg.MBTI.IE,
 						SN: privateCfg.MBTI.SN,
 						TF: privateCfg.MBTI.TF,
@@ -151,7 +151,7 @@ func (m *Manager) Switch(id string) error {
 				Surprise: privateCfg.EmotionState.Surprise,
 				Fear:     privateCfg.EmotionState.Fear,
 			})
-			char.SetPersonality(MBTIPersonality{
+			char.EmotionEngine.SetPersonality(emotion.MBTIPersonality{
 				IE: privateCfg.MBTI.IE,
 				SN: privateCfg.MBTI.SN,
 				TF: privateCfg.MBTI.TF,
@@ -250,7 +250,7 @@ func (m *Manager) SavePrivateConfig() error {
 	}
 
 	emo := char.GetEmotions()
-	mbti := char.GetMBTI()
+	mbti := char.EmotionEngine.GetPersonality()
 	volatility := char.EmotionEngine.GetVolatility()
 	lastUpdate := time.Now().Unix()
 

@@ -264,6 +264,14 @@ func (e *EmotionEngine) GetPersonality() MBTIPersonality {
 	return e.personality
 }
 
+// SetPersonality 设置MBTI性格配置
+// 用于从持久化存储加载时初始化人格
+func (e *EmotionEngine) SetPersonality(p MBTIPersonality) {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	e.personality = p
+}
+
 // GetVolatility 获取当前波动系数
 // 波动系数影响情绪变化的幅度
 func (e *EmotionEngine) GetVolatility() float64 {
