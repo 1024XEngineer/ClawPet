@@ -14,6 +14,7 @@ import (
 	"github.com/sipeed/picoclaw/pkg/pet/compression"
 	"github.com/sipeed/picoclaw/pkg/pet/emotion"
 	"github.com/sipeed/picoclaw/pkg/pet/memory"
+	"github.com/sipeed/picoclaw/pkg/pet/userprofile"
 	"github.com/sipeed/picoclaw/pkg/providers"
 	"github.com/sipeed/picoclaw/pkg/tools"
 )
@@ -45,6 +46,7 @@ type PetHook struct {
 	petService        *PetService                    // Pet服务，用于推送
 	memoryStore       *memory.Store                  // 记忆存储
 	conversationStore *compression.ConversationStore // 会话存储
+	userProfileMgr    *userprofile.Manager           // 用户画像管理器
 	lastUserMessage   string                         // 最后一条用户消息，用于记录对话
 }
 
@@ -55,13 +57,14 @@ type PetHook struct {
 //   - petService: Pet服务指针，用于推送情绪和动作
 //   - memoryStore: 记忆存储指针
 //   - conversationStore: 会话存储指针
-func NewPetHook(charManager *characters.Manager, actionManager *action.ActionManager, petService *PetService, memoryStore *memory.Store, conversationStore *compression.ConversationStore) *PetHook {
+func NewPetHook(charManager *characters.Manager, actionManager *action.ActionManager, petService *PetService, memoryStore *memory.Store, conversationStore *compression.ConversationStore, userProfileMgr *userprofile.Manager) *PetHook {
 	return &PetHook{
 		charManager:       charManager,
 		actionManager:     actionManager,
 		petService:        petService,
 		memoryStore:       memoryStore,
 		conversationStore: conversationStore,
+		userProfileMgr:    userProfileMgr,
 	}
 }
 
@@ -160,6 +163,12 @@ func (h *PetHook) BeforeLLM(ctx context.Context, req *agent.LLMHookRequest) (*ag
 		memoryTypesList = "conversation（对话）/ preference（偏好）/ fact（事实）/ user_profile（用户基础信息）/ user_preference（用户偏好）"
 	}
 
+	// 用户档案prompt - 独立注入用户画像信息
+	userProfilePrompt := ""
+	if h.userProfileMgr != nil {
+		userProfilePrompt = h.userProfileMgr.GetContextPrompt(char.ID)
+	}
+
 	// 角色信息prompt
 	personaPrompt := fmt.Sprintf(`【桌宠角色信息】
 姓名：%s
@@ -221,11 +230,15 @@ func (h *PetHook) BeforeLLM(ctx context.Context, req *agent.LLMHookRequest) (*ag
 		strings.Join(actionNames, ", "),
 		memoryTypesList)
 
-	// 先注入记忆，再注入角色信息，最后注入情绪动作
+	// 先注入记忆，再注入用户档案，再注入角色信息，最后注入情绪动作
 	var msgs []providers.Message
 	if memoryPrompt != "" {
 		memoryMsg := providers.Message{Role: "system", Content: memoryPrompt}
 		msgs = append(msgs, memoryMsg)
+	}
+	if userProfilePrompt != "" {
+		userProfileMsg := providers.Message{Role: "system", Content: userProfilePrompt}
+		msgs = append(msgs, userProfileMsg)
 	}
 	personaMsg := providers.Message{Role: "system", Content: personaPrompt}
 	emotionMsg := providers.Message{Role: "system", Content: emotionPrompt}
@@ -345,7 +358,15 @@ func (h *PetHook) AfterLLM(ctx context.Context, resp *agent.LLMHookResponse) (*a
 	parseText := textTags[0].Text
 	resp.Response.Content = content
 
-	// 6. 记录对话到会话存储（用于后续压缩）
+	// 6. 分析用户情绪（异步，不阻塞响应）
+	if h.userProfileMgr != nil && h.lastUserMessage != "" {
+		char := h.charManager.GetCurrent()
+		if char != nil {
+			go h.userProfileMgr.AnalyzeAfterChat(char.ID, h.lastUserMessage, parseText)
+		}
+	}
+
+	// 7. 记录对话到会话存储（用于后续压缩）
 	if h.conversationStore != nil {
 		char := h.charManager.GetCurrent()
 		if char != nil {

@@ -196,7 +196,7 @@ func Run(debug bool, homePath, configPath string, allowEmptyStartup bool) error 
 			if pc, ok := petChannel.(*petchannel.PetChannel); ok {
 				svc := pc.Service()
 
-				petHook := pet.NewPetHook(svc.CharManager(), svc.ActionManager(), svc, svc.MemoryStore(), svc.ConversationStore())
+				petHook := pet.NewPetHook(svc.CharManager(), svc.ActionManager(), svc, svc.MemoryStore(), svc.ConversationStore(), svc.UserProfileManager())
 				agentLoop.MountHook(agent.NamedHook("pet", petHook))
 				logger.InfoCF("pet", "Pet hook registered", nil)
 			}

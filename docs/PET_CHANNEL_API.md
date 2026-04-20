@@ -548,7 +548,93 @@ if (msg.push_type === 'audio_and_voice') {
 
 ---
 
-### 4.3 character_get - 获取角色配置
+### 4.3 user_profile_update - 用户画像更新
+
+提交用户的基本信息，用于桌宠了解用户并调整回复风格。后端会存储到 `~/.picoclaw/user_profile.json`，并在每次对话时注入到 LLM 上下文中。
+
+**请求**：
+
+```json
+{
+  "action": "user_profile_update",
+  "data": {
+    "display_name": "小明",
+    "role": "计算机专业",
+    "language": "zh-CN",
+    "chronotype": "night",
+    "personality_tone": "阴阳怪气",
+    "anxiety_level": 65,
+    "pressure_level": "high",
+    "extra": {
+      "focus_windows": ["20:00-23:00"],
+      "selected_breakers": ["考试", "作业"]
+    }
+  }
+}
+```
+
+**响应**：
+
+```json
+{
+  "status": "ok",
+  "action": "user_profile_update",
+  "data": {
+    "status": "ok"
+  }
+}
+```
+
+**字段说明**：
+
+| 字段 | 类型 | 必填 | 说明 |
+|------|------|------|------|
+| display_name | string | 否 | 用户昵称/称呼 |
+| role | string | 否 | 用户身份/专业方向 |
+| language | string | 否 | 首选语言（如 `zh-CN`、`en-US`） |
+| chronotype | string | 否 | 作息类型：`morning`（晨型）/ `balanced`（均衡型）/ `night`（夜型） |
+| personality_tone | string | 否 | 期望的对话风格（如 `阴阳怪气`、`甜心夹子`、`正常`） |
+| anxiety_level | int | 否 | 焦虑指数 0-100 |
+| pressure_level | string | 否 | 压力等级：`low` / `medium` / `high` / `critical` |
+| extra | object | 否 | 其他扩展字段，前端传来的未知数据会以 `[key]: value` 格式注入 LLM |
+
+**数据用途**：
+
+1. **存储**：后端保存到 `~/.picoclaw/user_profile.json`（用户数据目录）
+2. **LLM 上下文注入**：通过 `【用户档案】` 系统消息注入，包含：
+   - 用户昵称、身份、语言偏好、作息类型、期望风格、压力等级
+   - extra 中的所有字段（前端传来的未知参数）
+3. **实时状态**：每个桌宠角色有独立的 `workspaces/{charID}/user_state.json`，存储 LLM 分析出的用户情绪状态（current_mood, energy_level, engagement_level, stress_trend）
+4. **情绪事件记忆**：每次对话后，LLM 会分析用户情绪事件并保存到 memory store（`user_preference` 类型），带时间戳
+
+**LLM 注入示例**：
+
+```
+【用户档案】
+  用户昵称：小明
+  身份/角色：计算机专业
+  语言偏好：zh-CN
+  作息类型：夜型（晚睡型）
+  期望对话风格：阴阳怪气
+  当前压力等级：high（焦虑指数 65%）
+  [focus_windows]: [20:00-23:00]
+  [selected_breakers]: [考试, 作业]
+
+当前状态（来自pet_001的感知）：
+  情绪状态：stressed
+  精力水平：40%
+  互动意愿：70%
+  压力趋势：上升中
+```
+
+**注意**：
+- 未知字段（extra）也会被记录并注入 LLM，让桌宠了解用户更多信息
+- 实时状态由 LLM 每次对话后自动分析，前端无需发送
+- 如果 profile 为空，LLM 会看到"用户尚未完成画像设置"
+
+---
+
+### 4.4 character_get - 获取角色配置
 
 获取当前桌宠的角色配置信息。
 
@@ -1653,6 +1739,7 @@ async def send_chat(ws, text):
 | chat | 聊天交互 | 发送消息，获得 AI 回复（流式） |
 | audio_done | 音频播放完毕 | 通知后端当前音频片段已播放完毕 |
 | onboarding_config | 提交初始化配置 | 首次启动时提交配置 |
+| user_profile_update | 更新用户画像 | 提交用户信息（昵称、角色、作息等），用于 LLM 上下文 |
 | character_get | 获取角色配置 | 查看当前角色 |
 | character_update | 更新角色配置 | 修改角色设置 |
 | character_switch | 切换角色 | 切换当前激活的角色 |
