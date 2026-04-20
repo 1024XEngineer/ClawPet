@@ -674,9 +674,6 @@ func (s *petStreamer) Finalize(ctx context.Context, content string) error {
 	}
 
 	s.waitMu.Lock()
-	if s.waitTimer != nil {
-		s.waitTimer.Stop()
-	}
 	// 标记流式结束，但不立即停止。audioPlayLoop 会继续处理剩余音频
 	s.streamingEnded = true
 	s.waitMu.Unlock()
@@ -688,6 +685,12 @@ func (s *petStreamer) Finalize(ctx context.Context, content string) error {
 	case <-time.After(30 * time.Second):
 		logger.WarnCF("pet", "Finalize: audioPlayLoop timeout", nil)
 	}
+
+	s.waitMu.Lock()
+	if s.waitTimer != nil {
+		s.waitTimer.Stop()
+	}
+	s.waitMu.Unlock()
 
 	// 清空状态，不发送任何文本
 	s.buffer = ""
@@ -1075,29 +1078,27 @@ func (s *petStreamer) audioPlayLoop() {
 			//}
 			// 有待发送音频则发送
 			if s.hasReadyAudioCount > 0 && s.hasSentFirst {
-				s.hasReadyAudioCount--
-				s.trySendNextLocked()
+				if s.trySendNextLocked() {
+					s.hasReadyAudioCount--
+				}
 			}
 			s.waitMu.Unlock()
 
 		case <-s.waitTimer.C:
 			// timer 超时
-			s.waitTimer.Stop()
 			s.waitMu.Lock()
 			logger.DebugCF("pet", "audioPlayLoop: timer fired", map[string]any{
 				"hasReadyAudioCount": s.hasReadyAudioCount,
 				"queue_size":         s.audioQueue.Size(),
 			})
-			//// 弹出已发送的片段
-			//front, _ := s.audioQueue.PeekNextReady()
-			//if front != nil {
-			//	_, _ = s.audioQueue.MarkSent()
-			//	logger.DebugCF("pet", "audioPlayLoop: marked sent", map[string]any{"seq": front.Seq})
-			//}
 			// 有待发送音频则发送
 			if s.hasReadyAudioCount > 0 && s.hasSentFirst {
-				s.hasReadyAudioCount--
-				s.trySendNextLocked()
+				if s.trySendNextLocked() {
+					s.hasReadyAudioCount--
+				} else {
+					s.waitTimer.Reset(defaultAudioWaitTimeout)
+				}
+				// 如果发送失败（音频未就绪），不减计数，等下次 timer 重试
 			}
 			s.waitMu.Unlock()
 		}

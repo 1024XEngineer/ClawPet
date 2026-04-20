@@ -227,19 +227,17 @@ func (s *Synthesizer) SynthesizeToQueue(sessionID string, chatID int64, text str
 		// 收集所有音频块
 		for chunk := range ch {
 			audioData = append(audioData, chunk.Data...)
-			if chunk.Info != nil {
+			if chunk.Info != nil && chunk.Info.Length > 0 {
 				duration = chunk.Info.Length
 			}
 		}
 
-		// 检查音频数据是否为空（无额度）
-		// if len(audioData) == 0 {
-		// 	queue.UpdateSegment(seq, true, nil, 0, "语音合成返回空，请检查一下相关语音合成模型的额度")
-		// } else {
-		// 	queue.UpdateSegment(seq, true, audioData, duration, "")
-		// }
+		// 如果 API 未返回时长，用音频大小估算
+		// MiniMax: 128000 bps = 16000 bytes/s
+		if duration == 0 && len(audioData) > 0 {
+			duration = len(audioData) * 1000 / 16000
+		}
 
-		// 暂时注释掉额度检查
 		queue.UpdateSegment(seq, true, audioData, duration, "")
 
 		// 通知 audioReady channel
