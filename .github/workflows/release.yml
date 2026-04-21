@@ -81,7 +81,7 @@ jobs:
 
       - name: Setup Node (Windows launcher build)
         if: matrix.goos == 'windows'
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@v6
         with:
           node-version: "22"
 
