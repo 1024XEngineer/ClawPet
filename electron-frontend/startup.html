@@ -1,0 +1,235 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>ClawPet 启动中</title>
+    <style>
+      * { box-sizing: border-box; }
+      html, body {
+        width: 100%;
+        height: 100%;
+        margin: 0;
+        font-family: "Segoe UI", "PingFang SC", "Microsoft YaHei", sans-serif;
+        background: radial-gradient(circle at 15% 10%, #fff8ef 0%, #f8ecdf 45%, #f2e2d1 100%);
+        color: #5a3f2b;
+        overflow: hidden;
+      }
+      .shell {
+        width: 100%;
+        height: 100%;
+        display: grid;
+        grid-template-rows: auto 1fr auto;
+        border: 1px solid rgba(208, 170, 131, 0.35);
+      }
+      .topbar {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        padding: 12px 14px;
+        background: linear-gradient(120deg, rgba(255, 250, 245, 0.95), rgba(252, 237, 216, 0.9));
+        border-bottom: 1px solid rgba(213, 178, 143, 0.45);
+        -webkit-app-region: drag;
+      }
+      .brand {
+        font-size: 13px;
+        letter-spacing: 0.08em;
+        text-transform: uppercase;
+        color: #a66b35;
+      }
+      .actions { display: flex; gap: 8px; -webkit-app-region: no-drag; }
+      .actions button {
+        border: 1px solid rgba(221, 189, 156, 0.8);
+        background: rgba(255, 255, 255, 0.85);
+        color: #8f6644;
+        width: 30px;
+        height: 26px;
+        border-radius: 8px;
+        cursor: pointer;
+      }
+      .actions button:hover { background: rgba(255, 255, 255, 1); }
+      .content {
+        padding: 24px 26px;
+        display: grid;
+        grid-template-columns: 1.05fr 0.95fr;
+        gap: 18px;
+      }
+      .panel {
+        background: rgba(255, 255, 255, 0.68);
+        border: 1px solid rgba(224, 192, 161, 0.68);
+        border-radius: 18px;
+        padding: 18px;
+        box-shadow: 0 18px 38px -30px rgba(117, 74, 29, 0.75);
+      }
+      .title {
+        margin: 0;
+        font-size: 30px;
+        line-height: 1.12;
+      }
+      .subtitle {
+        margin-top: 8px;
+        color: #7c5a3e;
+        font-size: 14px;
+      }
+      .progress {
+        margin-top: 18px;
+        height: 10px;
+        border-radius: 999px;
+        overflow: hidden;
+        background: rgba(231, 202, 173, 0.72);
+      }
+      .bar {
+        height: 100%;
+        width: 8%;
+        background: linear-gradient(90deg, #eba75e 0%, #df8747 45%, #c9683b 100%);
+        transition: width 260ms ease;
+      }
+      .percent {
+        margin-top: 8px;
+        font-size: 12px;
+        color: #95694a;
+      }
+      .steps {
+        list-style: none;
+        padding: 0;
+        margin: 0;
+        display: grid;
+        gap: 10px;
+      }
+      .step {
+        border: 1px solid rgba(228, 201, 174, 0.82);
+        border-radius: 12px;
+        background: rgba(255, 255, 255, 0.84);
+        padding: 10px 12px;
+        display: grid;
+        grid-template-columns: 26px 1fr;
+        gap: 10px;
+      }
+      .dot {
+        width: 22px;
+        height: 22px;
+        border-radius: 999px;
+        display: grid;
+        place-items: center;
+        font-size: 12px;
+        color: white;
+        background: #c5a78c;
+      }
+      .step.running .dot { background: #d98a42; animation: pulse 1.2s infinite; }
+      .step.done .dot { background: #4ca96d; }
+      .step.warn .dot { background: #cf7c33; }
+      .step.error .dot { background: #d04848; }
+      .step-title {
+        font-size: 13px;
+        font-weight: 600;
+        color: #5f422d;
+      }
+      .step-detail {
+        margin-top: 2px;
+        font-size: 12px;
+        color: #8b6849;
+      }
+      .pet-wrap {
+        width: 100%;
+        height: 100%;
+        border: 1px solid rgba(229, 199, 170, 0.85);
+        border-radius: 16px;
+        background: radial-gradient(circle at 28% 18%, #ffe9ce 0%, #ffe1b8 52%, #ffd4a2 100%);
+        display: flex;
+        align-items: center;
+        justify-content: center;
+      }
+      .pet-wrap img {
+        width: 74%;
+        max-width: 270px;
+        object-fit: contain;
+      }
+      .footer {
+        border-top: 1px solid rgba(216, 182, 147, 0.45);
+        padding: 10px 18px;
+        font-size: 12px;
+        color: #8f6644;
+        background: rgba(255, 247, 236, 0.85);
+      }
+      @keyframes pulse {
+        0%, 100% { transform: scale(1); opacity: 1; }
+        50% { transform: scale(1.06); opacity: 0.72; }
+      }
+    </style>
+  </head>
+  <body>
+    <div class="shell">
+      <div class="topbar">
+        <div class="brand">ClawPet Desktop Boot</div>
+        <div class="actions">
+          <button id="minBtn">—</button>
+          <button id="closeBtn">×</button>
+        </div>
+      </div>
+      <div class="content">
+        <section class="panel">
+          <h1 class="title" id="title">正在启动 ClawPet</h1>
+          <p class="subtitle" id="subtitle">准备桌宠与桌面面板，请稍候…</p>
+          <div class="progress"><div class="bar" id="bar"></div></div>
+          <div class="percent" id="percent">0%</div>
+        </section>
+        <section class="panel">
+          <ul class="steps" id="steps"></ul>
+        </section>
+      </div>
+      <div class="footer">启动完成后将只保留桌宠形象与桌面面板，不会弹出命令行或浏览器页面。</div>
+    </div>
+    <script>
+      const titleEl = document.getElementById('title');
+      const subtitleEl = document.getElementById('subtitle');
+      const barEl = document.getElementById('bar');
+      const percentEl = document.getElementById('percent');
+      const stepsEl = document.getElementById('steps');
+
+      document.getElementById('minBtn')?.addEventListener('click', () => {
+        window.electronAPI?.minimizeWindow?.();
+      });
+      document.getElementById('closeBtn')?.addEventListener('click', () => {
+        window.electronAPI?.closeWindow?.();
+      });
+
+      function iconFor(status) {
+        if (status === 'done') return '✓';
+        if (status === 'warn') return '!';
+        if (status === 'error') return '×';
+        if (status === 'running') return '…';
+        return '·';
+      }
+
+      function render(payload) {
+        if (!payload) return;
+        titleEl.textContent = payload.title || '正在启动 ClawPet';
+        subtitleEl.textContent = payload.subtitle || '';
+        barEl.style.width = `${Math.max(0, Math.min(100, payload.percent || 0))}%`;
+        percentEl.textContent = `${Math.max(0, Math.min(100, payload.percent || 0))}%`;
+
+        const steps = Array.isArray(payload.steps) ? payload.steps : [];
+        stepsEl.innerHTML = steps
+          .map((step) => {
+            const status = step.status || 'pending';
+            return `
+              <li class="step ${status}">
+                <div class="dot">${iconFor(status)}</div>
+                <div>
+                  <div class="step-title">${step.label || step.key || ''}</div>
+                  <div class="step-detail">${step.detail || ''}</div>
+                </div>
+              </li>
+            `;
+          })
+          .join('');
+      }
+
+      window.electronAPI?.onStartupProgress?.((payload) => {
+        render(payload);
+      });
+
+      window.electronAPI?.getStartupState?.().then(render).catch(() => {});
+    </script>
+  </body>
+</html>

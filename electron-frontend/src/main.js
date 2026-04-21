@@ -5,6 +5,9 @@ const fs = require('fs');
 
 let petWindow = null;
 let settingsWindow = null;
+let startupWindow = null;
+let startupPollTimer = null;
+let startupCompleted = false;
 
 const PET_WIDTH = 280;
 const PET_HEIGHT = 380;
@@ -32,6 +35,40 @@ const rendererBaseUrl = (process.env.ELECTRON_RENDERER_URL || 'http://localhost:
 const dashboardBaseUrl = (process.env.GOCLAW_DASHBOARD_URL || 'http://127.0.0.1:3000').trim().replace(/\/+$/, '');
 const launcherToken = (process.env.GOCLAW_LAUNCHER_TOKEN || process.env.PICOCLAW_LAUNCHER_TOKEN || '').trim();
 const shouldOpenDevTools = process.env.ELECTRON_OPEN_DEVTOOLS === '1';
+const startupMode = process.env.GOCLAW_SHOW_STARTUP === '1';
+const openPanelOnReady = process.env.GOCLAW_OPEN_PANEL_ON_READY !== '0';
+let needsFirstTimeOnboarding = false;
+
+const startupState = {
+  done: false,
+  percent: 0,
+  title: '正在启动 ClawPet',
+  subtitle: '准备桌宠与桌面面板，请稍候…',
+  steps: [
+    { key: 'launcher', label: 'Launcher (18800)', status: 'running', detail: '正在检测服务…' },
+    { key: 'gateway', label: 'Gateway (18790)', status: 'pending', detail: '等待 launcher 状态…' },
+    { key: 'petclaw', label: '桌面面板 (3000)', status: 'pending', detail: '等待前端服务启动…' },
+    { key: 'renderer', label: '桌宠渲染 (5173)', status: 'pending', detail: '等待 Electron 渲染服务…' },
+  ],
+};
+
+function shouldOpenOnboardingFromGatewayStatus(data) {
+  if (!data || data.gateway_status === 'running') {
+    return false;
+  }
+  if (data.gateway_start_allowed !== false) {
+    return false;
+  }
+  const reason = String(data.gateway_start_reason || '').toLowerCase();
+  if (!reason) {
+    return false;
+  }
+  return (
+    reason.includes('no default model configured') ||
+    reason.includes('has no credentials configured') ||
+    reason.includes('model') && reason.includes('credential')
+  );
+}
 
 function getPetBounds() {
   const display = screen.getPrimaryDisplay();
@@ -42,6 +79,62 @@ function getPetBounds() {
     width: PET_WIDTH,
     height: PET_HEIGHT,
   };
+}
+
+function updateStartupPercent() {
+  const total = startupState.steps.length;
+  let score = 0;
+  for (const step of startupState.steps) {
+    if (step.status === 'done' || step.status === 'warn') {
+      score += 1;
+      continue;
+    }
+    if (step.status === 'running') {
+      score += 0.5;
+    }
+  }
+  startupState.percent = Math.max(5, Math.min(100, Math.round((score / total) * 100)));
+  if (startupState.done) {
+    startupState.percent = 100;
+  }
+}
+
+function emitStartupProgress() {
+  updateStartupPercent();
+  if (startupWindow && !startupWindow.isDestroyed()) {
+    startupWindow.webContents.send('startup-progress', startupState);
+  }
+}
+
+function setStartupStepStatus(key, status, detail) {
+  const step = startupState.steps.find((item) => item.key === key);
+  if (!step) {
+    return;
+  }
+  step.status = status;
+  if (detail) {
+    step.detail = detail;
+  }
+  emitStartupProgress();
+}
+
+async function fetchWithTimeout(url, init = {}, timeoutMs = 1200) {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), timeoutMs);
+  try {
+    return await fetch(url, { ...init, signal: controller.signal });
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+async function isHttpReady(url) {
+  try {
+    const response = await fetchWithTimeout(url, { method: 'GET' }, 1200);
+    return response.status >= 200 && response.status < 500;
+  } catch {
+    return false;
+  }
 }
 
 function createPetWindow() {
@@ -123,6 +216,23 @@ function buildSettingsWindowUrl({ onboarding = false } = {}) {
     : buildDashboardUrl();
 }
 
+async function resolveInitialSettingsTargetUrl() {
+  try {
+    const headers = launcherToken ? { Authorization: `Bearer ${launcherToken}` } : {};
+    const response = await fetchWithTimeout('http://127.0.0.1:18800/api/gateway/status', { headers }, 1400);
+    if (response.ok) {
+      const data = await response.json();
+      needsFirstTimeOnboarding = shouldOpenOnboardingFromGatewayStatus(data);
+      if (needsFirstTimeOnboarding) {
+        return buildSettingsWindowUrl({ onboarding: true });
+      }
+    }
+  } catch {
+    // Keep default panel route when status is temporarily unavailable.
+  }
+  return buildSettingsWindowUrl();
+}
+
 function createSettingsWindow(targetUrl = buildSettingsWindowUrl()) {
   if (settingsWindow && !settingsWindow.isDestroyed()) {
     if (targetUrl && settingsWindow.webContents.getURL() !== targetUrl) {
@@ -188,9 +298,146 @@ function createSettingsWindow(targetUrl = buildSettingsWindowUrl()) {
   });
 }
 
-ipcMain.on('open-settings', () => {
+function createStartupWindow() {
+  if (startupWindow && !startupWindow.isDestroyed()) {
+    startupWindow.show();
+    startupWindow.focus();
+    return;
+  }
+
+  startupWindow = new BrowserWindow({
+    width: 860,
+    height: 560,
+    minWidth: 760,
+    minHeight: 500,
+    show: false,
+    frame: false,
+    transparent: false,
+    backgroundColor: '#f7ecdf',
+    autoHideMenuBar: true,
+    webPreferences: {
+      nodeIntegration: false,
+      contextIsolation: true,
+      preload: path.join(__dirname, 'preload.js'),
+    },
+  });
+
+  const startupHtmlPath = path.join(__dirname, '..', 'startup.html');
+  startupWindow.loadFile(startupHtmlPath).catch((err) => {
+    logToFile(`[STARTUP WINDOW] loadFile failed: ${String(err)}`);
+  });
+
+  startupWindow.once('ready-to-show', () => {
+    startupWindow.show();
+    startupWindow.focus();
+    emitStartupProgress();
+  });
+
+  startupWindow.on('closed', () => {
+    startupWindow = null;
+  });
+}
+
+function completeStartupAndShowDesktop() {
+  if (startupCompleted) {
+    return;
+  }
+  startupCompleted = true;
+  startupState.done = true;
+  startupState.title = '启动成功';
+  startupState.subtitle = '正在打开桌宠与桌面面板…';
+  emitStartupProgress();
+
+  if (startupPollTimer) {
+    clearInterval(startupPollTimer);
+    startupPollTimer = null;
+  }
+
+  setTimeout(() => {
+    if (!petWindow || petWindow.isDestroyed()) {
+      createPetWindow();
+    }
+    const finish = async () => {
+      if (openPanelOnReady) {
+        const targetUrl = needsFirstTimeOnboarding
+          ? buildSettingsWindowUrl({ onboarding: true })
+          : await resolveInitialSettingsTargetUrl();
+        createSettingsWindow(targetUrl);
+      }
+      if (startupWindow && !startupWindow.isDestroyed()) {
+        startupWindow.close();
+      }
+    };
+    void finish();
+  }, 380);
+}
+
+async function pollStartupProgress() {
+  const launcherReady = await isHttpReady('http://127.0.0.1:18800');
+  if (launcherReady) {
+    setStartupStepStatus('launcher', 'done', 'Launcher 已就绪');
+  } else {
+    setStartupStepStatus('launcher', 'running', '等待 launcher 响应…');
+  }
+
+  if (launcherReady) {
+    try {
+      const headers = launcherToken ? { Authorization: `Bearer ${launcherToken}` } : {};
+      const response = await fetchWithTimeout('http://127.0.0.1:18800/api/gateway/status', { headers }, 1400);
+      if (response.ok) {
+        const data = await response.json();
+        needsFirstTimeOnboarding = shouldOpenOnboardingFromGatewayStatus(data);
+        if (data.gateway_status === 'running') {
+          setStartupStepStatus('gateway', 'done', 'Gateway 已运行');
+        } else if (data.gateway_start_allowed === false) {
+          const reason = data.gateway_start_reason || '需要先完成模型配置';
+          setStartupStepStatus('gateway', 'warn', `等待配置：${reason}`);
+        } else if (data.gateway_status === 'starting' || data.gateway_status === 'restarting') {
+          setStartupStepStatus('gateway', 'running', 'Gateway 启动中…');
+        } else {
+          setStartupStepStatus('gateway', 'pending', '等待 gateway 启动…');
+        }
+      } else {
+        setStartupStepStatus('gateway', 'pending', '暂未获取到 gateway 状态');
+      }
+    } catch {
+      setStartupStepStatus('gateway', 'pending', '暂未获取到 gateway 状态');
+    }
+  } else {
+    setStartupStepStatus('gateway', 'pending', '等待 launcher 状态…');
+  }
+
+  const panelReady = await isHttpReady('http://127.0.0.1:3000');
+  if (panelReady) {
+    setStartupStepStatus('petclaw', 'done', '桌面面板已就绪');
+  } else {
+    setStartupStepStatus('petclaw', 'running', '启动桌面面板服务中…');
+  }
+
+  const rendererReady = await isHttpReady('http://127.0.0.1:5173');
+  if (rendererReady) {
+    setStartupStepStatus('renderer', 'done', '桌宠渲染服务已就绪');
+  } else {
+    setStartupStepStatus('renderer', 'running', '启动桌宠渲染服务中…');
+  }
+
+  if (launcherReady && panelReady && rendererReady) {
+    completeStartupAndShowDesktop();
+  }
+}
+
+function startStartupFlow() {
+  createStartupWindow();
+  void pollStartupProgress();
+  startupPollTimer = setInterval(() => {
+    void pollStartupProgress();
+  }, 1000);
+}
+
+ipcMain.on('open-settings', async () => {
   logToFile('[IPC] open-settings');
-  createSettingsWindow(buildSettingsWindowUrl());
+  const targetUrl = await resolveInitialSettingsTargetUrl();
+  createSettingsWindow(targetUrl);
 });
 
 ipcMain.on('open-onboarding', () => {
@@ -295,10 +542,24 @@ ipcMain.on('connection-alive', () => {
   }
 });
 
+ipcMain.handle('startup-state', async () => startupState);
+
 app.whenReady().then(() => {
+  if (startupMode) {
+    logToFile('[STARTUP] startup progress page enabled');
+    startStartupFlow();
+    return;
+  }
   createPetWindow();
 });
 
 app.on('window-all-closed', () => {
   if (process.platform !== 'darwin') app.quit();
+});
+
+app.on('before-quit', () => {
+  if (startupPollTimer) {
+    clearInterval(startupPollTimer);
+    startupPollTimer = null;
+  }
 });

@@ -3,7 +3,8 @@ param(
     [string]$Mode = "petclaw",
 
     [switch]$NoBrowser,
-    [switch]$SkipNpmInstall
+    [switch]$SkipNpmInstall,
+    [switch]$NoTerminalWindows
 )
 
 Set-StrictMode -Version Latest
@@ -78,6 +79,9 @@ if ($Mode -ne "launcher") {
         "-Restart",
         "-PetclawMode", "dev"
     )
+    if ($NoTerminalWindows) {
+        $delegateArgs += "-NoTerminalWindows"
+    }
 
     if ($NoBrowser) {
         Write-Warning "-NoBrowser is not used by scripts\\run-goclaw-dev.ps1 and will be ignored"

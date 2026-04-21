@@ -7,6 +7,21 @@ interface BubblePayload {
   audio?: string
 }
 
+interface StartupProgressStep {
+  key: string
+  label: string
+  status: 'pending' | 'running' | 'done' | 'warn' | 'error'
+  detail: string
+}
+
+interface StartupProgressPayload {
+  done: boolean
+  percent: number
+  title: string
+  subtitle: string
+  steps: StartupProgressStep[]
+}
+
 declare global {
   interface Window {
     electronAPI?: {
@@ -31,6 +46,8 @@ declare global {
       onChatHistoryUpdate: (callback: (history: any[]) => void) => void
       onBubbleShow: (callback: (data: BubblePayload) => void) => void
       onConnectionAlive: (callback: () => void) => void
+      onStartupProgress: (callback: (payload: StartupProgressPayload) => void) => void
+      getStartupState: () => Promise<StartupProgressPayload>
     }
   }
 }

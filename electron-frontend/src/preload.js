@@ -33,5 +33,9 @@ contextBridge.exposeInMainWorld('electronAPI', {
   },
   onConnectionAlive: (callback) => {
     ipcRenderer.on('connection-alive', () => callback());
-  }
+  },
+  onStartupProgress: (callback) => {
+    ipcRenderer.on('startup-progress', (_event, payload) => callback(payload));
+  },
+  getStartupState: () => ipcRenderer.invoke('startup-state')
 });

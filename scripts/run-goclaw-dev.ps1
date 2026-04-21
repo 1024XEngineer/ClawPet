@@ -5,7 +5,8 @@ param(
   [ValidateSet("prod", "dev")]
   [string]$PetclawMode = "prod",
   [string]$LauncherToken = "goclaw-local-token",
-  [string]$LauncherConfigPath = ""
+  [string]$LauncherConfigPath = "",
+  [switch]$NoTerminalWindows
 )
 
 $ErrorActionPreference = "Stop"
@@ -135,6 +136,17 @@ function Start-DetachedPowerShell {
     [string]$Title,
     [string]$Command
   )
+
+  if ($NoTerminalWindows) {
+    $argList = @(
+      "-NoProfile",
+      "-ExecutionPolicy", "Bypass",
+      "-Command",
+      $Command
+    )
+    Start-Process -FilePath "powershell" -WindowStyle Hidden -ArgumentList $argList | Out-Null
+    return
+  }
 
   $argList = @(
     "-NoExit",
@@ -669,6 +681,21 @@ $directGatewayUrl = "http://127.0.0.1:$gatewayPort"
 Ensure-NpmDeps -ProjectDir $petclawDir -DisplayName "petclaw"
 Ensure-NpmDeps -ProjectDir $electronDir -DisplayName "electron-frontend"
 
+$escapedDashboard = $DashboardUrl.Replace("'", "''")
+$escapedLauncherToken = $LauncherToken.Replace("'", "''")
+$openPanelOnReady = if ($NoTerminalWindows) { "1" } else { "0" }
+
+$existingElectron = @(Get-Process -Name electron -ErrorAction SilentlyContinue)
+$electronRunning = $existingElectron.Count -gt 0
+
+if ($NoTerminalWindows -and -not $electronRunning) {
+  Write-Step "Starting desktop shell with startup progress page..."
+  $electronBootstrapCmd = "`$env:GOCLAW_DASHBOARD_URL='$escapedDashboard'; `$env:GOCLAW_LAUNCHER_TOKEN='$escapedLauncherToken'; `$env:GOCLAW_SHOW_STARTUP='1'; `$env:GOCLAW_OPEN_PANEL_ON_READY='$openPanelOnReady'; Set-Location '$electronDir'; npx electron src/main.js"
+  Start-DetachedPowerShell -Title "GoClaw - Electron Boot" -Command $electronBootstrapCmd
+  Start-Sleep -Milliseconds 800
+  $electronRunning = $true
+}
+
 if ((Test-HttpReady -Url $DashboardUrl -TimeoutSeconds 2) -or (Test-PortListening -Port 3000)) {
   Write-Step "Petclaw dashboard already running at $DashboardUrl"
 } else {
@@ -679,12 +706,10 @@ if ((Test-HttpReady -Url $DashboardUrl -TimeoutSeconds 2) -or (Test-PortListenin
       Invoke-Npm -WorkingDir $petclawDir -Arguments "run build"
     }
     Write-Step "Starting petclaw dashboard (prod mode)..."
-    $escapedLauncherToken = $LauncherToken.Replace("'", "''")
     $escapedDirectGatewayUrl = $directGatewayUrl.Replace("'", "''")
     $petclawCmd = "`$env:NEXT_PUBLIC_PICOCLAW_API_URL='http://127.0.0.1:18800'; `$env:NEXT_PUBLIC_PICOCLAW_WS_URL='ws://127.0.0.1:18800'; `$env:NEXT_PUBLIC_PICOCLAW_DIRECT_GATEWAY_URL='$escapedDirectGatewayUrl'; `$env:NEXT_PUBLIC_PICOCLAW_LAUNCHER_TOKEN='$escapedLauncherToken'; `$env:NEXT_PUBLIC_PICOCLAW_USE_CREDENTIALS='true'; Set-Location '$petclawDir'; npm run start -- --hostname 127.0.0.1 --port 3000"
   } else {
     Write-Step "Starting petclaw dashboard (dev mode)..."
-    $escapedLauncherToken = $LauncherToken.Replace("'", "''")
     $escapedDirectGatewayUrl = $directGatewayUrl.Replace("'", "''")
     $petclawCmd = "`$env:NEXT_PUBLIC_PICOCLAW_API_URL='http://127.0.0.1:18800'; `$env:NEXT_PUBLIC_PICOCLAW_WS_URL='ws://127.0.0.1:18800'; `$env:NEXT_PUBLIC_PICOCLAW_DIRECT_GATEWAY_URL='$escapedDirectGatewayUrl'; `$env:NEXT_PUBLIC_PICOCLAW_LAUNCHER_TOKEN='$escapedLauncherToken'; `$env:NEXT_PUBLIC_PICOCLAW_USE_CREDENTIALS='true'; Set-Location '$petclawDir'; npm run dev -- --hostname 127.0.0.1 --port 3000 --webpack"
   }
@@ -698,27 +723,25 @@ if ((Test-HttpReady -Url $DashboardUrl -TimeoutSeconds 2) -or (Test-PortListenin
   }
 }
 
+if (-not (Test-PortListening -Port 5173)) {
+  Write-Step "Starting electron frontend vite server..."
+  $viteCmd = "Set-Location '$electronDir'; npm run dev -- --host 127.0.0.1 --port 5173 --strictPort"
+  Start-DetachedPowerShell -Title "GoClaw - Electron Vite" -Command $viteCmd
+  if (-not (Wait-HttpReady -Url "http://127.0.0.1:5173" -TimeoutSeconds 120)) {
+    Write-Warning "Electron Vite server did not become ready on http://127.0.0.1:5173 in time."
+  } else {
+    Write-Step "Electron Vite server is ready on http://127.0.0.1:5173"
+  }
+} else {
+  Write-Step "Electron frontend vite server already running on :5173"
+}
+
 $existingElectron = @(Get-Process -Name electron -ErrorAction SilentlyContinue)
 if ($existingElectron.Count -gt 0) {
   Write-Step "Electron desktop pet already running."
 } else {
-  if (-not (Test-PortListening -Port 5173)) {
-    Write-Step "Starting electron frontend vite server..."
-    $viteCmd = "Set-Location '$electronDir'; npm run dev -- --host 127.0.0.1 --port 5173 --strictPort"
-    Start-DetachedPowerShell -Title "GoClaw - Electron Vite" -Command $viteCmd
-    if (-not (Wait-HttpReady -Url "http://127.0.0.1:5173" -TimeoutSeconds 120)) {
-      Write-Warning "Electron Vite server did not become ready on http://127.0.0.1:5173 in time."
-    } else {
-      Write-Step "Electron Vite server is ready on http://127.0.0.1:5173"
-    }
-  } else {
-    Write-Step "Electron frontend vite server already running on :5173"
-  }
-
   Write-Step "Starting electron desktop pet process..."
-  $escapedDashboard = $DashboardUrl.Replace("'", "''")
-  $escapedLauncherToken = $LauncherToken.Replace("'", "''")
-  $electronCmd = "`$env:GOCLAW_DASHBOARD_URL='$escapedDashboard'; `$env:GOCLAW_LAUNCHER_TOKEN='$escapedLauncherToken'; Set-Location '$electronDir'; npx electron src/main.js"
+  $electronCmd = "`$env:GOCLAW_DASHBOARD_URL='$escapedDashboard'; `$env:GOCLAW_LAUNCHER_TOKEN='$escapedLauncherToken'; `$env:GOCLAW_OPEN_PANEL_ON_READY='$openPanelOnReady'; Set-Location '$electronDir'; npx electron src/main.js"
   Start-DetachedPowerShell -Title "GoClaw - Electron" -Command $electronCmd
 }
 
