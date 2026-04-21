@@ -263,14 +263,21 @@ export class PicoClawWebSocket {
 
       const wsPathFromToken = this.normalizeWsPath(data.ws_url)
       const wsBaseUrl = this.normalizeWsBaseUrl(data.ws_url, candidate.baseUrl)
+      const hasExplicitPicoSignal =
+        data.protocol === "pico" ||
+        candidate.tokenPath === API_ENDPOINTS.PICO.TOKEN ||
+        wsPathFromToken === DIRECT_PICO_WS_PATH ||
+        wsPathFromToken === API_ENDPOINTS.CHAT.WS_LEGACY
       // Compatibility shim:
       // some launcher builds expose /api/pet/token but only proxy /pico/ws upstream.
       const resolvedPath =
-        candidate.useLauncherAuth && wsPathFromToken === API_ENDPOINTS.CHAT.WS
+        candidate.useLauncherAuth &&
+        hasExplicitPicoSignal &&
+        wsPathFromToken === API_ENDPOINTS.CHAT.WS
           ? API_ENDPOINTS.CHAT.WS_LEGACY
           : wsPathFromToken || candidate.wsPath
       const mode: WSMode =
-        data.protocol === "pico" ||
+        hasExplicitPicoSignal ||
         resolvedPath === DIRECT_PICO_WS_PATH ||
         resolvedPath === API_ENDPOINTS.CHAT.WS_LEGACY
           ? "pico"
