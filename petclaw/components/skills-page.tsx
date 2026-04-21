@@ -1,11 +1,22 @@
 "use client"
 
-import { useState } from "react"
-import { Search, Sparkles, Code, Palette, Coffee, Heart, Zap, Plus, Upload, Trash2 } from "lucide-react"
+import { useMemo, useState } from "react"
+import {
+  Code,
+  Coffee,
+  Palette,
+  Search,
+  Sparkles,
+  Trash2,
+  Upload,
+  WandSparkles,
+  X,
+} from "lucide-react"
+
 import { Button } from "@/components/ui/button"
-import { cn } from "@/lib/utils"
-import { useSkills, useSkillMutations } from "@/hooks/use-picoclaw"
 import { Spinner } from "@/components/ui/spinner"
+import { useSkills, useSkillMutations } from "@/hooks/use-picoclaw"
+import { cn } from "@/lib/utils"
 
 const skillCategories = [
   { id: "all", label: "全部", icon: Sparkles },
@@ -14,95 +25,67 @@ const skillCategories = [
   { id: "workspace", label: "工作区", icon: Coffee },
 ]
 
-// 默认技能数据（当 API 不可用时使用）
 const defaultSkills = [
   {
-    id: "1",
-    name: "代码小助手",
-    description: "帮你写代码、debug、解释代码逻辑，支持多种编程语言~",
+    id: "skill-1",
+    name: "代码搭子",
+    description: "陪你写代码、解释逻辑、重构和排查问题，语气更像稳定的协作伙伴。",
     source: "builtin" as const,
     category: "code",
     enabled: true,
   },
   {
-    id: "2",
-    name: "二次元画师",
-    description: "生成可爱的二次元角色、场景描述，让你的创意变成画面！",
+    id: "skill-2",
+    name: "提示词锻造师",
+    description: "把粗糙想法整理成更清晰的提示词、模板和可复用结构。",
     source: "builtin" as const,
     category: "creative",
     enabled: true,
   },
   {
-    id: "3",
-    name: "萌宠翻译官",
-    description: "解读你家毛孩子的行为语言，了解它们的小心思~",
+    id: "skill-3",
+    name: "学习督导员",
+    description: "把复习目标拆成日程、提醒和更容易坚持的小检查点。",
     source: "global" as const,
     category: "life",
     enabled: true,
   },
   {
-    id: "4",
-    name: "文案生成器",
-    description: "小红书、抖音、微博文案一键生成，让你的内容出圈！",
+    id: "skill-4",
+    name: "工作区书记官",
+    description: "总结仓库上下文、近期改动和工作记录，方便快速接续上下文。",
     source: "workspace" as const,
-    category: "creative",
-    enabled: true,
-  },
-  {
-    id: "5",
-    name: "学习小伙伴",
-    description: "陪你背单词、做笔记、复习知识点，学习不再孤单~",
-    source: "builtin" as const,
-    category: "life",
-    enabled: true,
-  },
-  {
-    id: "6",
-    name: "API 调试助手",
-    description: "帮你调试 API、分析请求响应、生成接口文档",
-    source: "global" as const,
     category: "code",
-    enabled: true,
-  },
-  {
-    id: "7",
-    name: "角色扮演大师",
-    description: "扮演你喜欢的动漫角色，沉浸式对话体验！",
-    source: "workspace" as const,
-    category: "creative",
-    enabled: true,
-  },
-  {
-    id: "8",
-    name: "猫咪心情日记",
-    description: "记录你和猫主子的日常，生成温馨的回忆录~",
-    source: "workspace" as const,
-    category: "life",
     enabled: true,
   },
 ]
 
-const skillIcons: Record<string, string> = {
-  code: "code",
-  creative: "creative",
-  life: "life",
+const sourceTheme: Record<string, { shell: string; badge: string; icon: string }> = {
+  builtin: {
+    shell:
+      "from-amber-100 via-orange-50 to-white border-amber-200/80 text-[#7b4d28]",
+    badge: "bg-amber-100 text-amber-700 border-amber-200/80",
+    icon: "from-amber-400 to-orange-500",
+  },
+  global: {
+    shell:
+      "from-violet-100 via-purple-50 to-white border-violet-200/80 text-[#5b4687]",
+    badge: "bg-violet-100 text-violet-700 border-violet-200/80",
+    icon: "from-violet-400 to-purple-500",
+  },
+  workspace: {
+    shell:
+      "from-sky-100 via-cyan-50 to-white border-sky-200/80 text-[#365f87]",
+    badge: "bg-sky-100 text-sky-700 border-sky-200/80",
+    icon: "from-sky-400 to-cyan-500",
+  },
 }
 
-const skillColors: Record<string, string> = {
-  builtin: "from-blue-400 to-cyan-400",
-  global: "from-purple-400 to-violet-400",
-  workspace: "from-orange-400 to-pink-400",
-}
-
-const skillEmojis: Record<string, string> = {
-  "代码小助手": "cat-face",
-  "二次元画师": "artist-palette",
-  "萌宠翻译官": "dog",
-  "文案生成器": "sparkles",
-  "学习小伙伴": "books",
-  "API 调试助手": "wrench",
-  "角色扮演大师": "performing-arts",
-  "猫咪心情日记": "cat",
+function getErrorMessage(error: unknown): string {
+  if (error instanceof Error && error.message.trim()) {
+    return error.message.trim()
+  }
+  return "操作失败，请稍后再试。"
 }
 
 export function SkillsPage() {
@@ -110,212 +93,314 @@ export function SkillsPage() {
   const [searchQuery, setSearchQuery] = useState("")
   const [showImportDialog, setShowImportDialog] = useState(false)
   const [importMarkdown, setImportMarkdown] = useState("")
+  const [actionError, setActionError] = useState<string | null>(null)
 
   const { data: skillsData, isLoading, error, mutate } = useSkills()
   const { importSkill, remove } = useSkillMutations()
 
-  // 使用 API 数据或默认数据
-  const skills = skillsData?.skills || defaultSkills
+  const skills = skillsData?.skills ?? defaultSkills
 
-  // 过滤技能
-  const filteredSkills = skills.filter((skill) => {
-    const matchesCategory = activeCategory === "all" || skill.source === activeCategory
-    const matchesSearch = skill.name.toLowerCase().includes(searchQuery.toLowerCase()) ||
-      skill.description.toLowerCase().includes(searchQuery.toLowerCase())
-    return matchesCategory && matchesSearch
-  })
+  const filteredSkills = useMemo(() => {
+    return skills.filter((skill) => {
+      const matchesCategory =
+        activeCategory === "all" || skill.source === activeCategory
+      const query = searchQuery.trim().toLowerCase()
+      const matchesSearch =
+        !query ||
+        skill.name.toLowerCase().includes(query) ||
+        skill.description.toLowerCase().includes(query)
+      return matchesCategory && matchesSearch
+    })
+  }, [activeCategory, searchQuery, skills])
 
-  const handleImport = async () => {
-    if (!importMarkdown.trim()) return
+  const stats = useMemo(() => {
+    const builtinCount = skills.filter((skill) => skill.source === "builtin").length
+    const globalCount = skills.filter((skill) => skill.source === "global").length
+    const workspaceCount = skills.filter((skill) => skill.source === "workspace").length
+    return [
+      {
+        label: "技能总数",
+        value: skills.length,
+        shell: "from-amber-100 via-orange-50 to-white border-amber-200/80",
+      },
+      {
+        label: "内置能力",
+        value: builtinCount,
+        shell: "from-violet-100 via-purple-50 to-white border-violet-200/80",
+      },
+      {
+        label: "外部扩展",
+        value: workspaceCount + globalCount,
+        shell: "from-sky-100 via-cyan-50 to-white border-sky-200/80",
+      },
+    ]
+  }, [skills])
+
+  async function handleImport() {
+    if (!importMarkdown.trim()) {
+      return
+    }
+
+    setActionError(null)
     try {
       await importSkill.trigger(importMarkdown)
       setImportMarkdown("")
       setShowImportDialog(false)
-      mutate()
-    } catch (err) {
-      console.error("Import failed:", err)
+      await mutate()
+    } catch (importError) {
+      setActionError(getErrorMessage(importError))
     }
   }
 
-  const handleDelete = async (id: string) => {
+  async function handleDelete(id: string) {
+    setActionError(null)
     try {
       await remove.trigger(id)
-      mutate()
-    } catch (err) {
-      console.error("Delete failed:", err)
+      await mutate()
+    } catch (removeError) {
+      setActionError(getErrorMessage(removeError))
     }
   }
 
+  const visibleError = actionError || (error ? getErrorMessage(error) : null)
+
   return (
-    <div className="flex-1 flex flex-col bg-background">
-      {/* Header */}
-      <header className="flex items-center justify-between px-6 py-4 border-b border-border">
-        <div className="flex items-center gap-3">
-          <div className="w-10 h-10 rounded-xl bg-gradient-to-br from-orange-400 to-pink-500 flex items-center justify-center text-white text-xl">
-            S
-          </div>
-          <div>
-            <h1 className="text-lg font-semibold text-foreground">技能市场</h1>
-            <p className="text-sm text-muted-foreground">探索各种有趣的 AI 技能，让生活更有趣~</p>
-          </div>
-        </div>
-        <Button 
-          onClick={() => setShowImportDialog(true)}
-          className="bg-gradient-to-r from-orange-400 to-pink-500 hover:from-orange-500 hover:to-pink-600 text-white border-0"
-        >
-          <Upload className="w-4 h-4 mr-2" />
-          导入技能
-        </Button>
-      </header>
+    <section className="relative flex min-h-0 flex-1 flex-col overflow-hidden bg-[linear-gradient(180deg,rgba(255,246,237,0.78),rgba(255,249,245,0.94),rgba(255,252,249,0.98))]">
+      <div className="pointer-events-none absolute inset-0 bg-[radial-gradient(circle_at_16%_12%,rgba(255,255,255,0.82),transparent_28%),radial-gradient(circle_at_84%_10%,rgba(255,221,189,0.28),transparent_24%),radial-gradient(circle_at_82%_78%,rgba(196,181,253,0.18),transparent_28%)]" />
 
-      {/* Search & Filter */}
-      <div className="px-6 py-4 border-b border-border">
-        <div className="flex items-center gap-4">
-          <div className="flex-1 relative">
-            <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
-            <input
-              type="text"
-              placeholder="搜索你想要的技能..."
-              value={searchQuery}
-              onChange={(e) => setSearchQuery(e.target.value)}
-              className="w-full pl-10 pr-4 py-2.5 rounded-xl border border-border bg-background text-foreground placeholder:text-muted-foreground outline-none focus:ring-2 focus:ring-orange-400/30 transition-shadow"
-            />
-          </div>
-          <div className="flex items-center gap-2 bg-muted rounded-xl p-1">
-            {skillCategories.map((cat) => {
-              const Icon = cat.icon
-              return (
-                <button
-                  key={cat.id}
-                  onClick={() => setActiveCategory(cat.id)}
-                  className={cn(
-                    "flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-sm font-medium transition-colors",
-                    activeCategory === cat.id
-                      ? "bg-background text-foreground shadow-sm"
-                      : "text-muted-foreground hover:text-foreground"
-                  )}
-                >
-                  <Icon className="w-4 h-4" />
-                  {cat.label}
-                </button>
-              )
-            })}
-          </div>
-        </div>
-      </div>
+      <div className="relative flex min-h-0 flex-1 flex-col overflow-auto px-6 py-5">
+        <div className="dashboard-enter dashboard-card rounded-[2rem] border border-white/75 bg-[linear-gradient(145deg,rgba(255,251,246,0.95),rgba(255,245,237,0.9),rgba(255,250,245,0.92))] px-6 py-6 shadow-[0_24px_58px_-36px_rgba(118,83,43,0.42)]">
+          <div className="grid grid-cols-[minmax(0,1fr)_auto] items-start gap-4 max-[1280px]:grid-cols-1">
+            <div>
+              <div className="inline-flex items-center gap-2 rounded-full border border-white/75 bg-white/82 px-3 py-1.5 text-sm font-medium text-[#7f5a38]">
+                <Sparkles className="h-4 w-4 text-amber-600" />
+                能力牌组
+              </div>
+              <h1 className="mt-5 text-4xl font-semibold tracking-tight text-[#3d2718]">
+                技能像一套活的法术卡
+              </h1>
+              <p className="mt-3 max-w-3xl text-base leading-8 text-[#816451]">
+                这里不再是干巴巴的技能列表，而是桌宠的法术书。你可以浏览内置天赋、共享能力和工作区专属卡片。
+              </p>
+            </div>
 
-      {/* Skills Grid */}
-      <div className="flex-1 overflow-auto p-6">
-        {isLoading ? (
-          <div className="flex items-center justify-center h-40">
-            <Spinner className="w-8 h-8 text-orange-500" />
+            <Button
+              onClick={() => setShowImportDialog(true)}
+              className="h-8 max-w-full justify-self-end whitespace-nowrap rounded-full border-0 bg-[linear-gradient(135deg,#9a5929_0%,#c87734_48%,#e1a05b_100%)] px-3 text-xs text-amber-50 shadow-[0_18px_26px_-18px_rgba(154,89,41,0.75)] hover:brightness-105 max-[1280px]:justify-self-start"
+            >
+              <Upload className="mr-1.5 h-3.5 w-3.5" />
+              导入技能
+            </Button>
           </div>
-        ) : error ? (
-          <div className="text-center py-10">
-            <p className="text-muted-foreground">加载技能列表时出错，显示默认数据</p>
-          </div>
-        ) : (
-          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4">
-            {filteredSkills.map((skill, index) => (
+
+          <div className="mt-8 grid gap-3 md:grid-cols-3">
+            {stats.map((item) => (
               <div
-                key={skill.id}
-                className="group relative p-4 rounded-2xl border border-border bg-background hover:shadow-lg hover:border-orange-200 transition-all cursor-pointer"
+                key={item.label}
+                className={cn(
+                  "dashboard-card rounded-[1.4rem] border bg-gradient-to-r px-4 py-4 shadow-sm",
+                  item.shell,
+                )}
               >
-                {/* Source Badge */}
-                <div className={cn(
-                  "absolute -top-2 -right-2 px-2 py-0.5 text-white text-xs rounded-full flex items-center gap-1",
-                  skill.source === "builtin" && "bg-blue-500",
-                  skill.source === "global" && "bg-purple-500",
-                  skill.source === "workspace" && "bg-gradient-to-r from-orange-400 to-pink-500"
-                )}>
-                  {skill.source === "builtin" && "内置"}
-                  {skill.source === "global" && "全局"}
-                  {skill.source === "workspace" && "工作区"}
-                </div>
-                
-                {/* Icon */}
-                <div className={cn(
-                  "w-12 h-12 rounded-xl bg-gradient-to-br flex items-center justify-center text-2xl mb-3",
-                  skillColors[skill.source] || "from-gray-400 to-gray-500"
-                )}>
-                  {["cat-face", "artist-palette", "dog", "sparkles", "books", "wrench", "performing-arts", "cat"][index % 8] === "cat-face" ? "🐱" :
-                   ["cat-face", "artist-palette", "dog", "sparkles", "books", "wrench", "performing-arts", "cat"][index % 8] === "artist-palette" ? "🎨" :
-                   ["cat-face", "artist-palette", "dog", "sparkles", "books", "wrench", "performing-arts", "cat"][index % 8] === "dog" ? "🐕" :
-                   ["cat-face", "artist-palette", "dog", "sparkles", "books", "wrench", "performing-arts", "cat"][index % 8] === "sparkles" ? "✨" :
-                   ["cat-face", "artist-palette", "dog", "sparkles", "books", "wrench", "performing-arts", "cat"][index % 8] === "books" ? "📚" :
-                   ["cat-face", "artist-palette", "dog", "sparkles", "books", "wrench", "performing-arts", "cat"][index % 8] === "wrench" ? "🔧" :
-                   ["cat-face", "artist-palette", "dog", "sparkles", "books", "wrench", "performing-arts", "cat"][index % 8] === "performing-arts" ? "🎭" : "🐈"}
-                </div>
-                
-                {/* Content */}
-                <h3 className="font-semibold text-foreground mb-1">{skill.name}</h3>
-                <p className="text-sm text-muted-foreground line-clamp-2 mb-3">{skill.description}</p>
-                
-                {/* Footer */}
-                <div className="flex items-center justify-between">
-                  <div className="flex items-center gap-1 text-xs text-muted-foreground">
-                    <Heart className="w-3 h-3" />
-                    <span>{skill.enabled ? "已启用" : "未启用"}</span>
-                  </div>
-                  <div className="flex items-center gap-1">
-                    {skill.source === "workspace" && (
-                      <Button 
-                        variant="ghost" 
-                        size="sm" 
-                        onClick={() => handleDelete(skill.id)}
-                        className="text-red-500 hover:text-red-600 hover:bg-red-50 px-2 h-7"
-                      >
-                        <Trash2 className="w-3 h-3" />
-                      </Button>
-                    )}
-                    <Button variant="ghost" size="sm" className="text-orange-500 hover:text-orange-600 hover:bg-orange-50 px-2 h-7">
-                      使用
-                    </Button>
-                  </div>
-                </div>
+                <p className="text-xs uppercase tracking-[0.18em] text-[#9b7555]">
+                  {item.label}
+                </p>
+                <p className="mt-2 text-2xl font-semibold text-[#3f2b1d]">
+                  {item.value}
+                </p>
               </div>
             ))}
           </div>
-        )}
+        </div>
 
-        {/* Bottom CTA */}
-        <div className="mt-8 text-center">
-          <div className="inline-flex items-center gap-2 text-sm text-muted-foreground">
-            <span>想要更多技能？</span>
-            <button className="text-orange-500 hover:text-orange-600 font-medium">
-              查看全部
-            </button>
+        <div className="dashboard-enter mt-5 rounded-[1.8rem] border border-white/75 bg-[linear-gradient(145deg,rgba(255,252,247,0.94),rgba(255,247,242,0.88))] p-4 shadow-[0_20px_42px_-32px_rgba(116,80,42,0.34)] backdrop-blur-xl">
+          <div className="flex flex-wrap items-center gap-3">
+            <div className="relative min-w-[16rem] flex-1">
+              <Search className="pointer-events-none absolute left-4 top-1/2 h-4 w-4 -translate-y-1/2 text-[#b19278]" />
+              <input
+                type="text"
+                placeholder="搜索技能、能力标签或适用场景..."
+                value={searchQuery}
+                onChange={(event) => setSearchQuery(event.target.value)}
+                className="w-full rounded-full border border-white/80 bg-white/84 py-3 pl-11 pr-4 text-sm text-[#4b3422] outline-none transition focus:border-amber-200 focus:bg-white"
+              />
+            </div>
+
+            <div className="flex flex-wrap items-center gap-2">
+              {skillCategories.map((category) => {
+                const Icon = category.icon
+                const isActive = activeCategory === category.id
+                return (
+                  <button
+                    key={category.id}
+                    onClick={() => setActiveCategory(category.id)}
+                    className={cn(
+                      "inline-flex items-center gap-2 rounded-full border px-4 py-2 text-sm font-medium transition",
+                      isActive
+                        ? "border-amber-200/90 bg-[linear-gradient(135deg,rgba(255,245,227,0.98),rgba(255,253,246,0.92))] text-[#734826] shadow-sm"
+                        : "border-white/80 bg-white/82 text-[#86674f] hover:border-amber-100 hover:bg-white",
+                    )}
+                  >
+                    <Icon className="h-4 w-4" />
+                    {category.label}
+                  </button>
+                )
+              })}
+            </div>
           </div>
+
+          {visibleError && (
+            <div className="mt-4 rounded-[1.2rem] border border-rose-200 bg-rose-50/95 px-4 py-3 text-sm text-rose-700">
+              {visibleError}
+            </div>
+          )}
+        </div>
+
+        <div className="mt-5 flex-1">
+          {isLoading ? (
+            <div className="flex h-40 items-center justify-center">
+              <Spinner className="h-8 w-8 text-orange-500" />
+            </div>
+          ) : filteredSkills.length === 0 ? (
+            <div className="dashboard-enter rounded-[2rem] border border-dashed border-amber-200/80 bg-[linear-gradient(145deg,rgba(255,249,241,0.94),rgba(255,245,237,0.86))] px-6 py-14 text-center shadow-[0_20px_40px_-34px_rgba(118,80,42,0.22)]">
+              <div className="dashboard-float-slow mx-auto flex h-16 w-16 items-center justify-center rounded-[1.6rem] bg-white/88 text-amber-600 shadow-sm">
+                <WandSparkles className="h-7 w-7" />
+              </div>
+              <h2 className="mt-5 text-xl font-semibold text-[#4f3725]">
+                暂时没有匹配的技能
+              </h2>
+              <p className="mx-auto mt-2 max-w-xl text-sm leading-6 text-[#8a6b50]">
+                你可以换个关键词、切换牌组筛选，或者导入一张新的技能卡来扩充桌宠能力。
+              </p>
+            </div>
+          ) : (
+            <div className="grid gap-4 lg:grid-cols-2 2xl:grid-cols-3">
+              {filteredSkills.map((skill) => {
+                const theme = sourceTheme[skill.source] ?? sourceTheme.builtin
+                return (
+                  <article
+                    key={skill.id}
+                    className={cn(
+                      "dashboard-enter dashboard-card group rounded-[1.8rem] border bg-gradient-to-br p-5 shadow-[0_18px_34px_-28px_rgba(121,85,44,0.34)] transition hover:-translate-y-0.5 hover:shadow-[0_24px_40px_-28px_rgba(121,85,44,0.42)]",
+                      theme.shell,
+                    )}
+                  >
+                    <div className="flex items-start justify-between gap-3">
+                      <div
+                        className={cn(
+                          "dashboard-pulse-glow flex h-12 w-12 items-center justify-center rounded-[1.2rem] bg-gradient-to-br text-white shadow-sm",
+                          theme.icon,
+                        )}
+                      >
+                        <Sparkles className="h-5 w-5" />
+                      </div>
+                      <span
+                        className={cn(
+                          "inline-flex items-center rounded-full border px-2.5 py-1 text-[0.72rem] font-medium",
+                          theme.badge,
+                        )}
+                      >
+                        {skill.source === "builtin"
+                          ? "内置"
+                          : skill.source === "global"
+                            ? "全局"
+                            : "工作区"}
+                      </span>
+                    </div>
+
+                    <h3 className="mt-4 text-xl font-semibold text-[#3f2b1d]">
+                      {skill.name}
+                    </h3>
+                    <p className="mt-2 text-sm leading-6 text-[#7f5f48]">
+                      {skill.description}
+                    </p>
+
+                    <div className="mt-5 flex items-center justify-between gap-3">
+                      <span className="rounded-full border border-white/70 bg-white/78 px-3 py-1.5 text-xs text-[#7d6755]">
+                        {skill.enabled ? "已启用" : "未启用"}
+                      </span>
+                      <div className="flex items-center gap-2">
+                        {skill.source === "workspace" && (
+                          <button
+                            onClick={() => handleDelete(skill.id)}
+                            className="flex h-10 w-10 items-center justify-center rounded-2xl border border-white/75 bg-white/78 text-rose-600 transition hover:border-rose-200 hover:bg-white"
+                            title="删除技能"
+                          >
+                            <Trash2 className="h-4 w-4" />
+                          </button>
+                        )}
+                        <Button
+                          variant="outline"
+                          className="rounded-full border-white/75 bg-white/82 text-[#6d5846] hover:bg-white"
+                        >
+                          使用技能
+                        </Button>
+                      </div>
+                    </div>
+                  </article>
+                )
+              })}
+            </div>
+          )}
         </div>
       </div>
 
-      {/* Import Dialog */}
       {showImportDialog && (
-        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50">
-          <div className="bg-background rounded-2xl p-6 w-full max-w-lg mx-4">
-            <h2 className="text-lg font-semibold mb-4">导入 Markdown 技能</h2>
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/45 p-4">
+          <div className="dashboard-enter dashboard-card w-full max-w-2xl rounded-[2rem] border border-white/75 bg-[linear-gradient(145deg,rgba(255,252,247,0.98),rgba(255,246,241,0.94))] p-6 shadow-[0_28px_70px_-38px_rgba(87,56,26,0.66)]">
+            <div className="flex items-start justify-between gap-4">
+              <div>
+                <p className="text-[0.72rem] uppercase tracking-[0.22em] text-[#b07b4d]">
+                  导入技能
+                </p>
+                <h2 className="mt-2 text-2xl font-semibold text-[#4f3725]">
+                  往牌组里塞一张新的能力卡
+                </h2>
+                <p className="mt-2 text-sm leading-6 text-[#8a6b50]">
+                  粘贴 Markdown 内容，桌宠会把它变成一张新的工作区技能卡。
+                </p>
+              </div>
+              <button
+                type="button"
+                onClick={() => setShowImportDialog(false)}
+                className="flex h-10 w-10 items-center justify-center rounded-2xl border border-white/75 bg-white/82 text-[#6d5846] transition hover:bg-white"
+                title="关闭"
+              >
+                <X className="h-4 w-4" />
+              </button>
+            </div>
+
             <textarea
               value={importMarkdown}
-              onChange={(e) => setImportMarkdown(e.target.value)}
-              placeholder="粘贴技能的 Markdown 内容..."
-              className="w-full h-40 p-3 border border-border rounded-xl bg-background text-foreground placeholder:text-muted-foreground outline-none focus:ring-2 focus:ring-orange-400/30 resize-none"
+              onChange={(event) => setImportMarkdown(event.target.value)}
+              placeholder="在这里粘贴技能 Markdown..."
+              className="mt-5 h-56 w-full resize-none rounded-[1.4rem] border border-white/80 bg-white/88 px-4 py-4 text-sm text-[#4b3422] outline-none transition focus:border-amber-200 focus:bg-white"
             />
-            <div className="flex justify-end gap-3 mt-4">
-              <Button variant="outline" onClick={() => setShowImportDialog(false)}>
+
+            <div className="mt-5 flex justify-end gap-3">
+              <Button
+                variant="outline"
+                onClick={() => setShowImportDialog(false)}
+                className="rounded-full border-white/75 bg-white/82 text-[#6d5846] hover:bg-white"
+              >
                 取消
               </Button>
-              <Button 
+              <Button
                 onClick={handleImport}
                 disabled={importSkill.isMutating || !importMarkdown.trim()}
-                className="bg-gradient-to-r from-orange-400 to-pink-500 hover:from-orange-500 hover:to-pink-600 text-white border-0"
+                className="rounded-full border-0 bg-[linear-gradient(135deg,#9a5929_0%,#c87734_48%,#e1a05b_100%)] text-amber-50 shadow-[0_18px_26px_-18px_rgba(154,89,41,0.75)] hover:brightness-105"
               >
-                {importSkill.isMutating ? <Spinner className="w-4 h-4 mr-2" /> : <Plus className="w-4 h-4 mr-2" />}
+                {importSkill.isMutating ? (
+                  <Spinner className="mr-2 h-4 w-4" />
+                ) : (
+                  <Upload className="mr-2 h-4 w-4" />
+                )}
                 导入
               </Button>
             </div>
           </div>
         </div>
       )}
-    </div>
+    </section>
   )
 }

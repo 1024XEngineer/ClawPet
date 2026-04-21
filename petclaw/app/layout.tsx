@@ -8,8 +8,8 @@ const _geistMono = Geist_Mono({ subsets: ["latin"] });
 
 export const metadata: Metadata = {
   title: {
-    default: 'PetClaw AI',
-    template: '%s - PetClaw AI',
+    default: 'ClawPet AI',
+    template: '%s - ClawPet AI',
   },
   description: 'AI Chat Assistant',
   generator: 'v0.app',

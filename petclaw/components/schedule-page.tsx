@@ -1,163 +1,511 @@
 "use client"
 
-import { useState } from "react"
-import { Plus, Clock, Play, Pause, Trash2, Edit2, Bell, Calendar, Repeat, X } from "lucide-react"
-import { Button } from "@/components/ui/button"
-import { cn } from "@/lib/utils"
+import { useEffect, useState } from "react"
+import {
+  AlertCircle,
+  Bell,
+  Calendar,
+  Clock,
+  Edit2,
+  Pause,
+  Play,
+  Plus,
+  Repeat,
+  Terminal,
+  Trash2,
+  X,
+} from "lucide-react"
+
 import { useCronJobs, useCronMutations } from "@/hooks/use-picoclaw"
+import type { CronJob, CronJobInput, CronScheduleType } from "@/lib/api"
+import { cn } from "@/lib/utils"
+import { Button } from "@/components/ui/button"
 import { Spinner } from "@/components/ui/spinner"
 
-// 默认定时任务数据
-const defaultSchedules = [
-  {
-    id: "1",
-    name: "早安问候",
-    description: "每天早上 8:00 发送元气满满的早安问候~",
-    schedule: "0 8 * * *",
-    skill: "暖心小助手",
-    enabled: true,
-    lastRun: "今天 08:00",
-    nextRun: "明天 08:00",
-  },
-  {
-    id: "2",
-    name: "喂猫提醒",
-    description: "提醒你按时给主子投食，不要饿着猫咪~",
-    schedule: "0 7,18 * * *",
-    skill: "萌宠翻译官",
-    enabled: true,
-    lastRun: "今天 18:00",
-    nextRun: "明天 07:30",
-  },
-  {
-    id: "3",
-    name: "番剧更新提醒",
-    description: "追番不迷路，新番更新第一时间通知你！",
-    schedule: "0 22 * * 1,3,5",
-    skill: "二次元画师",
-    enabled: false,
-    lastRun: "3天前",
-    nextRun: "周五 22:00",
-  },
-  {
-    id: "4",
-    name: "学习打卡",
-    description: "坚持学习每一天，记录你的成长轨迹~",
-    schedule: "0 21 * * 1-5",
-    skill: "学习小伙伴",
-    enabled: true,
-    lastRun: "昨天 21:00",
-    nextRun: "今天 21:00",
-  },
-  {
-    id: "5",
-    name: "代码日报",
-    description: "自动总结今天的代码提交和工作进度",
-    schedule: "30 18 * * 1-5",
-    skill: "代码小助手",
-    enabled: true,
-    lastRun: "今天 18:30",
-    nextRun: "明天 18:30",
-  },
+const scheduleTypeOptions: Array<{ value: CronScheduleType; label: string; hint: string }> = [
+  { value: "cron", label: "Cron", hint: "按固定时间表达式执行" },
+  { value: "every", label: "间隔", hint: "每隔 N 秒重复执行" },
+  { value: "at", label: "单次", hint: "在指定时间只执行一次" },
 ]
 
-const scheduleIcons: Record<string, string> = {
-  "早安问候": "sunrise",
-  "喂猫提醒": "cat-face",
-  "番剧更新提醒": "television",
-  "学习打卡": "open-book",
-  "代码日报": "laptop",
+function getErrorMessage(error: unknown): string {
+  if (error instanceof Error && error.message.trim()) {
+    return error.message.trim()
+  }
+  return "操作失败，请稍后再试。"
 }
 
-interface CreateScheduleDialogProps {
-  open: boolean
-  onClose: () => void
-  onCreate: (data: { name: string; description: string; schedule: string; skill?: string }) => void
-  isCreating: boolean
+function pad(value: number): string {
+  return String(value).padStart(2, "0")
 }
 
-function CreateScheduleDialog({ open, onClose, onCreate, isCreating }: CreateScheduleDialogProps) {
-  const [name, setName] = useState("")
-  const [description, setDescription] = useState("")
-  const [schedule, setSchedule] = useState("")
-  const [skill, setSkill] = useState("")
-
-  const handleSubmit = () => {
-    if (!name.trim() || !schedule.trim()) return
-    onCreate({ name, description, schedule, skill: skill || undefined })
+function formatDateTime(ms?: number): string {
+  if (!ms) {
+    return "尚未执行"
   }
 
-  if (!open) return null
+  const date = new Date(ms)
+  return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())} ${pad(date.getHours())}:${pad(date.getMinutes())}`
+}
+
+function toDatetimeLocalValue(ms?: number): string {
+  if (!ms) {
+    return ""
+  }
+
+  const date = new Date(ms)
+  const local = new Date(date.getTime() - date.getTimezoneOffset() * 60_000)
+  return local.toISOString().slice(0, 16)
+}
+
+function isToday(ms?: number): boolean {
+  if (!ms) {
+    return false
+  }
+
+  const target = new Date(ms)
+  const now = new Date()
+  return (
+    target.getFullYear() === now.getFullYear() &&
+    target.getMonth() === now.getMonth() &&
+    target.getDate() === now.getDate()
+  )
+}
+
+function formatEveryLabel(seconds?: number): string {
+  if (!seconds || seconds <= 0) {
+    return "未设置"
+  }
+
+  if (seconds % 86_400 === 0) {
+    return `每 ${seconds / 86_400} 天`
+  }
+  if (seconds % 3_600 === 0) {
+    return `每 ${seconds / 3_600} 小时`
+  }
+  if (seconds % 60 === 0) {
+    return `每 ${seconds / 60} 分钟`
+  }
+  return `每 ${seconds} 秒`
+}
+
+function formatCronSummary(expr?: string): string {
+  if (!expr) {
+    return "Cron 计划"
+  }
+
+  const parts = expr.trim().split(/\s+/)
+  if (parts.length < 5) {
+    return expr
+  }
+
+  const [minute, hour, dayOfMonth, month, dayOfWeek] = parts
+  const hasFixedTime = /^\d+$/.test(minute) && /^\d+$/.test(hour)
+  const timeLabel = hasFixedTime ? `${pad(Number(hour))}:${pad(Number(minute))}` : expr
+
+  if (dayOfMonth === "*" && month === "*" && dayOfWeek === "*") {
+    return `每天 ${timeLabel}`
+  }
+  if (dayOfMonth === "*" && month === "*" && dayOfWeek === "1-5") {
+    return `工作日 ${timeLabel}`
+  }
+  if (dayOfMonth === "*" && month === "*" && (dayOfWeek === "0,6" || dayOfWeek === "6,0")) {
+    return `周末 ${timeLabel}`
+  }
+
+  return `Cron：${expr}`
+}
+
+function getScheduleLabel(job: CronJob): string {
+  switch (job.scheduleType) {
+    case "every":
+      return formatEveryLabel(job.everySeconds)
+    case "at":
+      return `One-time at ${formatDateTime(job.atMs)}`
+    case "cron":
+    default:
+      return formatCronSummary(job.cronExpr || job.schedule)
+  }
+}
+
+function getScheduleMeta(job: CronJob): string {
+  switch (job.scheduleType) {
+    case "every":
+      return "Repeats on a fixed interval"
+    case "at":
+      return "执行后自动移除"
+    case "cron":
+    default:
+      return job.cronExpr || job.schedule || "Cron 表达式"
+  }
+}
+
+function sortJobs(jobs: CronJob[]): CronJob[] {
+  return [...jobs].sort((left, right) => {
+    if (left.enabled !== right.enabled) {
+      return left.enabled ? -1 : 1
+    }
+
+    const leftNext = left.nextRunAtMs ?? Number.MAX_SAFE_INTEGER
+    const rightNext = right.nextRunAtMs ?? Number.MAX_SAFE_INTEGER
+    if (leftNext !== rightNext) {
+      return leftNext - rightNext
+    }
+
+    const leftUpdated = left.updatedAtMs ?? 0
+    const rightUpdated = right.updatedAtMs ?? 0
+    return rightUpdated - leftUpdated
+  })
+}
+
+interface ScheduleDialogProps {
+  open: boolean
+  mode: "create" | "edit"
+  job?: CronJob | null
+  submitting: boolean
+  onClose: () => void
+  onSubmit: (input: CronJobInput) => Promise<void>
+}
+
+function ScheduleDialog({ open, mode, job, submitting, onClose, onSubmit }: ScheduleDialogProps) {
+  const [name, setName] = useState("")
+  const [description, setDescription] = useState("")
+  const [scheduleType, setScheduleType] = useState<CronScheduleType>("cron")
+  const [cronExpr, setCronExpr] = useState("0 9 * * *")
+  const [everySeconds, setEverySeconds] = useState("300")
+  const [atValue, setAtValue] = useState("")
+  const [command, setCommand] = useState("")
+
+  useEffect(() => {
+    if (!open) {
+      return
+    }
+
+    if (mode === "edit" && job) {
+      setName(job.name)
+      setDescription(job.description || job.message || "")
+      setScheduleType(job.scheduleType || "cron")
+      setCronExpr(job.cronExpr || job.schedule || "0 9 * * *")
+      setEverySeconds(job.everySeconds ? String(job.everySeconds) : "300")
+      setAtValue(toDatetimeLocalValue(job.atMs))
+      setCommand(job.command || "")
+      return
+    }
+
+    setName("")
+    setDescription("")
+    setScheduleType("cron")
+    setCronExpr("0 9 * * *")
+    setEverySeconds("300")
+    setAtValue("")
+    setCommand("")
+  }, [job, mode, open])
+
+  if (!open) {
+    return null
+  }
+
+  const parsedEverySeconds = Number(everySeconds)
+  const parsedAtMs = atValue ? new Date(atValue).getTime() : NaN
+  const isCronValid = scheduleType !== "cron" || cronExpr.trim().length > 0
+  const isEveryValid = scheduleType !== "every" || (Number.isFinite(parsedEverySeconds) && parsedEverySeconds > 0)
+  const isAtValid = scheduleType !== "at" || (Number.isFinite(parsedAtMs) && parsedAtMs > Date.now())
+  const canSubmit =
+    name.trim().length > 0 &&
+    description.trim().length > 0 &&
+    isCronValid &&
+    isEveryValid &&
+    isAtValid
+
+  async function handleSubmit() {
+    if (!canSubmit) {
+      return
+    }
+
+    const payload: CronJobInput = {
+      name: name.trim(),
+      description: description.trim(),
+      scheduleType,
+      command: command.trim() || undefined,
+    }
+
+    if (scheduleType === "cron") {
+      payload.schedule = cronExpr.trim()
+    } else if (scheduleType === "every") {
+      payload.everySeconds = Math.floor(parsedEverySeconds)
+    } else {
+      payload.atMs = parsedAtMs
+    }
+
+    await onSubmit(payload)
+  }
 
   return (
-    <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50">
-      <div className="bg-background rounded-2xl p-6 w-full max-w-lg mx-4">
-        <div className="flex items-center justify-between mb-4">
-          <h2 className="text-lg font-semibold">新建定时任务</h2>
-          <button onClick={onClose} className="p-1 rounded-lg hover:bg-accent">
-            <X className="w-5 h-5" />
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/55 p-4">
+      <div className="w-full max-w-xl rounded-3xl border border-border bg-background p-6 shadow-2xl">
+        <div className="mb-5 flex items-start justify-between gap-4">
+          <div>
+            <h2 className="text-lg font-semibold text-foreground">
+              {mode === "edit" ? "编辑定时任务" : "新建定时任务"}
+            </h2>
+            <p className="mt-1 text-sm text-muted-foreground">
+              支持 Cron、固定间隔和单次执行三种方式。
+            </p>
+          </div>
+          <button
+            type="button"
+            onClick={onClose}
+            className="rounded-xl p-2 text-muted-foreground transition hover:bg-accent hover:text-foreground"
+          >
+            <X className="h-5 w-5" />
           </button>
         </div>
-        
+
         <div className="space-y-4">
           <div>
-            <label className="block text-sm font-medium mb-1.5">任务名称</label>
+            <label className="mb-1.5 block text-sm font-medium text-foreground">任务名称</label>
             <input
               type="text"
               value={name}
-              onChange={(e) => setName(e.target.value)}
-              placeholder="例如：早安问候"
-              className="w-full px-3 py-2 border border-border rounded-xl bg-background text-foreground placeholder:text-muted-foreground outline-none focus:ring-2 focus:ring-orange-400/30"
+              onChange={(event) => setName(event.target.value)}
+              placeholder="例如：晨间提醒"
+              className="w-full rounded-2xl border border-border bg-background px-3 py-2.5 text-sm text-foreground outline-none transition focus:border-orange-300 focus:ring-2 focus:ring-orange-400/20"
             />
           </div>
-          
+
           <div>
-            <label className="block text-sm font-medium mb-1.5">描述</label>
+            <label className="mb-1.5 block text-sm font-medium text-foreground">任务内容</label>
             <textarea
               value={description}
-              onChange={(e) => setDescription(e.target.value)}
-              placeholder="简单描述这个任务的作用..."
-              className="w-full px-3 py-2 border border-border rounded-xl bg-background text-foreground placeholder:text-muted-foreground outline-none focus:ring-2 focus:ring-orange-400/30 resize-none h-20"
+              onChange={(event) => setDescription(event.target.value)}
+              placeholder="写下任务触发后要让 AI 做什么，或者要提醒你的内容。"
+              className="h-24 w-full resize-none rounded-2xl border border-border bg-background px-3 py-2.5 text-sm text-foreground outline-none transition focus:border-orange-300 focus:ring-2 focus:ring-orange-400/20"
             />
           </div>
-          
+
           <div>
-            <label className="block text-sm font-medium mb-1.5">Cron 表达式</label>
+            <label className="mb-2 block text-sm font-medium text-foreground">调度方式</label>
+            <div className="grid gap-2 sm:grid-cols-3">
+              {scheduleTypeOptions.map((option) => (
+                <button
+                  key={option.value}
+                  type="button"
+                  onClick={() => setScheduleType(option.value)}
+                  className={cn(
+                    "rounded-2xl border px-3 py-3 text-left transition",
+                    scheduleType === option.value
+                      ? "border-orange-300 bg-orange-50 text-orange-900"
+                      : "border-border bg-background text-foreground hover:border-orange-200 hover:bg-muted/40"
+                  )}
+                >
+                  <div className="text-sm font-medium">{option.label}</div>
+                  <div className="mt-1 text-xs text-muted-foreground">{option.hint}</div>
+                </button>
+              ))}
+            </div>
+          </div>
+
+          {scheduleType === "cron" && (
+            <div>
+              <label className="mb-1.5 block text-sm font-medium text-foreground">Cron 表达式</label>
+              <input
+                type="text"
+                value={cronExpr}
+                onChange={(event) => setCronExpr(event.target.value)}
+                placeholder="例如：0 9 * * *"
+                className="w-full rounded-2xl border border-border bg-background px-3 py-2.5 text-sm text-foreground outline-none transition focus:border-orange-300 focus:ring-2 focus:ring-orange-400/20"
+              />
+              <p className="mt-1 text-xs text-muted-foreground">
+                例如：`0 9 * * *` 表示每天 09:00，`0 18 * * 1-5` 表示工作日 18:00。
+              </p>
+            </div>
+          )}
+
+          {scheduleType === "every" && (
+            <div>
+              <label className="mb-1.5 block text-sm font-medium text-foreground">执行间隔（秒）</label>
+              <input
+                type="number"
+                min={1}
+                value={everySeconds}
+                onChange={(event) => setEverySeconds(event.target.value)}
+                placeholder="例如：300"
+                className="w-full rounded-2xl border border-border bg-background px-3 py-2.5 text-sm text-foreground outline-none transition focus:border-orange-300 focus:ring-2 focus:ring-orange-400/20"
+              />
+              <p className="mt-1 text-xs text-muted-foreground">例如：300 表示每 5 分钟执行一次。</p>
+            </div>
+          )}
+
+          {scheduleType === "at" && (
+            <div>
+              <label className="mb-1.5 block text-sm font-medium text-foreground">执行时间</label>
+              <input
+                type="datetime-local"
+                value={atValue}
+                onChange={(event) => setAtValue(event.target.value)}
+                className="w-full rounded-2xl border border-border bg-background px-3 py-2.5 text-sm text-foreground outline-none transition focus:border-orange-300 focus:ring-2 focus:ring-orange-400/20"
+              />
+              <p className="mt-1 text-xs text-muted-foreground">单次任务执行完成后会自动移除。</p>
+            </div>
+          )}
+
+          <div>
+            <label className="mb-1.5 block text-sm font-medium text-foreground">命令（可选）</label>
             <input
               type="text"
-              value={schedule}
-              onChange={(e) => setSchedule(e.target.value)}
-              placeholder="例如：0 8 * * * (每天早上8点)"
-              className="w-full px-3 py-2 border border-border rounded-xl bg-background text-foreground placeholder:text-muted-foreground outline-none focus:ring-2 focus:ring-orange-400/30"
+              value={command}
+              onChange={(event) => setCommand(event.target.value)}
+              placeholder="例如：echo hello"
+              className="w-full rounded-2xl border border-border bg-background px-3 py-2.5 font-mono text-sm text-foreground outline-none transition focus:border-orange-300 focus:ring-2 focus:ring-orange-400/20"
             />
-            <p className="text-xs text-muted-foreground mt-1">
-              格式：分 时 日 月 周（* 表示任意值）
+            <p className="mt-1 text-xs text-muted-foreground">
+              留空时触发 AI 任务；填写后会直接执行这条命令。
             </p>
           </div>
-          
-          <div>
-            <label className="block text-sm font-medium mb-1.5">关联技能（可选）</label>
-            <input
-              type="text"
-              value={skill}
-              onChange={(e) => setSkill(e.target.value)}
-              placeholder="选择要执行的技能..."
-              className="w-full px-3 py-2 border border-border rounded-xl bg-background text-foreground placeholder:text-muted-foreground outline-none focus:ring-2 focus:ring-orange-400/30"
-            />
-          </div>
         </div>
-        
-        <div className="flex justify-end gap-3 mt-6">
-          <Button variant="outline" onClick={onClose}>
+
+        <div className="mt-6 flex justify-end gap-3">
+          <Button variant="outline" onClick={onClose} disabled={submitting}>
             取消
           </Button>
-          <Button 
+          <Button
             onClick={handleSubmit}
-            disabled={isCreating || !name.trim() || !schedule.trim()}
-            className="bg-gradient-to-r from-orange-400 to-pink-500 hover:from-orange-500 hover:to-pink-600 text-white border-0"
+            disabled={submitting || !canSubmit}
+            className="border-0 bg-gradient-to-r from-orange-400 to-pink-500 text-white hover:from-orange-500 hover:to-pink-600"
           >
-            {isCreating ? <Spinner className="w-4 h-4 mr-2" /> : <Plus className="w-4 h-4 mr-2" />}
-            创建
+            {submitting ? <Spinner className="mr-2 h-4 w-4" /> : <Plus className="mr-2 h-4 w-4" />}
+            {mode === "edit" ? "保存修改" : "创建任务"}
+          </Button>
+        </div>
+      </div>
+    </div>
+  )
+}
+
+function ScheduleCard({
+  job,
+  onEdit,
+  onToggle,
+  onDelete,
+}: {
+  job: CronJob
+  onEdit: (job: CronJob) => void
+  onToggle: (job: CronJob) => void
+  onDelete: (job: CronJob) => void
+}) {
+  const label = getScheduleLabel(job)
+  const meta = getScheduleMeta(job)
+
+  return (
+    <div
+      className={cn(
+        "dashboard-enter dashboard-card rounded-[1.8rem] border bg-[linear-gradient(145deg,rgba(255,252,247,0.94),rgba(255,247,242,0.88))] p-5 shadow-[0_18px_34px_-28px_rgba(121,85,44,0.3)] transition",
+        job.enabled
+          ? "border-white/75 hover:-translate-y-0.5 hover:border-amber-200 hover:shadow-[0_24px_40px_-28px_rgba(121,85,44,0.38)]"
+          : "border-dashed border-amber-200/70 opacity-80"
+      )}
+    >
+      <div className="flex items-start gap-4">
+        <div
+          className={cn(
+            "flex h-12 w-12 shrink-0 items-center justify-center rounded-2xl text-white",
+            job.scheduleType === "every"
+              ? "bg-gradient-to-br from-orange-400 to-pink-500"
+              : job.scheduleType === "at"
+                ? "bg-gradient-to-br from-blue-400 to-cyan-500"
+                : "bg-gradient-to-br from-violet-500 to-indigo-500"
+          )}
+        >
+          {job.scheduleType === "every" ? (
+            <Repeat className="h-5 w-5" />
+          ) : job.scheduleType === "at" ? (
+            <Bell className="h-5 w-5" />
+          ) : (
+            <Clock className="h-5 w-5" />
+          )}
+        </div>
+
+        <div className="min-w-0 flex-1">
+          <div className="mb-1 flex flex-wrap items-center gap-2">
+            <h3 className="text-base font-semibold text-foreground">{job.name}</h3>
+            <span
+              className={cn(
+                "rounded-full border px-2.5 py-1 text-xs font-medium",
+                job.enabled
+                  ? "border-emerald-200/80 bg-emerald-50/90 text-emerald-700"
+                  : "border-white/80 bg-white/78 text-[#7d6755]"
+              )}
+            >
+              {job.enabled ? "运行中" : "已暂停"}
+            </span>
+            {job.lastStatus === "error" && (
+              <span
+                className="rounded-full border border-rose-200/80 bg-rose-50/90 px-2.5 py-1 text-xs font-medium text-rose-700"
+                title={job.lastError || "最近一次执行失败"}
+              >
+                异常
+              </span>
+            )}
+          </div>
+
+          <p className="text-sm leading-6 text-muted-foreground">{job.description || job.message}</p>
+
+          {job.command && (
+            <div className="mt-3 flex items-start gap-2 rounded-[1.2rem] border border-white/70 bg-white/72 px-3 py-2">
+              <Terminal className="mt-0.5 h-4 w-4 shrink-0 text-muted-foreground" />
+              <code className="break-all text-xs text-foreground">{job.command}</code>
+            </div>
+          )}
+
+          <div className="mt-4 flex flex-wrap items-center gap-x-4 gap-y-2 text-xs text-muted-foreground">
+            <span className="flex items-center gap-1">
+              <Clock className="h-3.5 w-3.5" />
+              {label}
+            </span>
+            <span className="flex items-center gap-1">
+              <Repeat className="h-3.5 w-3.5" />
+              {meta}
+            </span>
+            <span className="flex items-center gap-1">
+              <Bell className="h-3.5 w-3.5" />
+              下次：{job.nextRunAtMs ? formatDateTime(job.nextRunAtMs) : "未安排"}
+            </span>
+            <span className="flex items-center gap-1">
+              <Calendar className="h-3.5 w-3.5" />
+              上次：{job.lastRunAtMs ? formatDateTime(job.lastRunAtMs) : "从未执行"}
+            </span>
+          </div>
+        </div>
+
+        <div className="flex shrink-0 items-center gap-1">
+          <Button
+            variant="ghost"
+            size="icon"
+            onClick={() => onToggle(job)}
+            className={cn(
+              "h-9 w-9 rounded-xl",
+              job.enabled
+                ? "text-green-600 hover:bg-green-50"
+                : "text-muted-foreground hover:bg-white/80"
+            )}
+          >
+            {job.enabled ? <Pause className="h-4 w-4" /> : <Play className="h-4 w-4" />}
+          </Button>
+          <Button
+            variant="ghost"
+            size="icon"
+            onClick={() => onEdit(job)}
+            className="h-9 w-9 rounded-xl text-muted-foreground hover:bg-white/80"
+          >
+            <Edit2 className="h-4 w-4" />
+          </Button>
+          <Button
+            variant="ghost"
+            size="icon"
+            onClick={() => onDelete(job)}
+            className="h-9 w-9 rounded-xl text-muted-foreground hover:bg-red-50 hover:text-red-600"
+          >
+            <Trash2 className="h-4 w-4" />
           </Button>
         </div>
       </div>
@@ -167,232 +515,209 @@ function CreateScheduleDialog({ open, onClose, onCreate, isCreating }: CreateSch
 
 export function SchedulePage() {
   const [showCreateDialog, setShowCreateDialog] = useState(false)
-  
+  const [editingJob, setEditingJob] = useState<CronJob | null>(null)
+  const [actionError, setActionError] = useState<string | null>(null)
+
   const { data: cronData, isLoading, error, mutate } = useCronJobs()
-  const { create, toggle, remove } = useCronMutations()
+  const { create, update, toggle, remove } = useCronMutations()
 
-  // 使用 API 数据或默认数据
-  const schedules = cronData?.jobs || defaultSchedules
+  const schedules = sortJobs(cronData?.jobs ?? [])
+  const runningCount = schedules.filter((job) => job.enabled).length
+  const todayExecutions = schedules.filter((job) => isToday(job.lastRunAtMs)).length
+  const nextExecution = schedules
+    .filter((job) => job.enabled && typeof job.nextRunAtMs === "number")
+    .sort((left, right) => (left.nextRunAtMs ?? Number.MAX_SAFE_INTEGER) - (right.nextRunAtMs ?? Number.MAX_SAFE_INTEGER))[0]
 
-  // 统计数据
-  const runningCount = schedules.filter(s => s.enabled).length
-  const todayExecutions = 12 // 模拟数据
-  const nextExecution = schedules.find(s => s.enabled)
+  async function refreshJobs() {
+    await mutate()
+  }
 
-  const handleCreate = async (data: { name: string; description: string; schedule: string; skill?: string }) => {
+  async function handleCreate(input: CronJobInput) {
+    setActionError(null)
     try {
-      await create.trigger({
-        ...data,
-        enabled: true,
-      })
+      await create.trigger({ ...input, enabled: true })
       setShowCreateDialog(false)
-      mutate()
-    } catch (err) {
-      console.error("Create failed:", err)
+      await refreshJobs()
+    } catch (createError) {
+      setActionError(getErrorMessage(createError))
+      throw createError
     }
   }
 
-  const handleToggle = async (id: string, enabled: boolean) => {
+  async function handleUpdate(input: CronJobInput) {
+    if (!editingJob) {
+      return
+    }
+
+    setActionError(null)
     try {
-      await toggle.trigger({ id, enabled: !enabled })
-      mutate()
-    } catch (err) {
-      console.error("Toggle failed:", err)
+      await update.trigger({ id: editingJob.id, job: input })
+      setEditingJob(null)
+      await refreshJobs()
+    } catch (updateError) {
+      setActionError(getErrorMessage(updateError))
+      throw updateError
     }
   }
 
-  const handleDelete = async (id: string) => {
+  async function handleToggle(job: CronJob) {
+    setActionError(null)
     try {
-      await remove.trigger(id)
-      mutate()
-    } catch (err) {
-      console.error("Delete failed:", err)
+      await toggle.trigger({ id: job.id, enabled: !job.enabled })
+      await refreshJobs()
+    } catch (toggleError) {
+      setActionError(getErrorMessage(toggleError))
     }
   }
 
-  // 解析 cron 表达式为可读格式
-  const parseCronTime = (cron: string): string => {
-    const parts = cron.split(" ")
-    if (parts.length < 5) return cron
-    const [minute, hour] = parts
-    if (hour.includes(",")) {
-      return hour.split(",").map(h => `${h.padStart(2, "0")}:${minute.padStart(2, "0")}`).join(" / ")
+  async function handleDelete(job: CronJob) {
+    if (!window.confirm(`确定删除任务“${job.name}”吗？`)) {
+      return
     }
-    return `${hour.padStart(2, "0")}:${minute.padStart(2, "0")}`
+
+    setActionError(null)
+    try {
+      await remove.trigger(job.id)
+      await refreshJobs()
+    } catch (removeError) {
+      setActionError(getErrorMessage(removeError))
+    }
   }
 
-  const parseCronRepeat = (cron: string): string => {
-    const parts = cron.split(" ")
-    if (parts.length < 5) return "自定义"
-    const [, , day, month, weekday] = parts
-    
-    if (day === "*" && month === "*" && weekday === "*") return "每天"
-    if (weekday === "1-5") return "工作日"
-    if (weekday === "0,6") return "周末"
-    if (weekday.includes(",")) {
-      const days = ["日", "一", "二", "三", "四", "五", "六"]
-      return "周" + weekday.split(",").map(d => days[parseInt(d)]).join("、周")
-    }
-    return "自定义"
-  }
+  const pageError = error ? getErrorMessage(error) : null
+  const visibleError = actionError || pageError
+  const dialogSubmitting = create.isMutating || update.isMutating
 
   return (
-    <div className="flex-1 flex flex-col bg-background">
-      {/* Header */}
-      <header className="flex items-center justify-between px-6 py-4 border-b border-border">
-        <div className="flex items-center gap-3">
-          <div className="w-10 h-10 rounded-xl bg-gradient-to-br from-blue-400 to-cyan-500 flex items-center justify-center text-white text-xl">
-            <Clock className="w-5 h-5" />
-          </div>
-          <div>
-            <h1 className="text-lg font-semibold text-foreground">定时任务</h1>
-            <p className="text-sm text-muted-foreground">让 AI 自动帮你完成日常任务，解放双手~</p>
-          </div>
-        </div>
-        <Button 
-          onClick={() => setShowCreateDialog(true)}
-          className="bg-gradient-to-r from-orange-400 to-pink-500 hover:from-orange-500 hover:to-pink-600 text-white border-0"
-        >
-          <Plus className="w-4 h-4 mr-2" />
-          新建任务
-        </Button>
-      </header>
+    <section className="relative flex min-h-0 flex-1 flex-col overflow-hidden bg-[linear-gradient(180deg,rgba(255,246,237,0.78),rgba(255,249,245,0.94),rgba(255,252,249,0.98))]">
+      <div className="pointer-events-none absolute inset-0 bg-[radial-gradient(circle_at_16%_12%,rgba(255,255,255,0.84),transparent_28%),radial-gradient(circle_at_84%_12%,rgba(191,219,254,0.18),transparent_24%),radial-gradient(circle_at_82%_78%,rgba(254,205,211,0.16),transparent_28%)]" />
 
-      {/* Stats */}
-      <div className="px-6 py-4 border-b border-border">
-        <div className="flex items-center gap-6">
-          <div className="flex items-center gap-2">
-            <div className="w-8 h-8 rounded-lg bg-green-100 flex items-center justify-center">
-              <Play className="w-4 h-4 text-green-600" />
-            </div>
+      <div className="relative flex min-h-0 flex-1 flex-col overflow-auto px-6 py-5">
+        <div className="dashboard-enter dashboard-card rounded-[2rem] border border-white/75 bg-[linear-gradient(145deg,rgba(255,251,246,0.95),rgba(255,245,237,0.9),rgba(255,250,245,0.92))] px-6 py-6 shadow-[0_24px_58px_-36px_rgba(118,83,43,0.42)]">
+          <div className="flex flex-wrap items-start justify-between gap-4">
             <div>
-              <p className="text-sm text-muted-foreground">运行中</p>
-              <p className="font-semibold text-foreground">{runningCount} 个任务</p>
-            </div>
-          </div>
-          <div className="w-px h-10 bg-border" />
-          <div className="flex items-center gap-2">
-            <div className="w-8 h-8 rounded-lg bg-orange-100 flex items-center justify-center">
-              <Clock className="w-4 h-4 text-orange-600" />
-            </div>
-            <div>
-              <p className="text-sm text-muted-foreground">今日执行</p>
-              <p className="font-semibold text-foreground">{todayExecutions} 次</p>
-            </div>
-          </div>
-          <div className="w-px h-10 bg-border" />
-          <div className="flex items-center gap-2">
-            <div className="w-8 h-8 rounded-lg bg-blue-100 flex items-center justify-center">
-              <Bell className="w-4 h-4 text-blue-600" />
-            </div>
-            <div>
-              <p className="text-sm text-muted-foreground">下次执行</p>
-              <p className="font-semibold text-foreground">
-                {nextExecution ? `${nextExecution.nextRun || "待定"} ${nextExecution.name}` : "无"}
+              <div className="inline-flex items-center gap-2 rounded-full border border-white/75 bg-white/82 px-3 py-1.5 text-sm font-medium text-[#7f5a38]">
+                <Clock className="h-4 w-4 text-amber-600" />
+                时间舱
+              </div>
+              <h1 className="mt-5 text-4xl font-semibold tracking-tight text-[#3d2718]">
+                让自动化像一条有呼吸的时间轨道
+              </h1>
+              <p className="mt-3 max-w-3xl text-base leading-8 text-[#816451]">
+                在这里管理提醒、循环自动化和单次任务。它不再是僵硬的后台列表，而是一块更柔和的时间舞台。
               </p>
             </div>
+
+            <Button
+              onClick={() => setShowCreateDialog(true)}
+              className="rounded-full border-0 bg-[linear-gradient(135deg,#9a5929_0%,#c87734_48%,#e1a05b_100%)] px-5 text-amber-50 shadow-[0_18px_26px_-18px_rgba(154,89,41,0.75)] hover:brightness-105"
+            >
+              <Plus className="mr-2 h-4 w-4" />
+              新建任务
+            </Button>
+          </div>
+
+          <div className="mt-8 grid gap-3 md:grid-cols-3">
+            <div className="rounded-[1.4rem] border border-emerald-200/80 bg-gradient-to-r from-emerald-100 via-emerald-50 to-white p-4 shadow-sm">
+              <div className="flex items-center gap-3">
+                <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-green-100 text-green-700">
+                  <Play className="h-4 w-4" />
+              </div>
+              <div>
+                <p className="text-sm text-muted-foreground">运行中任务</p>
+                <p className="text-lg font-semibold text-foreground">{runningCount}</p>
+              </div>
+              </div>
+            </div>
+
+            <div className="rounded-[1.4rem] border border-amber-200/80 bg-gradient-to-r from-amber-100 via-orange-50 to-white p-4 shadow-sm">
+              <div className="flex items-center gap-3">
+                <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-orange-100 text-orange-700">
+                  <Calendar className="h-4 w-4" />
+              </div>
+              <div>
+                <p className="text-sm text-muted-foreground">今日执行</p>
+                <p className="text-lg font-semibold text-foreground">{todayExecutions}</p>
+              </div>
+              </div>
+            </div>
+
+            <div className="rounded-[1.4rem] border border-sky-200/80 bg-gradient-to-r from-sky-100 via-cyan-50 to-white p-4 shadow-sm">
+              <div className="flex items-center gap-3">
+                <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-blue-100 text-blue-700">
+                  <Bell className="h-4 w-4" />
+              </div>
+              <div className="min-w-0">
+                <p className="text-sm text-muted-foreground">最近一次即将执行</p>
+                <p className="truncate text-sm font-semibold text-foreground">
+                  {nextExecution ? `${formatDateTime(nextExecution.nextRunAtMs)} · ${nextExecution.name}` : "暂无待执行任务"}
+                </p>
+              </div>
+              </div>
+            </div>
           </div>
         </div>
-      </div>
 
-      {/* Schedule List */}
-      <div className="flex-1 overflow-auto p-6">
-        {isLoading ? (
-          <div className="flex items-center justify-center h-40">
-            <Spinner className="w-8 h-8 text-orange-500" />
-          </div>
-        ) : (
-          <div className="space-y-3">
-            {schedules.map((schedule, index) => (
-              <div
-                key={schedule.id}
-                className={cn(
-                  "p-4 rounded-2xl border bg-background transition-all",
-                  schedule.enabled 
-                    ? "border-border hover:border-orange-200 hover:shadow-md" 
-                    : "border-dashed border-border/50 opacity-60"
-                )}
-              >
-                <div className="flex items-start gap-4">
-                  {/* Icon */}
-                  <div className="w-12 h-12 rounded-xl bg-gradient-to-br from-orange-100 to-pink-100 flex items-center justify-center text-2xl shrink-0">
-                    {index === 0 ? "🌅" : index === 1 ? "🐱" : index === 2 ? "📺" : index === 3 ? "📖" : "💻"}
-                  </div>
-                  
-                  {/* Content */}
-                  <div className="flex-1 min-w-0">
-                    <div className="flex items-center gap-2 mb-1">
-                      <h3 className="font-semibold text-foreground">{schedule.name}</h3>
-                      {schedule.enabled && (
-                        <span className="px-1.5 py-0.5 bg-green-100 text-green-700 text-xs rounded-full">运行中</span>
-                      )}
-                    </div>
-                    <p className="text-sm text-muted-foreground mb-2">{schedule.description}</p>
-                    <div className="flex items-center gap-4 text-xs text-muted-foreground">
-                      <span className="flex items-center gap-1">
-                        <Clock className="w-3 h-3" />
-                        {parseCronTime(schedule.schedule)}
-                      </span>
-                      <span className="flex items-center gap-1">
-                        <Repeat className="w-3 h-3" />
-                        {parseCronRepeat(schedule.schedule)}
-                      </span>
-                      <span className="flex items-center gap-1">
-                        <Calendar className="w-3 h-3" />
-                        上次: {schedule.lastRun || "从未"}
-                      </span>
-                    </div>
-                  </div>
-
-                  {/* Actions */}
-                  <div className="flex items-center gap-1">
-                    <Button
-                      variant="ghost"
-                      size="icon"
-                      onClick={() => handleToggle(schedule.id, schedule.enabled)}
-                      className={cn(
-                        "w-8 h-8 rounded-lg",
-                        schedule.enabled 
-                          ? "text-green-600 hover:bg-green-50" 
-                          : "text-muted-foreground hover:bg-accent"
-                      )}
-                    >
-                      {schedule.enabled ? <Pause className="w-4 h-4" /> : <Play className="w-4 h-4" />}
-                    </Button>
-                    <Button variant="ghost" size="icon" className="w-8 h-8 rounded-lg text-muted-foreground hover:bg-accent">
-                      <Edit2 className="w-4 h-4" />
-                    </Button>
-                    <Button 
-                      variant="ghost" 
-                      size="icon" 
-                      onClick={() => handleDelete(schedule.id)}
-                      className="w-8 h-8 rounded-lg text-muted-foreground hover:bg-red-50 hover:text-red-500"
-                    >
-                      <Trash2 className="w-4 h-4" />
-                    </Button>
-                  </div>
-                </div>
-              </div>
-            ))}
+        {visibleError && (
+          <div className="mt-5 rounded-[1.2rem] border border-rose-200 bg-rose-50/95 px-4 py-3 text-sm text-rose-700">
+            {visibleError}
           </div>
         )}
 
-        {/* Empty State Hint */}
-        <div className="mt-6 p-6 rounded-2xl border border-dashed border-border bg-muted/30 text-center">
-          <div className="text-4xl mb-3">🐾</div>
-          <p className="text-muted-foreground text-sm">
-            小提示：设置定时任务可以让 AI 自动帮你完成重复性工作哦~
-          </p>
+        <div className="mt-5 flex-1">
+        {isLoading ? (
+          <div className="flex h-40 items-center justify-center">
+            <Spinner className="h-8 w-8 text-orange-500" />
+          </div>
+        ) : schedules.length === 0 ? (
+          <div className="dashboard-enter rounded-[2rem] border border-dashed border-amber-200/80 bg-[linear-gradient(145deg,rgba(255,249,241,0.94),rgba(255,245,237,0.86))] px-6 py-12 text-center shadow-[0_20px_40px_-34px_rgba(118,80,42,0.22)]">
+            <div className="dashboard-float-slow mx-auto mb-4 flex h-14 w-14 items-center justify-center rounded-2xl bg-white/88 text-orange-500 shadow-sm">
+              <Bell className="h-6 w-6" />
+            </div>
+            <h2 className="text-lg font-semibold text-foreground">还没有定时任务</h2>
+            <p className="mx-auto mt-2 max-w-md text-sm leading-6 text-muted-foreground">
+              你可以在这里创建循环任务、间隔自动化，或者只执行一次的提醒。
+            </p>
+            <Button
+              onClick={() => setShowCreateDialog(true)}
+              className="mt-5 border-0 bg-gradient-to-r from-orange-400 to-pink-500 text-white hover:from-orange-500 hover:to-pink-600"
+            >
+              <Plus className="mr-2 h-4 w-4" />
+              创建第一个任务
+            </Button>
+          </div>
+        ) : (
+          <div className="space-y-4">
+            {schedules.map((job) => (
+              <ScheduleCard
+                key={job.id}
+                job={job}
+                onEdit={setEditingJob}
+                onToggle={handleToggle}
+                onDelete={handleDelete}
+              />
+            ))}
+          </div>
+        )}
         </div>
-      </div>
 
-      {/* Create Dialog */}
-      <CreateScheduleDialog
-        open={showCreateDialog}
-        onClose={() => setShowCreateDialog(false)}
-        onCreate={handleCreate}
-        isCreating={create.isMutating}
-      />
-    </div>
+        <ScheduleDialog
+          open={showCreateDialog}
+          mode="create"
+          submitting={dialogSubmitting}
+          onClose={() => setShowCreateDialog(false)}
+          onSubmit={handleCreate}
+        />
+
+        <ScheduleDialog
+          open={Boolean(editingJob)}
+          mode="edit"
+          job={editingJob}
+          submitting={dialogSubmitting}
+          onClose={() => setEditingJob(null)}
+          onSubmit={handleUpdate}
+        />
+      </div>
+    </section>
   )
 }

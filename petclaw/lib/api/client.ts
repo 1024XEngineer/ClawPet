@@ -42,21 +42,38 @@ async function request<T>(
 
   const shouldRetryAuth = !endpoint.startsWith('/api/auth/')
   const response = await fetchWithAuthRetry(url, config, shouldRetryAuth)
+  const text = await response.text()
+
+  let data: unknown = undefined
+  if (text) {
+    try {
+      data = JSON.parse(text)
+    } catch {
+      data = text
+    }
+  }
 
   if (!response.ok) {
-    const errorData = await response.json().catch(() => ({}))
-    throw new ApiError(
-      response.status,
-      errorData.message || `HTTP error ${response.status}`,
-      errorData
-    )
+    const message =
+      typeof data === 'object' &&
+      data !== null &&
+      'message' in data &&
+      typeof (data as { message?: unknown }).message === 'string'
+        ? ((data as { message: string }).message || `HTTP error ${response.status}`)
+        : typeof data === 'string' && data.trim()
+          ? data.trim()
+          : `HTTP error ${response.status}`
+
+    throw new ApiError(response.status, message, data)
   }
 
   // 处理空响应
-  const text = await response.text()
   if (!text) return {} as T
-  
-  return JSON.parse(text)
+  if (typeof data === 'string') {
+    throw new ApiError(response.status, 'Expected JSON response', data)
+  }
+
+  return data as T
 }
 
 async function fetchDirectGatewayHealth(baseUrl?: string): Promise<{ uptime?: string } | null> {
@@ -314,28 +331,55 @@ export const toolsApi = {
 }
 
 // 定时任务 API
+export type CronScheduleType = 'cron' | 'every' | 'at'
+
 export interface CronJob {
   id: string
   name: string
   description: string
+  message: string
+  scheduleType: CronScheduleType
   schedule: string
-  skill?: string
+  cronExpr?: string
+  everySeconds?: number
+  atMs?: number
   command?: string
   enabled: boolean
-  lastRun?: string
-  nextRun?: string
+  channel?: string
+  to?: string
+  lastRunAtMs?: number
+  nextRunAtMs?: number
+  lastStatus?: string
+  lastError?: string
+  createdAtMs?: number
+  updatedAtMs?: number
+}
+
+export interface CronJobInput {
+  name: string
+  description: string
+  scheduleType: CronScheduleType
+  schedule?: string
+  cronExpr?: string
+  everySeconds?: number
+  atMs?: number
+  delaySeconds?: number
+  command?: string
+  enabled?: boolean
+  channel?: string
+  to?: string
 }
 
 export const cronApi = {
   list: () => request<{ jobs: CronJob[] }>(API_ENDPOINTS.CRON.LIST),
 
-  create: (job: Omit<CronJob, 'id' | 'lastRun' | 'nextRun'>) =>
+  create: (job: CronJobInput) =>
     request<{ job: CronJob }>(API_ENDPOINTS.CRON.CREATE, {
       method: 'POST',
       body: JSON.stringify(job),
     }),
 
-  update: (id: string, job: Partial<CronJob>) =>
+  update: (id: string, job: Partial<CronJobInput>) =>
     request<{ job: CronJob }>(API_ENDPOINTS.CRON.UPDATE(id), {
       method: 'PUT',
       body: JSON.stringify(job),
@@ -347,7 +391,7 @@ export const cronApi = {
     }),
 
   toggle: (id: string, enabled: boolean) =>
-    request<{ success: boolean }>(API_ENDPOINTS.CRON.TOGGLE(id), {
+    request<{ success: boolean; job: CronJob }>(API_ENDPOINTS.CRON.TOGGLE(id), {
       method: 'POST',
       body: JSON.stringify({ enabled }),
     }),

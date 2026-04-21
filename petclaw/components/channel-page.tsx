@@ -133,7 +133,7 @@ const communityChannels = [
 ]
 
 const featuredChannel = {
-  name: "PetClaw 官方频道",
+  name: "ClawPet 官方频道",
   description: "官方公告、活动通知、新功能预告，第一时间获取最新消息！",
   icon: "🐾",
   members: 15234,

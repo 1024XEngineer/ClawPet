@@ -1,18 +1,21 @@
 import {
   API_ENDPOINTS,
-  cacheDirectGatewayBaseUrl,
-  DIRECT_PICO_TOKEN_PATH,
   DIRECT_PET_TOKEN_PATH,
   getApiBaseUrl,
   getDirectGatewayBaseUrl,
+  withLauncherAuthRequest,
 } from './config'
 import { ensureLauncherAuthSession, fetchWithAuthRetry } from './auth-bootstrap'
 
 interface GatewayStatusResponse {
   gateway_status?: string
-  gateway_base_url?: string
   gateway_start_allowed?: boolean
   gateway_start_reason?: string
+}
+
+interface TokenStatusResponse {
+  enabled?: boolean
+  ws_url?: string
 }
 
 interface ModelListResponse {
@@ -60,11 +63,7 @@ async function getGatewayStatus(): Promise<GatewayStatusResponse> {
   if (!res.ok) {
     throw new Error(`gateway status failed: ${res.status}`)
   }
-  const data = (await res.json()) as GatewayStatusResponse
-  if (data.gateway_base_url) {
-    cacheDirectGatewayBaseUrl(data.gateway_base_url)
-  }
-  return data
+  return (await res.json()) as GatewayStatusResponse
 }
 
 async function isDirectGatewayHealthy(): Promise<boolean> {
@@ -89,27 +88,11 @@ async function isDirectPetChannelReady(): Promise<boolean> {
   }
 }
 
-async function isDirectPicoChannelReady(): Promise<boolean> {
-  try {
-    const res = await fetch(`${getDirectGatewayBaseUrl()}${DIRECT_PICO_TOKEN_PATH}`)
-    if (!res.ok) {
-      return false
-    }
-    const data = (await res.json()) as { enabled?: boolean; ws_url?: string }
-    return Boolean(data.enabled && data.ws_url)
-  } catch {
-    return false
-  }
-}
-
 async function isDirectGatewayReady(): Promise<boolean> {
   if (!(await isDirectGatewayHealthy())) {
     return false
   }
-  if (await isDirectPetChannelReady()) {
-    return true
-  }
-  return isDirectPicoChannelReady()
+  return isDirectPetChannelReady()
 }
 
 async function startGateway(): Promise<void> {
@@ -134,37 +117,25 @@ async function waitGatewayRunning(maxAttempts = 12, delayMs = 800): Promise<bool
   return false
 }
 
-async function isLauncherPetChannelReady(): Promise<boolean> {
-  let res = await fetchWithAuthRetry(`${getApiBaseUrl()}${API_ENDPOINTS.PET.TOKEN}`, {
-    credentials: 'include',
-  })
-
-  if (res.status === 404) {
-    res = await fetchWithAuthRetry(`${getApiBaseUrl()}${API_ENDPOINTS.PICO.TOKEN}`, {
-      credentials: 'include',
-    })
-  }
-
+async function isLauncherTokenReady(tokenPath: string): Promise<boolean> {
+  const url = `${getApiBaseUrl()}${tokenPath}`
+  const res = await fetch(url, withLauncherAuthRequest(url, { method: 'GET' }))
   if (!res.ok) {
     return false
   }
-
-  const data = (await res.json()) as { enabled?: boolean; ws_url?: string }
+  const data = (await res.json()) as TokenStatusResponse
   return Boolean(data.enabled && data.ws_url)
 }
 
+async function ensureWsProxyReady(): Promise<boolean> {
+  return isLauncherTokenReady(API_ENDPOINTS.PET.TOKEN).catch(() => false)
+}
+
 async function ensureChannelSetup(): Promise<void> {
-  let setupRes = await fetchWithAuthRetry(`${getApiBaseUrl()}${API_ENDPOINTS.PET.SETUP}`, {
+  const setupRes = await fetchWithAuthRetry(`${getApiBaseUrl()}${API_ENDPOINTS.PET.SETUP}`, {
     method: 'POST',
     credentials: 'include',
   })
-
-  if (setupRes.status === 404) {
-    setupRes = await fetchWithAuthRetry(`${getApiBaseUrl()}${API_ENDPOINTS.PICO.SETUP}`, {
-      method: 'POST',
-      credentials: 'include',
-    })
-  }
 
   if (!setupRes.ok) {
     throw new Error(`channel setup failed: ${setupRes.status}`)
@@ -300,10 +271,13 @@ export async function ensureBackendReadyForChat(): Promise<BackendBootstrapResul
 
   const status = await getGatewayStatus()
   if (status.gateway_status === 'running') {
-    const channelReady = await isLauncherPetChannelReady()
-    return channelReady
+    if (await isDirectGatewayReady()) {
+      return { ok: true }
+    }
+    const wsReady = await ensureWsProxyReady()
+    return wsReady
       ? { ok: true }
-      : { ok: false, reason: 'pet channel token unavailable (gateway not ready)' }
+      : { ok: false, reason: 'websocket proxy unavailable (gateway not ready)' }
   }
 
   if (await isDirectGatewayReady()) {
@@ -323,11 +297,15 @@ export async function ensureBackendReadyForChat(): Promise<BackendBootstrapResul
     }
   }
 
-  const channelReady = await isLauncherPetChannelReady()
-  if (!channelReady) {
+  if (await isDirectGatewayReady()) {
+    return { ok: true }
+  }
+
+  const wsReady = await ensureWsProxyReady()
+  if (!wsReady) {
     return {
       ok: false,
-      reason: 'pet channel token unavailable (gateway not ready)',
+      reason: 'websocket proxy unavailable (gateway not ready)',
     }
   }
 
