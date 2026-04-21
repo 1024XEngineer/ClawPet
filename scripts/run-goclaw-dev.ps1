@@ -362,7 +362,8 @@ function Ensure-PicoAllowOrigins {
   )
 
   $current = @()
-  if ($cfg.channels.pico.allow_origins) {
+  $hasAllowOrigins = $cfg.channels.pico.PSObject.Properties.Name -contains "allow_origins"
+  if ($hasAllowOrigins -and $cfg.channels.pico.allow_origins) {
     $current = @($cfg.channels.pico.allow_origins)
   }
 
@@ -382,11 +383,30 @@ function Ensure-PicoAllowOrigins {
   }
 
   if ($changed -or $current.Count -eq 0) {
-    $cfg.channels.pico.allow_origins = @($normalized)
+    if (-not $hasAllowOrigins) {
+      $cfg.channels.pico | Add-Member -NotePropertyName "allow_origins" -NotePropertyValue @($normalized)
+    } else {
+      $cfg.channels.pico.allow_origins = @($normalized)
+    }
     $json = $cfg | ConvertTo-Json -Depth 30
     Write-JsonNoBom -Path $ConfigPath -Json $json
     Write-Step "Ensured pico allow_origins include localhost/127.0.0.1 dashboard origins"
   }
+}
+
+function Ensure-NpmDeps {
+  param(
+    [string]$ProjectDir,
+    [string]$DisplayName
+  )
+
+  $nodeModules = Join-Path $ProjectDir "node_modules"
+  if (Test-Path $nodeModules) {
+    return
+  }
+
+  Write-Step "Installing npm dependencies for $DisplayName (first run)..."
+  Invoke-Npm -WorkingDir $ProjectDir -Arguments "install"
 }
 
 function Get-FirstListeningPidOnPort {
@@ -574,12 +594,30 @@ if (-not [string]::IsNullOrWhiteSpace($resolvedLauncherBin)) {
 Write-Step "Ensuring gateway is running before opening UI..."
 try {
   $gatewayReady = $false
+  $gatewayPreconditionBlocked = $false
   for ($attempt = 1; $attempt -le 2; $attempt++) {
     Ensure-GatewayPortAvailable -ConfigPath $LauncherConfigPath
 
     $gatewayStatus = Invoke-LauncherApi -Method GET -Path "/api/gateway/status" -LauncherToken $LauncherToken
     if ($gatewayStatus.gateway_status -eq "stopped" -or $gatewayStatus.gateway_status -eq "error") {
-      $null = Invoke-LauncherApi -Method POST -Path "/api/gateway/start" -LauncherToken $LauncherToken
+      try {
+        $null = Invoke-LauncherApi -Method POST -Path "/api/gateway/start" -LauncherToken $LauncherToken
+      } catch {
+        if ($_.Exception.Message -match "failed \(400\)") {
+          $latest = Invoke-LauncherApi -Method GET -Path "/api/gateway/status" -LauncherToken $LauncherToken
+          $reason = ""
+          if ($latest.gateway_start_reason) {
+            $reason = "$($latest.gateway_start_reason)"
+          }
+          if ([string]::IsNullOrWhiteSpace($reason)) {
+            $reason = "gateway start preconditions are not met yet"
+          }
+          Write-Warning "Gateway not started yet: $reason. Continuing startup so onboarding/UI can open."
+          $gatewayPreconditionBlocked = $true
+          break
+        }
+        throw
+      }
     }
 
     if (Wait-GatewayRunning -LauncherToken $LauncherToken -TimeoutSeconds 25) {
@@ -612,16 +650,23 @@ try {
     throw "Gateway is not running after startup.$reason"
   }
 
-  if (-not $gatewayReady) {
+  if (-not $gatewayReady -and -not $gatewayPreconditionBlocked) {
     throw "Gateway is not running after startup."
   }
 
-  Write-Step "Gateway is running."
+  if ($gatewayReady) {
+    Write-Step "Gateway is running."
+  } else {
+    Write-Step "Gateway is not running yet (waiting for onboarding/model setup)."
+  }
 } catch {
   throw "Gateway preflight failed: $($_.Exception.Message)"
 }
 
 $currentGatewayPort = Get-GatewayPortFromConfig -ConfigPath $LauncherConfigPath
+
+Ensure-NpmDeps -ProjectDir $petclawDir -DisplayName "petclaw"
+Ensure-NpmDeps -ProjectDir $electronDir -DisplayName "electron-frontend"
 
 if ((Test-HttpReady -Url $DashboardUrl -TimeoutSeconds 2) -or (Test-PortListening -Port 3000)) {
   Write-Step "Petclaw dashboard already running at $DashboardUrl"
@@ -640,11 +685,11 @@ if ((Test-HttpReady -Url $DashboardUrl -TimeoutSeconds 2) -or (Test-PortListenin
 
   Start-DetachedPowerShell -Title "GoClaw - Petclaw" -Command $petclawCmd
 
-  if (-not (Wait-HttpReady -Url $DashboardUrl -TimeoutSeconds 35)) {
-    throw "Petclaw did not become ready at $DashboardUrl in time."
+  if (-not (Wait-HttpReady -Url $DashboardUrl -TimeoutSeconds 120)) {
+    Write-Warning "Petclaw did not become ready at $DashboardUrl in time."
+  } else {
+    Write-Step "Petclaw is ready at $DashboardUrl"
   }
-
-  Write-Step "Petclaw is ready at $DashboardUrl"
 }
 
 $existingElectron = @(Get-Process -Name electron -ErrorAction SilentlyContinue)
@@ -655,8 +700,10 @@ if ($existingElectron.Count -gt 0) {
     Write-Step "Starting electron frontend vite server..."
     $viteCmd = "Set-Location '$electronDir'; npm run dev -- --host 127.0.0.1 --port 5173 --strictPort"
     Start-DetachedPowerShell -Title "GoClaw - Electron Vite" -Command $viteCmd
-    if (-not (Wait-HttpReady -Url "http://127.0.0.1:5173" -TimeoutSeconds 25)) {
-      throw "Electron Vite server did not become ready on http://127.0.0.1:5173"
+    if (-not (Wait-HttpReady -Url "http://127.0.0.1:5173" -TimeoutSeconds 120)) {
+      Write-Warning "Electron Vite server did not become ready on http://127.0.0.1:5173 in time."
+    } else {
+      Write-Step "Electron Vite server is ready on http://127.0.0.1:5173"
     }
   } else {
     Write-Step "Electron frontend vite server already running on :5173"

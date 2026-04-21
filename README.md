@@ -37,6 +37,29 @@ This script will:
 5. Start the desktop renderer on `127.0.0.1:5173`
 6. Start Electron and point its settings/onboarding window to `petclaw`
 
+## Release Package (All-In-One)
+
+If you want a release package that starts the full stack (`18800`, `18790`, `3000`, `5173` + Electron) with one click, use the Windows asset:
+
+- `clawpet_AllInOne_Windows_x86_64.zip` (or arm64 variant)
+
+After extracting, run:
+
+- `GoClaw-OneClickStart.bat`
+
+This entry delegates to:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\scripts\run-goclaw-dev.ps1 -Restart -PetclawMode dev
+```
+
+and starts launcher, gateway, petclaw dashboard, electron frontend dev server, and Electron desktop pet in order.
+
+Notes for first launch:
+
+- If no model is configured yet, gateway startup may be deferred until onboarding/model setup is completed.
+- The package will auto-install npm dependencies for `petclaw` and `electron-frontend` on first run, so startup can take longer once.
+
 ## One-Click Startup
 
 You can also use the root one-click entry:

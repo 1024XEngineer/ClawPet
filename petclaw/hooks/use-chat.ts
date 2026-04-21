@@ -8,6 +8,10 @@ import {
   type ChatMessage,
   type WSEvent,
 } from "@/lib/api"
+import { getSessionHistory, getSessions } from "@/lib/api/sessions"
+
+const SESSIONS_STORAGE_KEY = "petclaw_sessions"
+const ACTIVE_SESSION_KEY = "petclaw_active_session"
 
 export interface UseChatOptions {
   onMessage?: (message: ChatMessage) => void
@@ -37,6 +41,7 @@ export interface UseChatResult {
   sendMessage: (content: string) => void
   newChat: () => Promise<void>
   switchSession: (sessionId: string) => Promise<void>
+  loadSessionHistory: (sessionId: string) => Promise<void>
   reconnect: () => void
   clearError: () => void
 }
@@ -63,6 +68,71 @@ function createSessionState(id: string): ChatSessionState {
     updatedAt: now,
     messageCount: 0,
     messages: [],
+  }
+}
+
+// localStorage 持久化函数
+function saveSessionsToStorage(sessions: ChatSessionState[], activeSessionId: string) {
+  if (typeof window === "undefined" || !window.localStorage) {
+    return
+  }
+
+  try {
+    const data = {
+      sessions: sessions.map((session) => ({
+        id: session.id,
+        title: session.title,
+        preview: session.preview,
+        updatedAt: session.updatedAt,
+        messageCount: session.messageCount,
+        messages: session.messages,
+      })),
+      activeSessionId,
+      savedAt: Date.now(),
+    }
+    window.localStorage.setItem(SESSIONS_STORAGE_KEY, JSON.stringify(data))
+    window.localStorage.setItem(ACTIVE_SESSION_KEY, activeSessionId)
+    console.log("[petclaw] 会话已保存到 localStorage", {
+      sessionCount: sessions.length,
+      activeSessionId,
+    })
+  } catch (error) {
+    console.error("[petclaw] 保存会话到 localStorage 失败:", error)
+  }
+}
+
+// 从 localStorage 恢复会话
+function loadSessionsFromStorage(): {
+  sessions: ChatSessionState[]
+  activeSessionId: string
+} | null {
+  if (typeof window === "undefined" || !window.localStorage) {
+    return null
+  }
+
+  try {
+    const dataStr = window.localStorage.getItem(SESSIONS_STORAGE_KEY)
+    if (!dataStr) {
+      return null
+    }
+
+    const data = JSON.parse(dataStr)
+    if (!data.sessions || !Array.isArray(data.sessions)) {
+      return null
+    }
+
+    console.log("[petclaw] 从 localStorage 恢复会话", {
+      sessionCount: data.sessions.length,
+      activeSessionId: data.activeSessionId,
+    })
+
+    return {
+      sessions: data.sessions,
+      activeSessionId: data.activeSessionId || data.sessions[0]?.id || "",
+    }
+  } catch (error) {
+    console.error("[petclaw] 从 localStorage 恢复会话失败:", error)
+    return null
   }
 }
 
@@ -149,12 +219,15 @@ export function useChat(options: UseChatOptions = {}): UseChatResult {
   const wsRef = useRef(getWebSocketInstance())
   const optionsRef = useRef(options)
   const initialSessionIdRef = useRef(wsRef.current.ensureSessionId())
+
+  // 尝试从 localStorage 加载会话
+  const storedSessions = loadSessionsFromStorage()
   const [activeSessionId, setActiveSessionId] = useState(
-    initialSessionIdRef.current,
+    storedSessions?.activeSessionId || initialSessionIdRef.current,
   )
-  const [sessionsState, setSessionsState] = useState<ChatSessionState[]>([
-    createSessionState(initialSessionIdRef.current),
-  ])
+  const [sessionsState, setSessionsState] = useState<ChatSessionState[]>(
+    storedSessions?.sessions || [createSessionState(initialSessionIdRef.current)],
+  )
   const activeSessionIdRef = useRef(activeSessionId)
   const audioStreamRef = useRef<{ chatId: number | null; chunks: Uint8Array[] }>(
     { chatId: null, chunks: [] },
@@ -169,8 +242,8 @@ export function useChat(options: UseChatOptions = {}): UseChatResult {
 
   const updateSessionMessages = useCallback(
     (sessionId: string, updater: (messages: ChatMessage[]) => ChatMessage[]) => {
-      setSessionsState((prev) =>
-        prev.map((session) => {
+      setSessionsState((prev) => {
+        const next = prev.map((session) => {
           if (session.id !== sessionId) {
             return session
           }
@@ -184,11 +257,84 @@ export function useChat(options: UseChatOptions = {}): UseChatResult {
             }),
             messages: nextMessages,
           }
-        }),
-      )
+        })
+
+        // 保存到 localStorage
+        saveSessionsToStorage(next, activeSessionIdRef.current)
+
+        return next
+      })
     },
     [],
   )
+
+  // 监听 activeSessionId 或 sessionsState 变化并保存到 localStorage
+  useEffect(() => {
+    saveSessionsToStorage(sessionsState, activeSessionId)
+  }, [activeSessionId, sessionsState])
+
+  // 页面卸载或组件卸载时保存会话
+  useEffect(() => {
+    const handleBeforeUnload = () => {
+      saveSessionsToStorage(sessionsState, activeSessionId)
+    }
+
+    window.addEventListener("beforeunload", handleBeforeUnload)
+
+    return () => {
+      window.removeEventListener("beforeunload", handleBeforeUnload)
+      // 组件卸载时也保存
+      saveSessionsToStorage(sessionsState, activeSessionId)
+    }
+  }, [sessionsState, activeSessionId])
+
+  const loadSessionHistory = useCallback(async (sessionId: string) => {
+    try {
+      const history = await getSessionHistory(sessionId)
+      if (!history) {
+        return
+      }
+
+      const messages: ChatMessage[] = history.messages.map((msg, index) => ({
+        id: `${sessionId}-${index}`,
+        role: msg.role,
+        content: msg.content,
+        timestamp: Date.now(),
+      }))
+
+      setSessionsState((prev) => {
+        const existingIndex = prev.findIndex((s) => s.id === sessionId)
+        if (existingIndex >= 0) {
+          const updated = [...prev]
+          updated[existingIndex] = {
+            ...updated[existingIndex],
+            messages,
+            messageCount: messages.length,
+          }
+          return updated
+        }
+
+        const now = Date.now()
+        const firstUserMessage = messages.find(
+          (m) => m.role === "user" && m.content.trim(),
+        )
+        const newSession: ChatSessionState = {
+          id: sessionId,
+          title:
+            (firstUserMessage?.content || EMPTY_SESSION_TITLE)
+              .trim()
+              .slice(0, 18) || EMPTY_SESSION_TITLE,
+          preview: "",
+          updatedAt: now,
+          messageCount: messages.length,
+          messages,
+        }
+        return [newSession, ...prev]
+      })
+    } catch (err) {
+      console.warn("[petclaw] Failed to load session history:", err)
+    }
+  }, [])
 
   const showBubble = useCallback((text: string | null, audio?: string) => {
     window.electronAPI?.showBubble?.({
@@ -461,7 +607,11 @@ export function useChat(options: UseChatOptions = {}): UseChatResult {
         ? prev
         : prev.filter((session) => session.id !== activeSessionIdRef.current)
 
-      return [nextSession, ...preservedSessions]
+      const nextSessions = [nextSession, ...preservedSessions]
+      // 保存到 localStorage
+      saveSessionsToStorage(nextSessions, nextSessionId)
+
+      return nextSessions
     })
     setActiveSessionId(nextSessionId)
 
@@ -473,6 +623,12 @@ export function useChat(options: UseChatOptions = {}): UseChatResult {
       if (!sessionId || sessionId === activeSessionIdRef.current) {
         return
       }
+
+      // 保存当前会话状态
+      saveSessionsToStorage(sessionsState, sessionId)
+
+      // Load session history from backend
+      await loadSessionHistory(sessionId)
 
       wsRef.current.useSession(sessionId)
       if (currentAudioRef.current) {
@@ -487,7 +643,7 @@ export function useChat(options: UseChatOptions = {}): UseChatResult {
 
       await connectWithBootstrap()
     },
-    [connectWithBootstrap],
+    [connectWithBootstrap, loadSessionHistory, sessionsState],
   )
 
   const reconnect = useCallback(() => {
@@ -542,6 +698,7 @@ export function useChat(options: UseChatOptions = {}): UseChatResult {
     sendMessage,
     newChat,
     switchSession,
+    loadSessionHistory,
     reconnect,
     clearError,
   }

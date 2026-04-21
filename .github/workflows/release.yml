@@ -13,7 +13,7 @@ concurrency:
   cancel-in-progress: false
 
 env:
-  APP_NAME: picoclaw
+  APP_NAME: clawpet
   BUILD_TAGS: goolm,stdjson
   BUILD_ENTRY: ./cmd/picoclaw
 
@@ -45,10 +45,6 @@ jobs:
             goarch: loong64
             file_os: Linux
             file_arch: loong64
-          - goos: linux
-            goarch: mipsle
-            file_os: Linux
-            file_arch: mipsle
           - goos: darwin
             goarch: amd64
             file_os: Darwin
@@ -72,14 +68,6 @@ jobs:
           - goos: freebsd
             goarch: arm64
             file_os: Freebsd
-            file_arch: arm64
-          - goos: netbsd
-            goarch: amd64
-            file_os: Netbsd
-            file_arch: x86_64
-          - goos: netbsd
-            goarch: arm64
-            file_os: Netbsd
             file_arch: arm64
 
     steps:
@@ -90,6 +78,22 @@ jobs:
         uses: actions/setup-go@v5
         with:
           go-version-file: go.mod
+
+      - name: Setup Node (Windows launcher build)
+        if: matrix.goos == 'windows'
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+
+      - name: Build launcher embedded frontend (Windows)
+        if: matrix.goos == 'windows'
+        shell: bash
+        run: |
+          set -euo pipefail
+          corepack enable
+          cd web/frontend
+          pnpm install --no-frozen-lockfile
+          pnpm build:backend
 
       - name: Prepare onboard workspace
         shell: bash
@@ -119,6 +123,16 @@ jobs:
               -o "dist/${BIN}" \
               "${BUILD_ENTRY}"
 
+          if [[ "${{ matrix.goos }}" == "windows" ]]; then
+            GOOS=${{ matrix.goos }} GOARCH=${{ matrix.goarch }} GOARM="${GOARM}" CGO_ENABLED=0 \
+              go build \
+                -trimpath \
+                -tags "${BUILD_TAGS}" \
+                -ldflags "-s -w -X github.com/sipeed/picoclaw/pkg/config.Version=${VERSION} -X github.com/sipeed/picoclaw/pkg/config.GitCommit=${SHORT_SHA} -X github.com/sipeed/picoclaw/pkg/config.BuildTime=${BUILD_TIME}" \
+                -o "dist/${APP_NAME}-launcher.exe" \
+                ./web/backend
+          fi
+
       - name: Package
         shell: bash
         run: |
@@ -129,9 +143,50 @@ jobs:
           BIN="${APP_NAME}"
 
           if [[ "${{ matrix.goos }}" == "windows" ]]; then
-            zip "${BASE}.zip" "${BIN}.exe"
+            printf '%s\n' \
+              '@echo off' \
+              'setlocal' \
+              'set "SELF_DIR=%~dp0"' \
+              '"%SELF_DIR%clawpet.exe" gateway %*' \
+              'set "EXIT_CODE=%ERRORLEVEL%"' \
+              '' \
+              'if "%CLAWPET_NO_PAUSE%"=="1" (' \
+              '  exit /b %EXIT_CODE%' \
+              ')' \
+              '' \
+              'echo.' \
+              'echo clawpet gateway exited with code %EXIT_CODE%.' \
+              'echo Press any key to close...' \
+              'pause >nul' \
+              'exit /b %EXIT_CODE%' \
+              > "${BIN}-gateway.bat"
+            zip "${BASE}.zip" "${BIN}.exe" "${BIN}-launcher.exe" "${BIN}-gateway.bat"
+
+            ALL_BASE="${APP_NAME}_AllInOne_${{ matrix.file_os }}_${{ matrix.file_arch }}"
+            mkdir -p allinone/scripts
+            cp -f "${BIN}.exe" allinone/clawpet.exe
+            cp -f "${BIN}.exe" allinone/picoclaw.exe
+            cp -f "${BIN}-launcher.exe" allinone/clawpet-launcher.exe
+            cp -f "${BIN}-launcher.exe" allinone/picoclaw-launcher.exe
+            cp -f "${BIN}-gateway.bat" allinone/clawpet-gateway.bat
+            cp -f ../GoClaw-OneClickStart.bat allinone/GoClaw-OneClickStart.bat
+            cp -f ../GoClaw-OneClickStart.ps1 allinone/GoClaw-OneClickStart.ps1
+            cp -f ../scripts/run-goclaw-dev.ps1 allinone/scripts/run-goclaw-dev.ps1
+            cp -r ../petclaw allinone/petclaw
+            cp -r ../electron-frontend allinone/electron-frontend
+            (
+              cd allinone
+              zip -r "../${ALL_BASE}.zip" .
+            )
           else
-            tar -czf "${BASE}.tar.gz" "${BIN}"
+            printf '%s\n' \
+              '#!/usr/bin/env sh' \
+              'set -eu' \
+              'SCRIPT_DIR="$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)"' \
+              'exec "$SCRIPT_DIR/clawpet" gateway "$@"' \
+              > "${BIN}-gateway"
+            chmod +x "${BIN}-gateway"
+            tar -czf "${BASE}.tar.gz" "${BIN}" "${BIN}-gateway"
           fi
 
       - name: Upload package artifact
@@ -148,6 +203,9 @@ jobs:
     needs: build
 
     steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
       - name: Download packaged artifacts
         uses: actions/download-artifact@v4
         with:
@@ -161,9 +219,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          cd dist
-
-          sha256sum * > checksums.txt
+          sha256sum dist/* > dist/checksums.txt
 
           TAG="${GITHUB_REF_NAME}"
           if ! gh release view "${TAG}" >/dev/null 2>&1; then
@@ -172,4 +228,4 @@ jobs:
               --generate-notes
           fi
 
-          gh release upload "${TAG}" * --clobber
+          gh release upload "${TAG}" dist/* --clobber
