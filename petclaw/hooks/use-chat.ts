@@ -8,7 +8,7 @@ import {
   type ChatMessage,
   type WSEvent,
 } from "@/lib/api"
-import { getSessionHistory, getSessions } from "@/lib/api/sessions"
+import { getSessionHistory } from "@/lib/api/sessions"
 
 const SESSIONS_STORAGE_KEY = "petclaw_sessions"
 const ACTIVE_SESSION_KEY = "petclaw_active_session"

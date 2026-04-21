@@ -40,13 +40,10 @@ contextBridge.exposeInMainWorld('electronAPI', {
     return () => ipcRenderer.removeListener('bubble-show', listener)
   },
   onConnectionAlive: (callback) => {
-    const listener = () => callback()
-    ipcRenderer.on('connection-alive', listener)
-    return () => ipcRenderer.removeListener('connection-alive', listener)
+    ipcRenderer.on('connection-alive', () => callback());
   },
-  onForceStopMedia: (callback) => {
-    const listener = () => callback()
-    ipcRenderer.on('force-stop-media', listener)
-    return () => ipcRenderer.removeListener('force-stop-media', listener)
-  }
+  onStartupProgress: (callback) => {
+    ipcRenderer.on('startup-progress', (_event, payload) => callback(payload));
+  },
+  getStartupState: () => ipcRenderer.invoke('startup-state')
 });

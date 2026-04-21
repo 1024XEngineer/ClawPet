@@ -344,7 +344,7 @@ func (s *PetService) PushInitStatus(sessionID string) {
 
 	if char != nil {
 		emotions := char.GetEmotions()
-		mbtiCfg := char.GetMBTI()
+		mbtiCfg := char.EmotionEngine.GetPersonality()
 		emoEngine := char.GetEmotionEngine()
 		dominantEmotion, emotionScore := emoEngine.GetDominantEmotion()
 

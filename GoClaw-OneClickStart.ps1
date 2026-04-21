@@ -3,7 +3,8 @@ param(
     [string]$Mode = "petclaw",
 
     [switch]$NoBrowser,
-    [switch]$SkipNpmInstall
+    [switch]$SkipNpmInstall,
+    [switch]$NoTerminalWindows
 )
 
 Set-StrictMode -Version Latest
@@ -78,6 +79,9 @@ if ($Mode -ne "launcher") {
         "-Restart",
         "-PetclawMode", $(if ($Mode -eq "dev") { "dev" } else { "prod" })
     )
+    if ($NoTerminalWindows) {
+        $delegateArgs += "-NoTerminalWindows"
+    }
 
     Write-Host "Delegating to scripts\\run-goclaw-dev.ps1 with PetclawMode=$($delegateArgs[-1])"
 

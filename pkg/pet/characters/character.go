@@ -14,16 +14,6 @@ type Character struct {
 	Avatar      string // 头像/模型ID
 
 	EmotionEngine *emotion.EmotionEngine // 角色专属的情绪引擎
-	MBTI          MBTIPersonality        // MBTI性格配置
-}
-
-// MBTIPersonality MBTI性格结构
-// 用于长期追踪角色的性格漂移
-type MBTIPersonality struct {
-	IE int // 内向(I)-外向(E)：<50偏内向，>50偏外向
-	SN int // 实感(S)-直觉(N)：<50偏实感，>50偏直觉
-	TF int // 理性(T)-感性(F)：<50偏理性，>50偏感性
-	JP int // 判断(J)-感知(P)：<50偏判断，>50偏感知
 }
 
 // NewCharacter 创建新角色实例
@@ -36,23 +26,12 @@ func NewCharacter(id, name, persona, personaType, avatar string) *Character {
 		PersonaType:   personaType,
 		Avatar:        avatar,
 		EmotionEngine: emotion.NewEmotionEngine(""),
-		MBTI: MBTIPersonality{
-			IE: 50,
-			SN: 50,
-			TF: 50,
-			JP: 50,
-		},
 	}
 }
 
 // GetEmotionEngine 获取角色的情绪引擎
 func (c *Character) GetEmotionEngine() *emotion.EmotionEngine {
 	return c.EmotionEngine
-}
-
-// GetMBTI 获取角色的MBTI配置
-func (c *Character) GetMBTI() MBTIPersonality {
-	return c.MBTI
 }
 
 // SetEmotions 设置角色的六维情绪值
@@ -70,11 +49,6 @@ func (c *Character) GetEmotions() emotion.SixEmotions {
 	return c.EmotionEngine.GetEmotions()
 }
 
-// SetPersonality 设置角色的MBTI性格配置
-func (c *Character) SetPersonality(m MBTIPersonality) {
-	c.MBTI = m
-}
-
 // Clone 创建角色的深拷贝
 // 情绪状态也会被复制一份
 func (c *Character) Clone() *Character {
@@ -85,7 +59,6 @@ func (c *Character) Clone() *Character {
 		PersonaType:   c.PersonaType,
 		Avatar:        c.Avatar,
 		EmotionEngine: emotion.NewEmotionEngine(""),
-		MBTI:          c.MBTI,
 	}
 	clone.SetEmotions(c.GetEmotions())
 	return clone

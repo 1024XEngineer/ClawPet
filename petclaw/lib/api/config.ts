@@ -2,8 +2,11 @@ const LOCAL_DEFAULT_ORIGIN = 'http://127.0.0.1:18800'
 const DIRECT_GATEWAY_ENV_ORIGIN = process.env.NEXT_PUBLIC_PICOCLAW_DIRECT_GATEWAY_URL || ''
 const LOCAL_DIRECT_GATEWAY_ORIGIN = DIRECT_GATEWAY_ENV_ORIGIN || 'http://127.0.0.1:18790'
 const DIRECT_GATEWAY_CACHE_KEY = 'petclaw.directGatewayBaseUrl'
+const LOCAL_LAUNCHER_PORT = '18800'
 export const DIRECT_PET_TOKEN_PATH = '/pet/token'
 export const DIRECT_PET_WS_PATH = '/pet/ws'
+export const DIRECT_PICO_TOKEN_PATH = '/pico/token'
+export const DIRECT_PICO_WS_PATH = '/pico/ws'
 
 export const API_BASE_URL = process.env.NEXT_PUBLIC_PICOCLAW_API_URL || ''
 export const WS_BASE_URL = process.env.NEXT_PUBLIC_PICOCLAW_WS_URL || ''
@@ -17,6 +20,27 @@ function trimTrailingSlash(value: string): string {
 
 function normalizeBaseUrl(value: string): string {
   return trimTrailingSlash(value.trim())
+}
+
+function sanitizeDirectGatewayBaseUrl(value: string): string {
+  const normalized = normalizeBaseUrl(value)
+  if (!normalized) {
+    return ''
+  }
+
+  try {
+    const parsed = new URL(normalized)
+    const isLoopbackHost =
+      parsed.hostname === '127.0.0.1' || parsed.hostname === 'localhost'
+
+    if (isLoopbackHost && parsed.port === LOCAL_LAUNCHER_PORT) {
+      return normalizeBaseUrl(LOCAL_DIRECT_GATEWAY_ORIGIN)
+    }
+  } catch {
+    return ''
+  }
+
+  return normalized
 }
 
 export function getApiBaseUrl(): string {
@@ -44,14 +68,14 @@ export function getApiBaseUrl(): string {
 
 export function getDirectGatewayBaseUrl(): string {
   if (DIRECT_GATEWAY_ENV_ORIGIN.trim()) {
-    return normalizeBaseUrl(DIRECT_GATEWAY_ENV_ORIGIN)
+    return sanitizeDirectGatewayBaseUrl(DIRECT_GATEWAY_ENV_ORIGIN)
   }
 
   if (typeof window !== 'undefined') {
     try {
       const cached = window.sessionStorage.getItem(DIRECT_GATEWAY_CACHE_KEY)
       if (cached && cached.trim()) {
-        return normalizeBaseUrl(cached)
+        return sanitizeDirectGatewayBaseUrl(cached)
       }
     } catch {
     }
@@ -59,16 +83,18 @@ export function getDirectGatewayBaseUrl(): string {
     try {
       const cached = window.localStorage.getItem(DIRECT_GATEWAY_CACHE_KEY)
       if (cached && cached.trim()) {
-        return normalizeBaseUrl(cached)
+        return sanitizeDirectGatewayBaseUrl(cached)
       }
     } catch {
     }
   }
-  return normalizeBaseUrl(LOCAL_DIRECT_GATEWAY_ORIGIN)
+  return sanitizeDirectGatewayBaseUrl(LOCAL_DIRECT_GATEWAY_ORIGIN)
 }
 
 export function cacheDirectGatewayBaseUrl(value?: string | null): void {
-  const normalized = typeof value === 'string' ? normalizeBaseUrl(value) : ''
+  const normalized = typeof value === 'string'
+    ? sanitizeDirectGatewayBaseUrl(value)
+    : ''
   if (!normalized) {
     return
   }
