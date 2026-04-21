@@ -1,5 +1,7 @@
 import {
   API_ENDPOINTS,
+  DIRECT_PICO_TOKEN_PATH,
+  DIRECT_PICO_WS_PATH,
   DIRECT_PET_TOKEN_PATH,
   DIRECT_PET_WS_PATH,
   getApiBaseUrl,
@@ -50,6 +52,7 @@ interface TokenResponse {
   enabled?: boolean
   token?: string
   ws_url?: string
+  protocol?: string
 }
 
 interface TokenCandidate {
@@ -60,8 +63,16 @@ interface TokenCandidate {
 }
 
 type WSEventData = ChatMessage | string | Record<string, unknown>
-type WSMode = "pet"
+type WSMode = "pet" | "pico"
 type OutboundRequest = PetRequest
+
+interface PicoWireMessage {
+  type?: string
+  id?: string
+  session_id?: string
+  timestamp?: number
+  payload?: Record<string, unknown>
+}
 
 export type WSEventType =
   | "connected"
@@ -196,9 +207,21 @@ export class PicoClawWebSocket {
         useLauncherAuth: false,
       },
       {
+        baseUrl: getDirectGatewayBaseUrl(),
+        tokenPath: DIRECT_PICO_TOKEN_PATH,
+        wsPath: DIRECT_PICO_WS_PATH,
+        useLauncherAuth: false,
+      },
+      {
         baseUrl: getApiBaseUrl(),
         tokenPath: API_ENDPOINTS.PET.TOKEN,
         wsPath: API_ENDPOINTS.CHAT.WS,
+        useLauncherAuth: true,
+      },
+      {
+        baseUrl: getApiBaseUrl(),
+        tokenPath: API_ENDPOINTS.PICO.TOKEN,
+        wsPath: API_ENDPOINTS.CHAT.WS_LEGACY,
         useLauncherAuth: true,
       },
     ]
@@ -240,11 +263,23 @@ export class PicoClawWebSocket {
 
       const wsPathFromToken = this.normalizeWsPath(data.ws_url)
       const wsBaseUrl = this.normalizeWsBaseUrl(data.ws_url, candidate.baseUrl)
+      // Compatibility shim:
+      // some launcher builds expose /api/pet/token but only proxy /pico/ws upstream.
+      const resolvedPath =
+        candidate.useLauncherAuth && wsPathFromToken === API_ENDPOINTS.CHAT.WS
+          ? API_ENDPOINTS.CHAT.WS_LEGACY
+          : wsPathFromToken || candidate.wsPath
+      const mode: WSMode =
+        data.protocol === "pico" ||
+        resolvedPath === DIRECT_PICO_WS_PATH ||
+        resolvedPath === API_ENDPOINTS.CHAT.WS_LEGACY
+          ? "pico"
+          : "pet"
       return {
         token: data.token || "",
-        wsPath: wsPathFromToken || candidate.wsPath,
+        wsPath: resolvedPath,
         wsBaseUrl,
-        mode: "pet",
+        mode,
       }
     }
 
@@ -325,6 +360,11 @@ export class PicoClawWebSocket {
       this.ws.onmessage = (event) => {
         try {
           const data = JSON.parse(event.data)
+
+          if (this.wsMode === "pico") {
+            this.handlePicoMessage(data as PicoWireMessage)
+            return
+          }
 
           if (data.type === "push") {
             this.handlePush(data as PetPush)
@@ -533,7 +573,58 @@ export class PicoClawWebSocket {
     })
   }
 
-  private handleResponse(_resp: PetResponse): void {}
+  private handlePicoMessage(msg: PicoWireMessage): void {
+    const msgType = (msg.type || "").trim()
+    const payload = msg.payload || {}
+    const timestamp = msg.timestamp || Date.now()
+
+    switch (msgType) {
+      case "message.create":
+      case "message.update": {
+        const content = String(payload.content || payload.text || "").trim()
+        if (!content) {
+          return
+        }
+        const messageId =
+          String(payload.message_id || msg.id || `assistant-${timestamp}`)
+        this.emit({
+          type: "message",
+          data: {
+            id: messageId,
+            role: "assistant",
+            content,
+            timestamp,
+            streaming: false,
+          } satisfies ChatMessage,
+        })
+        return
+      }
+      case "typing.start":
+        this.emit({ type: "typing", data: "true" })
+        return
+      case "typing.stop":
+        this.emit({ type: "typing", data: "false" })
+        return
+      case "error": {
+        const message = String(payload.message || payload.error || "Pico channel error")
+        this.emit({ type: "error", data: message })
+        return
+      }
+      case "session.info":
+      case "pong":
+        return
+      default:
+        return
+    }
+  }
+
+  private handleResponse(resp: PetResponse): void {
+    if (resp.status === "error") {
+      const message =
+        String(resp.error || (resp.data?.error as string) || "Unknown error")
+      this.emit({ type: "error", data: message })
+    }
+  }
 
   disconnect(): void {
     if (this.ws) {
@@ -550,6 +641,28 @@ export class PicoClawWebSocket {
 
   send(content: string): void {
     this.resetAssistantState()
+    if (this.wsMode === "pico") {
+      const requestId = `req-${++this.msgIdCounter}-${Date.now()}`
+      const msg: PicoWireMessage = {
+        type: "message.send",
+        id: requestId,
+        session_id: this.ensureSessionId(),
+        timestamp: Date.now(),
+        payload: {
+          content,
+        },
+      }
+      if (this.ws?.readyState === WebSocket.OPEN) {
+        this.sendRaw(msg)
+        return
+      }
+      this.messageQueue.push(msg as OutboundRequest)
+      this.connect().catch(() => {
+        this.emit({ type: "error", data: "Connection failed" })
+      })
+      return
+    }
+
     this.sendAction(CHAT_ACTION, {
       text: content,
       session_key: this.ensureSessionId(),

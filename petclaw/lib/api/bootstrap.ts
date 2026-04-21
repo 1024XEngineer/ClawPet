@@ -1,6 +1,7 @@
 import {
   API_ENDPOINTS,
   cacheDirectGatewayBaseUrl,
+  DIRECT_PICO_TOKEN_PATH,
   DIRECT_PET_TOKEN_PATH,
   getApiBaseUrl,
   getDirectGatewayBaseUrl,
@@ -88,11 +89,27 @@ async function isDirectPetChannelReady(): Promise<boolean> {
   }
 }
 
+async function isDirectPicoChannelReady(): Promise<boolean> {
+  try {
+    const res = await fetch(`${getDirectGatewayBaseUrl()}${DIRECT_PICO_TOKEN_PATH}`)
+    if (!res.ok) {
+      return false
+    }
+    const data = (await res.json()) as { enabled?: boolean; ws_url?: string }
+    return Boolean(data.enabled && data.ws_url)
+  } catch {
+    return false
+  }
+}
+
 async function isDirectGatewayReady(): Promise<boolean> {
   if (!(await isDirectGatewayHealthy())) {
     return false
   }
-  return isDirectPetChannelReady()
+  if (await isDirectPetChannelReady()) {
+    return true
+  }
+  return isDirectPicoChannelReady()
 }
 
 async function startGateway(): Promise<void> {
