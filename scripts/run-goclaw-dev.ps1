@@ -161,15 +161,15 @@ function Start-DetachedPowerShell {
 function Invoke-Npm {
   param(
     [string]$WorkingDir,
-    [string]$Arguments
+    [string[]]$Arguments
   )
 
   $old = Get-Location
   try {
     Set-Location $WorkingDir
-    & npm $Arguments.Split(" ")
+    & npm @Arguments
     if (-not $?) {
-      throw "npm $Arguments failed in $WorkingDir"
+      throw "npm $($Arguments -join ' ') failed in $WorkingDir"
     }
   } finally {
     Set-Location $old
@@ -418,7 +418,7 @@ function Ensure-NpmDeps {
   }
 
   Write-Step "Installing npm dependencies for $DisplayName (first run)..."
-  Invoke-Npm -WorkingDir $ProjectDir -Arguments "install"
+  Invoke-Npm -WorkingDir $ProjectDir -Arguments @("install")
 }
 
 function Get-FirstListeningPidOnPort {
@@ -703,7 +703,7 @@ if ((Test-HttpReady -Url $DashboardUrl -TimeoutSeconds 2) -or (Test-PortListenin
     $buildId = Join-Path $petclawDir ".next\BUILD_ID"
     if (-not (Test-Path $buildId)) {
       Write-Step "Petclaw prod build not found, running npm run build..."
-      Invoke-Npm -WorkingDir $petclawDir -Arguments "run build"
+      Invoke-Npm -WorkingDir $petclawDir -Arguments @("run", "build")
     }
     Write-Step "Starting petclaw dashboard (prod mode)..."
     $escapedDirectGatewayUrl = $directGatewayUrl.Replace("'", "''")
