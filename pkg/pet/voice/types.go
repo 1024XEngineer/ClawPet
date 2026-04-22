@@ -58,3 +58,43 @@ type AudioSegment struct {
 	Sent      bool   // 是否已发送
 	Error     string // 错误信息（如果有）
 }
+
+// MinimaxVoiceInfo MiniMax 音色信息
+type MinimaxVoiceInfo struct {
+	VoiceID   string   `json:"voice_id"`
+	VoiceName string   `json:"voice_name"`
+	Desc      []string `json:"description"`
+}
+
+// MinimaxVoicesResp MiniMax 音色列表响应
+type MinimaxVoicesResp struct {
+	SystemVoice     []MinimaxVoiceInfo `json:"system_voice"`
+	VoiceCloning    []MinimaxVoiceInfo `json:"voice_cloning"`
+	VoiceGeneration []MinimaxVoiceInfo `json:"voice_generation"`
+}
+
+// VolcEngineVoiceInfo 豆包音色信息
+type VolcEngineVoiceInfo struct {
+	VoiceType   string `json:"VoiceType"`
+	Name        string `json:"Name"`
+	Gender      string `json:"Gender"`
+	Age         string `json:"Age"`
+	Description string `json:"Description"`
+	Language    string `json:"language"`
+	Emotion     string `json:"emotion"`
+}
+
+// VolcEngineVoicesResp 豆包音色列表响应
+type VolcEngineVoicesResp struct {
+	Result struct {
+		Total    int                   `json:"Total"`
+		Speakers []VolcEngineVoiceInfo `json:"Speakers"`
+	} `json:"Result"`
+}
+
+// VoicesResult 获取音色的统一返回结构
+type VoicesResult struct {
+	Provider         string                `json:"provider"`
+	MinimaxVoices    []MinimaxVoiceInfo    `json:"minimax_voices,omitempty"`
+	VolcEngineVoices []VolcEngineVoiceInfo `json:"volcengine_voices,omitempty"`
+}
