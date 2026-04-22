@@ -500,36 +500,102 @@ export interface OnboardingStatusData {
   payload: OnboardingPayloadV1 | null
 }
 
+function isNotFoundError(error: unknown): boolean {
+  return error instanceof ApiError && error.status === 404
+}
+
+function emptyOnboardingStatus(): OnboardingStatusData {
+  return {
+    completed: false,
+    completedAt: null,
+    hasDraft: false,
+    step: null,
+    onboardingId: null,
+    schemaVersion: null,
+    draftUpdatedAt: null,
+    payload: null,
+  }
+}
+
 export const onboardingApi = {
-  status: () =>
-    request<{ code?: string; data?: OnboardingStatusData } | OnboardingStatusData>(
-      API_ENDPOINTS.ONBOARDING.STATUS,
-    ),
+  status: async () => {
+    try {
+      return await request<{ code?: string; data?: OnboardingStatusData } | OnboardingStatusData>(
+        API_ENDPOINTS.ONBOARDING.STATUS,
+      )
+    } catch (error) {
+      if (isNotFoundError(error)) {
+        return emptyOnboardingStatus()
+      }
+      throw error
+    }
+  },
 
-  saveDraft: (payload: OnboardingPayloadV1) =>
-    request<{ code?: string; data?: { saved: boolean; draftUpdatedAt?: string } }>(
-      API_ENDPOINTS.ONBOARDING.DRAFT,
-      {
-        method: 'PUT',
-        body: JSON.stringify(payload),
-      },
-    ),
+  saveDraft: async (payload: OnboardingPayloadV1) => {
+    try {
+      return await request<{ code?: string; data?: { saved: boolean; draftUpdatedAt?: string } }>(
+        API_ENDPOINTS.ONBOARDING.DRAFT,
+        {
+          method: 'PUT',
+          body: JSON.stringify(payload),
+        },
+      )
+    } catch (error) {
+      if (isNotFoundError(error)) {
+        return {
+          code: 'FALLBACK',
+          data: {
+            saved: true,
+          },
+        }
+      }
+      throw error
+    }
+  },
 
-  complete: (params: { schemaVersion: 1; onboardingId: string }) =>
-    request<{ code?: string; data?: { completed: boolean; completedAt?: string } }>(
-      API_ENDPOINTS.ONBOARDING.COMPLETE,
-      {
-        method: 'POST',
-        body: JSON.stringify(params),
-      },
-    ),
+  complete: async (params: { schemaVersion: 1; onboardingId: string }) => {
+    try {
+      return await request<{ code?: string; data?: { completed: boolean; completedAt?: string } }>(
+        API_ENDPOINTS.ONBOARDING.COMPLETE,
+        {
+          method: 'POST',
+          body: JSON.stringify(params),
+        },
+      )
+    } catch (error) {
+      if (isNotFoundError(error)) {
+        return {
+          code: 'FALLBACK',
+          data: {
+            completed: true,
+            completedAt: new Date().toISOString(),
+          },
+        }
+      }
+      throw error
+    }
+  },
 
-  reset: (reason = 'manual-rerun') =>
-    request<{ code?: string; data?: { completed: boolean; hasDraft: boolean } }>(
-      API_ENDPOINTS.ONBOARDING.RESET,
-      {
-        method: 'POST',
-        body: JSON.stringify({ reason }),
-      },
-    ),
+  reset: async (reason = 'manual-rerun') => {
+    try {
+      return await request<{ code?: string; data?: { completed: boolean; hasDraft: boolean } }>(
+        API_ENDPOINTS.ONBOARDING.RESET,
+        {
+          method: 'POST',
+          body: JSON.stringify({ reason }),
+        },
+      )
+    } catch (error) {
+      if (isNotFoundError(error)) {
+        return {
+          code: 'FALLBACK',
+          data: {
+            completed: false,
+            hasDraft: false,
+          },
+        }
+      }
+      throw error
+    }
+  },
 }

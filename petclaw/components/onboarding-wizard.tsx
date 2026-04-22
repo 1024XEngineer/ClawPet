@@ -30,6 +30,7 @@ import {
   type OnboardingStatusData,
 } from "@/lib/api"
 import { fetchWithAuthRetry } from "@/lib/api/auth-bootstrap"
+import { getWebSocketInstance } from "@/lib/api/websocket"
 import { saveOnboardingState, SCHEDULE_ICS_NAME_STORAGE_KEY } from "@/lib/onboarding"
 import { buildLearningRhythm, buildPressurePlan } from "@/lib/student-insights"
 
@@ -95,6 +96,20 @@ const showcaseLines = [
 ]
 const MIN_SUMMON_LOADING_MS = 6200
 const ONBOARDING_SESSION_ID_STORAGE_KEY = "petclaw.onboarding.sessionId"
+
+function normalizeLanguageCode(input: string): string {
+  const value = input.trim().toLowerCase()
+  if (!value) {
+    return "zh-CN"
+  }
+  if (value === "中文" || value === "简体中文" || value === "zh" || value === "zh-cn") {
+    return "zh-CN"
+  }
+  if (value === "english" || value === "en" || value === "en-us") {
+    return "en-US"
+  }
+  return input.trim()
+}
 
 function pickRandomIndex(size: number, current?: number): number {
   if (size <= 1) return 0
@@ -659,7 +674,10 @@ export function OnboardingWizard({ onFinish }: OnboardingWizardProps) {
     })
 
     if (!ready) {
-      setSetupError("自动配置未完全成功，已先进入控制台；你可以稍后在配置页重试。")
+      setSetupError("后端环境尚未就绪，无法完成初始化。请修复后重试。")
+      setSummonInProgress(false)
+      setDisplayProgress(0)
+      return
     }
 
     const finalNickname = customNickname.trim() || nickname
@@ -670,6 +688,50 @@ export function OnboardingWizard({ onFinish }: OnboardingWizardProps) {
 
     const draftOk = await saveDraft(2)
     if (!draftOk) {
+      setSummonInProgress(false)
+      setDisplayProgress(0)
+      return
+    }
+
+    try {
+      const ws = getWebSocketInstance()
+
+      const personaType =
+        personalityTone === "甜心夹子"
+          ? "gentle"
+          : personalityTone === "抽象发疯"
+            ? "playful"
+            : "cool"
+
+      await ws.requestAction("onboarding_config", {
+        pet_name: finalNickname,
+        pet_persona: personalityTone,
+        pet_persona_type: personaType,
+      })
+
+      const profileResp = await ws.requestAction("user_profile_update", {
+        display_name: profile.displayName.trim() || finalNickname,
+        role: profile.role,
+        language: normalizeLanguageCode(profile.language),
+        chronotype: learningRhythmInsight.chronotype,
+        personality_tone: personalityTone,
+        anxiety_level: anxietyLevel,
+        pressure_level: pressurePlanInsight.level,
+        extra: {
+          focus_windows: learningRhythmInsight.focusWindows,
+          quiet_windows: learningRhythmInsight.quietWindows,
+          selected_breakers: selectedBreakers,
+          reminder_cadence: learningRhythmInsight.reminderCadence,
+          learning_summary: learningRhythmInsight.summary,
+        },
+      })
+
+      const profileStatus = String(profileResp.data?.status || "").toLowerCase()
+      if (profileStatus && profileStatus !== "ok") {
+        throw new Error(`用户画像提交失败: ${profileStatus}`)
+      }
+    } catch (error) {
+      setSetupError(`初始化画像提交失败：${getErrorMessage(error)}`)
       setSummonInProgress(false)
       setDisplayProgress(0)
       return

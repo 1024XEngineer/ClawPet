@@ -77,8 +77,21 @@ export default function Home() {
 
     const bootstrap = async () => {
       try {
-        const hasForcedOnboarding =
-          new URLSearchParams(window.location.search).get("onboarding") === "1"
+        const searchParams = new URLSearchParams(window.location.search)
+        const hasForcedOnboarding = searchParams.get("onboarding") === "1"
+        const isConsoleSurface = searchParams.get("surface") === "console"
+
+        if (isConsoleSurface) {
+          const onboardingState = loadOnboardingState()
+          if (onboardingState?.completed) {
+            applyMoodFromOnboardingState()
+          }
+          if (!cancelled) {
+            setBootState("ready")
+          }
+          return
+        }
+
         if (hasForcedOnboarding) {
           if (!cancelled) {
             setBootState("onboarding")

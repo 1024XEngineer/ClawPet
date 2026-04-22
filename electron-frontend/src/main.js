@@ -5,9 +5,12 @@ const fs = require('fs');
 
 let petWindow = null;
 let settingsWindow = null;
+let onboardingWindow = null;
 let startupWindow = null;
 let startupPollTimer = null;
 let startupCompleted = false;
+let petHoverMonitorTimer = null;
+let petHovering = false;
 
 const PET_WIDTH = 280;
 const PET_HEIGHT = 380;
@@ -177,6 +180,58 @@ function getPetBounds() {
   };
 }
 
+function setPetWindowClickThrough(enabled) {
+  if (!petWindow || petWindow.isDestroyed()) {
+    return;
+  }
+
+  try {
+    if (enabled) {
+      petWindow.setIgnoreMouseEvents(true, { forward: true });
+    } else {
+      petWindow.setIgnoreMouseEvents(false);
+    }
+  } catch (error) {
+    logToFile(`[PET WINDOW] setIgnoreMouseEvents failed: ${String(error)}`);
+  }
+}
+
+function startPetHoverMonitor() {
+  if (petHoverMonitorTimer) {
+    return;
+  }
+
+  petHoverMonitorTimer = setInterval(() => {
+    if (!petWindow || petWindow.isDestroyed()) {
+      stopPetHoverMonitor();
+      return;
+    }
+
+    const cursor = screen.getCursorScreenPoint();
+    const bounds = petWindow.getBounds();
+    const hoveringNow =
+      cursor.x >= bounds.x &&
+      cursor.x <= bounds.x + bounds.width &&
+      cursor.y >= bounds.y &&
+      cursor.y <= bounds.y + bounds.height;
+
+    if (hoveringNow === petHovering) {
+      return;
+    }
+
+    petHovering = hoveringNow;
+    setPetWindowClickThrough(!hoveringNow);
+  }, 120);
+}
+
+function stopPetHoverMonitor() {
+  if (petHoverMonitorTimer) {
+    clearInterval(petHoverMonitorTimer);
+    petHoverMonitorTimer = null;
+  }
+  petHovering = false;
+}
+
 function updateStartupPercent() {
   const total = startupState.steps.length;
   let score = 0;
@@ -315,7 +370,7 @@ function buildDashboardUrl(pathname = '') {
 function buildSettingsWindowUrl({ onboarding = false, rerun = false } = {}) {
   return onboarding
     ? buildDashboardUrl(rerun ? '/onboarding?mode=rerun' : '/onboarding')
-    : buildDashboardUrl();
+    : buildDashboardUrl('/?surface=console');
 }
 
 async function resolveInitialSettingsTargetUrl() {
@@ -325,9 +380,6 @@ async function resolveInitialSettingsTargetUrl() {
     if (response.ok) {
       const data = await response.json();
       needsFirstTimeOnboarding = shouldOpenOnboardingFromGatewayStatus(data);
-      if (needsFirstTimeOnboarding) {
-        return buildSettingsWindowUrl({ onboarding: true });
-      }
     }
   } catch {
     // Keep default panel route when status is temporarily unavailable.
@@ -401,6 +453,72 @@ function createSettingsWindow(targetUrl = buildSettingsWindowUrl()) {
   });
 }
 
+function createOnboardingWindow(targetUrl = buildSettingsWindowUrl({ onboarding: true })) {
+  if (onboardingWindow && !onboardingWindow.isDestroyed()) {
+    if (targetUrl && onboardingWindow.webContents.getURL() !== targetUrl) {
+      onboardingWindow.loadURL(targetUrl).catch((err) => {
+        logToFile(`[ONBOARDING WINDOW] reload failed: ${String(err)}`);
+      });
+    }
+    if (onboardingWindow.isMinimized()) {
+      onboardingWindow.restore();
+    }
+    onboardingWindow.show();
+    onboardingWindow.focus();
+    return;
+  }
+
+  const { width, height } = screen.getPrimaryDisplay().workAreaSize;
+  const onboardingWidth = Math.round(width * 0.82);
+  const onboardingHeight = Math.round(height * 0.86);
+
+  onboardingWindow = new BrowserWindow({
+    width: onboardingWidth,
+    height: onboardingHeight,
+    minWidth: 980,
+    minHeight: 680,
+    center: true,
+    show: false,
+    frame: false,
+    transparent: false,
+    backgroundColor: '#f7ecdf',
+    alwaysOnTop: false,
+    autoHideMenuBar: true,
+    webPreferences: {
+      nodeIntegration: false,
+      contextIsolation: true,
+      preload: path.join(__dirname, 'preload.js')
+    }
+  });
+
+  const onboardingUrl = targetUrl || buildSettingsWindowUrl({ onboarding: true });
+  logToFile(`[ONBOARDING WINDOW] opening ${onboardingUrl}`);
+
+  onboardingWindow.webContents.on('did-fail-load', (_event, code, desc, url) => {
+    logToFile(`[ONBOARDING WINDOW] did-fail-load code=${code} desc=${desc} url=${url}`);
+  });
+
+  onboardingWindow.webContents.on('did-finish-load', () => {
+    logToFile('[ONBOARDING WINDOW] did-finish-load');
+  });
+
+  onboardingWindow.loadURL(onboardingUrl).catch((err) => {
+    logToFile(`[ONBOARDING WINDOW] loadURL failed: ${String(err)}`);
+  });
+
+  onboardingWindow.once('ready-to-show', () => {
+    onboardingWindow.show();
+    onboardingWindow.focus();
+    if (shouldOpenDevTools) {
+      onboardingWindow.webContents.openDevTools({ mode: 'detach' });
+    }
+  });
+
+  onboardingWindow.on('closed', () => {
+    onboardingWindow = null;
+  });
+}
+
 function createStartupWindow() {
   if (startupWindow && !startupWindow.isDestroyed()) {
     startupWindow.show();
@@ -462,9 +580,7 @@ function completeStartupAndShowDesktop() {
     }
     const finish = async () => {
       if (openPanelOnReady) {
-        const targetUrl = needsFirstTimeOnboarding
-          ? buildSettingsWindowUrl({ onboarding: true })
-          : await resolveInitialSettingsTargetUrl();
+        const targetUrl = await resolveInitialSettingsTargetUrl();
         createSettingsWindow(targetUrl);
       }
       if (startupWindow && !startupWindow.isDestroyed()) {
