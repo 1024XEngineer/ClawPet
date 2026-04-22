@@ -160,13 +160,58 @@ type VoiceConfig struct {
 }
 
 // VoiceModelConfig 语音模型配置
-// 支持多种TTS服务商（如Minimax、OpenAI等）
+// 支持多种TTS服务商
 type VoiceModelConfig struct {
-	Name    string `json:"name"`     // 模型标识名称
-	Model   string `json:"model"`    // 实际使用的模型ID（如speech-2.8-hd）
-	APIKey  string `json:"api_key"`  // API密钥（支持${ENV_VAR}格式）
-	APIBase string `json:"api_base"` // API地址
-	Enabled bool   `json:"enabled"`  // 是否启用
+	Name     string         `json:"name"`     // 模型标识名称
+	Provider string         `json:"provider"` // 供应商类型：minimax / doubao
+	Model    string         `json:"model"`    // 实际使用的模型ID（如speech-2.8-hd）
+	APIKey   string         `json:"api_key"`  // API密钥（支持${ENV_VAR}格式）
+	APIBase  string         `json:"api_base"` // API地址
+	VoiceID  string         `json:"voice_id"` // 音色ID
+	Extra    map[string]any `json:"extra"`    // 供应商特定参数（如 secret_key）
+	Enabled  bool           `json:"enabled"`  // 是否启用
+}
+
+// MaskedAPIKey 返回脱敏后的 APIKey（已配置则显示 "******"）
+func (c *VoiceModelConfig) MaskedAPIKey() string {
+	if c.APIKey != "" {
+		return "******"
+	}
+	return ""
+}
+
+var sensitiveExtraKeys = []string{
+	"accessKeyId",
+	"secretAccessKey",
+	"accessToken",
+	"appId",
+	"apiKey",
+	"secret_key",
+}
+
+func isSensitiveExtraKey(key string) bool {
+	for _, k := range sensitiveExtraKeys {
+		if k == key {
+			return true
+		}
+	}
+	return false
+}
+
+// MaskedExtra 返回脱敏后的 Extra
+func (c *VoiceModelConfig) MaskedExtra() map[string]any {
+	if c.Extra == nil {
+		return nil
+	}
+	result := make(map[string]any)
+	for k, v := range c.Extra {
+		if isSensitiveExtraKey(k) && v != "" {
+			result[k] = "******"
+		} else {
+			result[k] = v
+		}
+	}
+	return result
 }
 
 // DefaultEmotionState 返回默认的中性情绪状态
@@ -214,8 +259,20 @@ func DefaultCharacterPrivateConfig(id string) *CharacterPrivateConfig {
 // DefaultVoiceConfig 返回默认的语音配置
 func DefaultVoiceConfig() *VoiceConfig {
 	return &VoiceConfig{
-		ModelList:    []*VoiceModelConfig{},
-		DefaultModel: "",
+		ModelList: []*VoiceModelConfig{
+			{
+				Name:     "doubao-tts",
+				Provider: "doubao",
+				Model:    "chatSpeech_t茄子_turbo_online",
+				APIBase:  "https://openspeech.bytedance.com/api/v1/tts",
+				VoiceID:  "BV001_tutorial",
+				Extra: map[string]any{
+					"secret_key": "",
+				},
+				Enabled: false,
+			},
+		},
+		DefaultModel: "doubao-tts",
 		ASREnabled:   false,
 	}
 }

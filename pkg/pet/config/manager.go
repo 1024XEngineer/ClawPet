@@ -243,3 +243,100 @@ func (m *Manager) SetAppConfig(config *AppConfig) {
 	defer m.mu.Unlock()
 	m.appConfig = config
 }
+
+// GetVoiceModel 获取指定语音模型配置
+func (m *Manager) GetVoiceModel(name string) *VoiceModelConfig {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	if m.voiceConfig == nil {
+		return nil
+	}
+	for _, model := range m.voiceConfig.ModelList {
+		if model.Name == name {
+			return model
+		}
+	}
+	return nil
+}
+
+// UpdateVoiceModel 更新语音模型配置
+func (m *Manager) UpdateVoiceModel(model *VoiceModelConfig) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	if m.voiceConfig == nil {
+		return fmt.Errorf("voice config not initialized")
+	}
+
+	for i, existing := range m.voiceConfig.ModelList {
+		if existing.Name == model.Name {
+			if model.Provider != "" {
+				m.voiceConfig.ModelList[i].Provider = model.Provider
+			}
+			if model.Model != "" {
+				m.voiceConfig.ModelList[i].Model = model.Model
+			}
+			if model.APIKey != "" {
+				m.voiceConfig.ModelList[i].APIKey = model.APIKey
+			}
+			if model.APIBase != "" {
+				m.voiceConfig.ModelList[i].APIBase = model.APIBase
+			}
+			if model.VoiceID != "" {
+				m.voiceConfig.ModelList[i].VoiceID = model.VoiceID
+			}
+			m.voiceConfig.ModelList[i].Enabled = model.Enabled
+			if model.Extra != nil {
+				if m.voiceConfig.ModelList[i].Extra == nil {
+					m.voiceConfig.ModelList[i].Extra = make(map[string]any)
+				}
+				for k, v := range model.Extra {
+					m.voiceConfig.ModelList[i].Extra[k] = v
+				}
+			}
+			return nil
+		}
+	}
+	return fmt.Errorf("voice model %s not found", model.Name)
+}
+
+// SaveVoiceConfig 保存语音配置到文件
+func (m *Manager) SaveVoiceConfig() error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	if m.voiceConfig == nil {
+		return nil
+	}
+
+	petCfg := &PetConfig{
+		Characters:  m.characters,
+		ActiveID:    m.activeID,
+		Voice:       m.voiceConfig,
+		App:         m.appConfig,
+		Memory:      m.memoryConfig,
+		Compression: m.compressionConfig,
+	}
+
+	return m.configLoader.SavePetConfig(petCfg)
+}
+
+// GetVoiceModelList 获取所有语音模型列表
+func (m *Manager) GetVoiceModelList() []*VoiceModelConfig {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	if m.voiceConfig == nil {
+		return nil
+	}
+	return m.voiceConfig.ModelList
+}
+
+// GetDefaultVoiceModelName 获取当前默认模型名
+func (m *Manager) GetDefaultVoiceModelName() string {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	if m.voiceConfig == nil {
+		return ""
+	}
+	return m.voiceConfig.DefaultModel
+}
