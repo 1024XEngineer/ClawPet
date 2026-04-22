@@ -1,7 +1,7 @@
 # Pet Channel API 接口文档
 
-> 版本：v2.5  
-> 日期：2026-04-20  
+> 版本：v2.7  
+> 日期：2026-04-23  
 > 协议：WebSocket + JSON
 
 ---
@@ -1557,6 +1557,316 @@ if (msg.push_type === 'audio_and_voice') {
 
 ---
 
+### 4.22 voice_model_list_get - 获取语音模型列表
+
+获取所有语音模型配置（含预设供应商）。API Key 已掩码显示。
+
+**请求**：
+
+```json
+{
+  "action": "voice_model_list_get",
+  "data": {}
+}
+```
+
+**响应**：
+
+```json
+{
+  "status": "ok",
+  "action": "voice_model_list_get",
+  "data": {
+    "models": [
+      {
+        "name": "minimax",
+        "provider": "minimax",
+        "api_base": "https://api.minimaxi.com/v1/t2a_v2",
+        "model": "speech-2.8-hd",
+        "voice_id": "",
+        "api_key": "",
+        "extra": {},
+        "enabled": false,
+        "is_default": false
+      },
+      {
+        "name": "doubao",
+        "provider": "doubao",
+        "api_base": "https://openspeech.bytedance.com/api/v3/tts/unidirectional",
+        "model": "seed-tts-2.0-expressive",
+        "voice_id": "",
+        "api_key": "",
+        "extra": {
+          "accessKeyId": "",
+          "secretAccessKey": "",
+          "accessToken": "",
+          "appId": "",
+          "resourceId": "seed-tts-2.0"
+        },
+        "enabled": false,
+        "is_default": false
+      }
+    ],
+    "default": ""
+  }
+}
+```
+
+**字段说明**：
+
+| 字段 | 类型 | 说明 |
+|------|------|------|
+| models | array | 语音模型列表 |
+| models[].name | string | 模型标识名称 |
+| models[].provider | string | 供应商类型：`minimax` / `doubao` |
+| models[].api_base | string | API 地址 |
+| models[].model | string | 实际使用的模型 ID（如 `speech-2.8-hd`、`seed-tts-2.0-expressive`） |
+| models[].voice_id | string | 音色 ID（未选则为空） |
+| models[].api_key | string | API Key（已配置显示 `******`，未配置显示空） |
+| models[].extra | object | 供应商特定参数 |
+| models[].extra.accessKeyId | string | 豆包 AccessKeyId（敏感，已配置显示 `******`） |
+| models[].extra.secretAccessKey | string | 豆包 SecretAccessKey（敏感，已配置显示 `******`） |
+| models[].extra.accessToken | string | 豆包 AccessToken（敏感，已配置显示 `******`） |
+| models[].extra.appId | string | 豆包 AppId（敏感，已配置显示 `******`） |
+| models[].extra.resourceId | string | 豆包资源ID，如 `seed-tts-2.0`（非敏感字段，不掩码） |
+| models[].enabled | bool | 是否启用 |
+| models[].is_default | bool | 是否为默认模型 |
+| default | string | 当前默认模型名称 |
+
+**预设供应商**：
+
+| 供应商 | API Base | 默认 Model | 说明 |
+|--------|----------|------------|------|
+| minimax | `https://api.minimaxi.com/v1/t2a_v2` | `speech-2.8-hd` | MiniMax TTS |
+| doubao | `https://openspeech.bytedance.com/api/v3/tts/unidirectional` | `seed-tts-2.0-expressive` | 豆包 TTS V3 |
+
+---
+
+### 4.23 voice_model_get - 获取语音模型详情
+
+获取指定语音模型的详细配置。
+
+**请求**：
+
+```json
+{
+  "action": "voice_model_get",
+  "data": {
+    "name": "minimax"
+  }
+}
+```
+
+**响应**：
+
+```json
+{
+  "status": "ok",
+  "action": "voice_model_get",
+  "data": {
+    "name": "minimax",
+    "provider": "minimax",
+    "api_base": "https://api.minimaxi.com/v1/t2a_v2",
+    "model": "speech-2.8-hd",
+    "voice_id": "male-qn-qingse",
+    "api_key": "******",
+    "extra": {},
+    "enabled": true,
+    "is_default": true
+  }
+}
+```
+
+**字段说明**：
+
+| 字段 | 类型 | 必填 | 说明 |
+|------|------|------|------|
+| name | string | 是 | 模型名称 |
+
+**错误**：`voice model xxx not found` - 模型不存在
+
+---
+
+### 4.24 voice_model_get_voices - 获取供应商可用音色
+
+查询指定供应商的可用音色列表。如果不提供凭证，优先使用配置中存储的凭证。
+
+**请求**：
+
+```json
+{
+  "action": "voice_model_get_voices",
+  "data": {
+    "provider": "doubao",
+    "model": "seed-tts-2.0",
+    "api_key": "accessKeyId（可选，不提供则从配置获取）",
+    "secret_key": "secretAccessKey（可选，不提供则从配置获取）"
+  }
+}
+```
+
+**说明**：
+- `provider`：供应商名称（`minimax` / `doubao`），必填
+- `model`：资源ID，如 `seed-tts-2.0`，可选，不提供则使用配置中的值
+- `api_key`：供应商凭证，可选，不提供则从配置中获取
+- `secret_key`：供应商凭证，可选，不提供则从配置中获取
+
+**响应（豆包）**：
+
+```json
+{
+  "status": "ok",
+  "action": "voice_model_get_voices",
+  "data": {
+    "provider": "doubao",
+    "volcengine_voices": [
+      {
+        "VoiceType": "zh_female_tianmeitaozi_mars_bigtts",
+        "Name": "甜美桃子",
+        "Gender": "女",
+        "Age": "青年",
+        "Description": "温柔的知心姐姐",
+        "Language": "zh-cn",
+        "Emotion": "normal"
+      }
+    ]
+  }
+}
+```
+
+**字段说明**：
+
+| 字段 | 类型 | 必填 | 说明 |
+|------|------|------|------|
+| provider | string | 是 | 供应商类型：`minimax` / `doubao` |
+| model | string | 否 | 模型版本（如 `seed-tts-2.0`），不提供则使用配置中的值 |
+| api_key | string | 否 | API Key / AccessKeyId，不提供则从配置获取 |
+| secret_key | string | 否 | Secret Key / SecretAccessKey，不提供则从配置获取 |
+
+**凭证配置**：
+
+豆包供应商需要在模型配置的 `extra` 字段中存储以下凭证，`model` 字段已使用 `VoiceModelConfig.model`：
+
+| 字段 | 说明 |
+|------|------|
+| accessKeyId | HMAC 签名用的 AccessKeyId（用于获取音色列表） |
+| secretAccessKey | HMAC 签名用的 SecretAccessKey |
+| accessToken | 语音合成用的 Access Token |
+| appId | 语音合成用的 AppId |
+
+**错误**：`access_key_id is required` - 未提供凭证且配置中也没有存储
+
+---
+
+### 4.25 voice_model_update - 更新语音模型配置
+
+更新指定语音模型的配置。
+
+**请求**：
+
+```json
+{
+  "action": "voice_model_update",
+  "data": {
+    "name": "minimax",
+    "api_key": "用户的真实API Key",
+    "voice_id": "male-qn-qingse",
+    "extra": {
+      "some_param": "value"
+    }
+  }
+}
+```
+
+**响应**：
+
+```json
+{
+  "status": "ok",
+  "action": "voice_model_update",
+  "data": {
+    "status": "ok"
+  }
+}
+```
+
+**字段说明**：
+
+| 字段 | 类型 | 必填 | 说明 |
+|------|------|------|------|
+| name | string | 是 | 模型名称 |
+| api_key | string | 否 | API Key |
+| api_base | string | 否 | API 地址 |
+| model | string | 否 | 模型 ID（如 `seed-tts-2.0-expressive`） |
+| voice_id | string | 否 | 音色 ID |
+| enabled | bool | 否 | 是否启用 |
+| extra | object | 否 | 供应商特定参数 |
+
+**extra 字段说明（豆包）**：
+
+| 字段 | 类型 | 说明 |
+|------|------|------|
+| extra.accessKeyId | string | 豆包 AccessKeyId（敏感） |
+| extra.secretAccessKey | string | 豆包 SecretAccessKey（敏感） |
+| extra.accessToken | string | 豆包 AccessToken（敏感） |
+| extra.appId | string | 豆包 AppId（敏感） |
+| extra.resourceId | string | 豆包资源ID，如 `seed-tts-2.0`（决定计费和模型版本） |
+
+**注意**：
+- `api_key` 和 `extra` 中的敏感信息以明文保存（用于实际调用），返回给前端时会脱敏
+- 只有非空字段才会更新，空字符串字段保持原值
+
+**热切换说明**：
+- 当 `api_key`、`extra`、`model` 或 `voice_id` 变更时，会自动重新创建 TTS provider
+- 确保配置变更立即生效，无需重启服务
+- 正在进行的语音合成请求会使用旧的 provider 完成
+
+**错误**：`voice model xxx not found` - 模型不存在
+
+---
+
+### 4.26 voice_model_set_default - 设置默认语音模型
+
+设置默认使用的语音模型（热切换）。
+
+**请求**：
+
+```json
+{
+  "action": "voice_model_set_default",
+  "data": {
+    "name": "minimax"
+  }
+}
+```
+
+**响应**：
+
+```json
+{
+  "status": "ok",
+  "action": "voice_model_set_default",
+  "data": {
+    "status": "ok"
+  }
+}
+```
+
+**字段说明**：
+
+| 字段 | 类型 | 必填 | 说明 |
+|------|------|------|------|
+| name | string | 是 | 模型名称 |
+
+**热切换说明**：
+- 等待当前语音合成请求完成后切换
+- 自动启用目标模型
+- 更新 `default_model` 配置
+
+**错误**：`voice model xxx not found` - 模型不存在
+
+---
+
 ## 五、错误码
 
 ### 5.1 WebSocket 错误 (status: error)
@@ -1581,6 +1891,10 @@ if (msg.push_type === 'audio_and_voice') {
 | `one of at_seconds, every_seconds, or cron_expr is required` | 调度参数必填 | 需要指定 at_seconds、every_seconds 或 cron_expr 之一 |
 | `job_id is required` | 任务ID必填 | 操作任务时缺少 job_id 字段 |
 | `job xxx not found` | 任务不存在 | 要操作的任务不存在 |
+| `voice model xxx not found` | 语音模型不存在 | 要更新/设置/获取的语音模型不存在 |
+| `unsupported provider: xxx` | 不支持的供应商 | 供应商类型不是 `minimax` 或 `doubao` |
+| `provider is required` | 供应商必填 | 查询音色时缺少 provider 字段 |
+| `api_key is required` | API Key 必填 | 查询音色时缺少 api_key 字段 |
 
 ### 5.2 错误响应示例
 
@@ -1759,6 +2073,11 @@ async def send_chat(ws, text):
 | cron_remove | 删除定时任务 | 删除指定的定时任务 |
 | cron_enable | 启用定时任务 | 启用指定的定时任务 |
 | cron_disable | 禁用定时任务 | 禁用指定的定时任务 |
+| voice_model_list_get | 获取语音模型列表 | 查看所有语音模型（含预设供应商） |
+| voice_model_get | 获取语音模型详情 | 查看指定模型的详细配置 |
+| voice_model_get_voices | 获取可用音色 | 查询供应商的音色列表 |
+| voice_model_update | 更新语音模型 | 修改模型的配置（API Key、音色等） |
+| voice_model_set_default | 设置默认语音模型 | 热切换到指定模型 |
 
 ### 7.2 push_type 快速索引
 
