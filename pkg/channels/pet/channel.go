@@ -141,11 +141,8 @@ func NewPetChannel(cfg config.PetConfig, msgBus *bus.MessageBus, workspacePath s
 	// 初始化语音合成器
 	voiceLoader := pc.service.VoiceLoader()
 	if voiceLoader != nil {
-		ttsProvider := voiceLoader.GetProvider()
-		if ttsProvider != nil {
-			voiceSender := voice.NewSender(pc.sendVoicePush)
-			pc.voiceSynthesizer = voice.NewSynthesizer(ttsProvider, voiceSender)
-		}
+		voiceSender := voice.NewSender(pc.sendVoicePush)
+		pc.voiceSynthesizer = voice.NewSynthesizer(voiceLoader, voiceSender)
 	}
 
 	return pc, nil
@@ -324,7 +321,7 @@ func (c *PetChannel) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		path = "/"
 	}
 
-	logger.Infof("pet: ServeHTTP called, path=%s, normalized=%s, method=%s", r.URL.Path, path, r.Method)
+	logger.Debugf("pet: ServeHTTP called, path=%s, normalized=%s, method=%s", r.URL.Path, path, r.Method)
 
 	switch path {
 	case "/ws", "/ws/", "/":
