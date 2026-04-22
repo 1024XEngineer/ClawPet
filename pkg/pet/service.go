@@ -444,6 +444,16 @@ func (s *PetService) HandleRequest(connID string, req Request) error {
 		return s.handleCronEnable(sessionID, req)
 	case ActionCronDisable:
 		return s.handleCronDisable(sessionID, req)
+	case ActionVoiceModelListGet:
+		return s.handleVoiceModelListGet(sessionID, req)
+	case ActionVoiceModelGet:
+		return s.handleVoiceModelGet(sessionID, req)
+	case ActionVoiceModelUpdate:
+		return s.handleVoiceModelUpdate(sessionID, req)
+	case ActionVoiceModelSetDefault:
+		return s.handleVoiceModelSetDefault(sessionID, req)
+	case ActionVoiceModelGetVoices:
+		return s.handleVoiceModelGetVoices(sessionID, req)
 	default:
 		return s.sendError(sessionID, req.Action, fmt.Sprintf("unknown action: %s", req.Action))
 	}
@@ -1156,4 +1166,217 @@ func (s *PetService) handleCronDisable(sessionID string, req Request) error {
 	}
 
 	return s.sendResponse(sessionID, req.Action, map[string]any{"job_id": job.ID, "enabled": job.Enabled})
+}
+
+// VoiceModelResponse 语音模型响应结构
+type VoiceModelResponse struct {
+	Name      string         `json:"name"`
+	Provider  string         `json:"provider"`
+	Model     string         `json:"model"`
+	APIBase   string         `json:"api_base"`
+	VoiceID   string         `json:"voice_id"`
+	APIKey    string         `json:"api_key"`
+	Extra     map[string]any `json:"extra"`
+	Enabled   bool           `json:"enabled"`
+	IsDefault bool           `json:"is_default"`
+}
+
+// VoiceModelListGetResponse 语音模型列表响应
+type VoiceModelListGetResponse struct {
+	Models  []VoiceModelResponse `json:"models"`
+	Default string               `json:"default"`
+}
+
+func (s *PetService) handleVoiceModelListGet(sessionID string, req Request) error {
+	models := s.voiceLoader.ListModels()
+	defaultModel := s.voiceLoader.GetCurrentModel()
+
+	resp := VoiceModelListGetResponse{
+		Models:  make([]VoiceModelResponse, 0, len(models)),
+		Default: defaultModel,
+	}
+
+	for _, m := range models {
+		resp.Models = append(resp.Models, VoiceModelResponse{
+			Name:      m.Name,
+			Provider:  m.Provider,
+			Model:     m.Model,
+			APIBase:   m.APIBase,
+			VoiceID:   m.VoiceID,
+			APIKey:    m.MaskedAPIKey(),
+			Extra:     m.MaskedExtra(),
+			Enabled:   m.Enabled,
+			IsDefault: m.Name == defaultModel,
+		})
+	}
+
+	return s.sendResponse(sessionID, req.Action, resp)
+}
+
+func (s *PetService) handleVoiceModelGet(sessionID string, req Request) error {
+	var data struct {
+		Name string `json:"name"`
+	}
+	if err := json.Unmarshal(req.Data, &data); err != nil {
+		return s.sendError(sessionID, req.Action, "invalid request data")
+	}
+
+	if data.Name == "" {
+		return s.sendError(sessionID, req.Action, "name is required")
+	}
+
+	model := s.voiceLoader.GetModel(data.Name)
+	if model == nil {
+		return s.sendError(sessionID, req.Action, fmt.Sprintf("voice model %s not found", data.Name))
+	}
+
+	return s.sendResponse(sessionID, req.Action, VoiceModelResponse{
+		Name:      model.Name,
+		Provider:  model.Provider,
+		Model:     model.Model,
+		APIBase:   model.APIBase,
+		VoiceID:   model.VoiceID,
+		APIKey:    model.MaskedAPIKey(),
+		Extra:     model.MaskedExtra(),
+		Enabled:   model.Enabled,
+		IsDefault: model.Name == s.voiceLoader.GetCurrentModel(),
+	})
+}
+
+type VoiceModelUpdateRequest struct {
+	Name    string         `json:"name"`
+	APIKey  string         `json:"api_key,omitempty"`
+	APIBase string         `json:"api_base,omitempty"`
+	Model   string         `json:"model,omitempty"`
+	VoiceID string         `json:"voice_id,omitempty"`
+	Enabled *bool          `json:"enabled,omitempty"`
+	Extra   map[string]any `json:"extra,omitempty"`
+}
+
+func (s *PetService) handleVoiceModelUpdate(sessionID string, req Request) error {
+	var data VoiceModelUpdateRequest
+	if err := json.Unmarshal(req.Data, &data); err != nil {
+		return s.sendError(sessionID, req.Action, "invalid request data")
+	}
+
+	if data.Name == "" {
+		return s.sendError(sessionID, req.Action, "name is required")
+	}
+
+	model := s.voiceLoader.GetModel(data.Name)
+	if model == nil {
+		return s.sendError(sessionID, req.Action, fmt.Sprintf("voice model %s not found", data.Name))
+	}
+
+	if data.APIKey != "" {
+		model.APIKey = data.APIKey
+	}
+	if data.APIBase != "" {
+		model.APIBase = data.APIBase
+	}
+	if data.Model != "" {
+		model.Model = data.Model
+	}
+	if data.VoiceID != "" {
+		model.VoiceID = data.VoiceID
+	}
+	if data.Enabled != nil {
+		model.Enabled = *data.Enabled
+	}
+	if data.Extra != nil {
+		if model.Extra == nil {
+			model.Extra = make(map[string]any)
+		}
+		for k, v := range data.Extra {
+			model.Extra[k] = v
+		}
+	}
+
+	if err := s.configManager.UpdateVoiceModel(model); err != nil {
+		return s.sendError(sessionID, req.Action, err.Error())
+	}
+
+	needsSwitch := data.APIKey != "" || data.Extra != nil || data.Model != "" || data.VoiceID != ""
+	if needsSwitch && s.voiceLoader.GetCurrentModel() == data.Name {
+		logger.Infof("pet voice: config changed, reloading provider for %s", data.Name)
+		if err := s.voiceLoader.SwitchModel(data.Name, s.configManager); err != nil {
+			logger.Warnf("pet voice: failed to reload provider: %v", err)
+		}
+	}
+
+	return s.sendResponse(sessionID, req.Action, map[string]string{"status": "ok"})
+}
+
+type VoiceModelSetDefaultRequest struct {
+	Name string `json:"name"`
+}
+
+func (s *PetService) handleVoiceModelSetDefault(sessionID string, req Request) error {
+	var data VoiceModelSetDefaultRequest
+	if err := json.Unmarshal(req.Data, &data); err != nil {
+		return s.sendError(sessionID, req.Action, "invalid request data")
+	}
+
+	if data.Name == "" {
+		return s.sendError(sessionID, req.Action, "name is required")
+	}
+
+	if err := s.voiceLoader.SwitchModel(data.Name, s.configManager); err != nil {
+		return s.sendError(sessionID, req.Action, err.Error())
+	}
+
+	return s.sendResponse(sessionID, req.Action, map[string]string{"status": "ok"})
+}
+
+type VoiceModelGetVoicesRequest struct {
+	Provider  string `json:"provider"`
+	Model     string `json:"model,omitempty"`
+	APIKey    string `json:"api_key,omitempty"`
+	SecretKey string `json:"secret_key,omitempty"`
+}
+
+func (s *PetService) handleVoiceModelGetVoices(sessionID string, req Request) error {
+	var data VoiceModelGetVoicesRequest
+	if err := json.Unmarshal(req.Data, &data); err != nil {
+		return s.sendError(sessionID, req.Action, "invalid request data")
+	}
+
+	if data.Provider == "" {
+		return s.sendError(sessionID, req.Action, "provider is required")
+	}
+
+	// 如果用户没提供凭证，从配置中获取
+	apiKey := data.APIKey
+	secretKey := data.SecretKey
+	model := data.Model
+
+	if apiKey == "" || secretKey == "" || model == "" {
+		cfgModel := s.voiceLoader.GetModelByProvider(data.Provider)
+		if cfgModel != nil {
+			if apiKey == "" {
+				if data.Provider == "minimax" {
+					apiKey = voice.ResolveAPIKey(cfgModel.APIKey, cfgModel.Name)
+				} else {
+					if ak, ok := cfgModel.Extra["accessKeyId"].(string); ok {
+						apiKey = voice.ResolveAPIKey(ak, cfgModel.Name)
+					}
+				}
+			}
+			if secretKey == "" {
+				if sk, ok := cfgModel.Extra["secretAccessKey"].(string); ok {
+					secretKey = voice.ResolveAPIKey(sk, cfgModel.Name)
+				}
+			}
+			if model == "" {
+				model = cfgModel.Model
+			}
+		}
+	}
+
+	result, err := voice.GetVoices(data.Provider, apiKey, secretKey, model)
+	if err != nil {
+		return s.sendError(sessionID, req.Action, err.Error())
+	}
+
+	return s.sendResponse(sessionID, req.Action, result)
 }
