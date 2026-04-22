@@ -1,4 +1,4 @@
-﻿const { app, BrowserWindow, ipcMain, screen } = require('electron');
+const { app, BrowserWindow, ipcMain, screen } = require('electron');
 const path = require('path');
 const os = require('os');
 const fs = require('fs');
@@ -31,12 +31,10 @@ function logToFile(message) {
 
 logToFile('Electron application started');
 
-const backendBaseUrl = (process.env.GOCLAW_BACKEND_URL || 'http://127.0.0.1:18800').trim().replace(/\/+$/, '');
-const configuredRendererBaseUrl = (process.env.ELECTRON_RENDERER_URL || '').trim().replace(/\/+$/, '');
-const fallbackRendererBaseUrl = 'http://127.0.0.1:5173';
-const rendererDistPath = path.join(__dirname, '..', 'dist', 'index.html');
+const backendBaseUrl = (process.env.GOCLAW_BACKEND_URL || 'http://127.0.0.1:18790').trim().replace(/\/+$/, '');
 const dashboardBaseUrl = (process.env.GOCLAW_DASHBOARD_URL || 'http://127.0.0.1:3000').trim().replace(/\/+$/, '');
 const launcherToken = (process.env.GOCLAW_LAUNCHER_TOKEN || process.env.PICOCLAW_LAUNCHER_TOKEN || '').trim();
+const configuredRendererPath = (process.env.GOCLAW_PET_RENDERER_PATH || '/desktop-pet').trim();
 const shouldOpenDevTools = process.env.ELECTRON_OPEN_DEVTOOLS === '1';
 const startupMode = process.env.GOCLAW_SHOW_STARTUP === '1';
 const openPanelOnReady = process.env.GOCLAW_OPEN_PANEL_ON_READY !== '0';
@@ -54,9 +52,8 @@ function getPortLabel(rawUrl, fallbackPort) {
   }
 }
 
-const backendPortLabel = getPortLabel(backendBaseUrl, '18800');
+const backendPortLabel = getPortLabel(backendBaseUrl, '18790');
 const dashboardPortLabel = getPortLabel(dashboardBaseUrl, '3000');
-const fallbackRendererPortLabel = getPortLabel(fallbackRendererBaseUrl, '5173');
 
 const startupState = {
   done: false,
@@ -67,38 +64,9 @@ const startupState = {
     { key: 'backend', label: `后端服务 (${backendPortLabel})`, status: 'running', detail: '正在检测服务…' },
     { key: 'gateway', label: '网关状态（内部）', status: 'pending', detail: '等待后端状态…' },
     { key: 'petclaw', label: `桌面面板 (${dashboardPortLabel})`, status: 'pending', detail: '等待前端服务启动…' },
-    { key: 'renderer', label: configuredRendererBaseUrl ? '桌宠渲染（外部 URL）' : `桌宠渲染（本地资源 / ${fallbackRendererPortLabel}）`, status: 'pending', detail: '等待渲染资源就绪…' },
+    { key: 'renderer', label: '桌宠渲染（petclaw /desktop-pet）', status: 'pending', detail: '等待渲染页面就绪…' },
   ],
 };
-
-function shouldOpenOnboardingFromGatewayStatus(data) {
-  if (!data || data.gateway_status === 'running') {
-    return false;
-  }
-  if (data.gateway_start_allowed !== false) {
-    return false;
-  }
-  const reason = String(data.gateway_start_reason || '').toLowerCase();
-  if (!reason) {
-    return false;
-  }
-  return (
-    reason.includes('no default model configured') ||
-    reason.includes('has no credentials configured') ||
-    reason.includes('model') && reason.includes('credential')
-  );
-}
-
-function getPetBounds() {
-  const display = screen.getPrimaryDisplay();
-  const area = display.workArea;
-  return {
-    x: area.x + area.width - PET_WIDTH - 20,
-    y: area.y + area.height - PET_HEIGHT - 60,
-    width: PET_WIDTH,
-    height: PET_HEIGHT,
-  };
-}
 
 function updateStartupPercent() {
   const total = startupState.steps.length;
@@ -156,45 +124,35 @@ async function isHttpReady(url) {
   }
 }
 
-function isRendererFromUrl() {
-  if (/^https?:\/\//i.test(configuredRendererBaseUrl)) {
-    return true;
-  }
-  return !fs.existsSync(rendererDistPath);
-}
-
 function getRendererUrl() {
-  if (/^https?:\/\//i.test(configuredRendererBaseUrl)) {
-    return configuredRendererBaseUrl;
+  if (/^https?:\/\//i.test(configuredRendererPath)) {
+    return configuredRendererPath;
   }
-  return fallbackRendererBaseUrl;
+  const pathname = configuredRendererPath.startsWith('/')
+    ? configuredRendererPath
+    : `/${configuredRendererPath}`;
+  return buildDashboardUrl(pathname);
 }
 
 async function isRendererReady() {
-  if (isRendererFromUrl()) {
-    return isHttpReady(getRendererUrl());
-  }
-  return fs.existsSync(rendererDistPath);
+  return isHttpReady(getRendererUrl());
 }
 
 function loadPetRenderer(targetWindow) {
-  if (isRendererFromUrl()) {
-    return targetWindow.loadURL(getRendererUrl());
-  }
-  return targetWindow.loadFile(rendererDistPath);
+  return targetWindow.loadURL(getRendererUrl());
 }
 
 function createPetWindow() {
-  const bounds = getPetBounds();
-
   petWindow = new BrowserWindow({
-    ...bounds,
+    width: PET_WIDTH,
+    height: PET_HEIGHT,
     frame: false,
     transparent: true,
     alwaysOnTop: true,
     resizable: false,
     skipTaskbar: true,
     show: false,
+    center: true,
     webPreferences: {
       nodeIntegration: false,
       contextIsolation: true,
@@ -202,14 +160,10 @@ function createPetWindow() {
     }
   });
 
+  petWindow.center();
+
   loadPetRenderer(petWindow).catch((err) => {
     logToFile(`[PET WINDOW] load renderer failed: ${String(err)}`);
-    if (!/^https?:\/\//i.test(configuredRendererBaseUrl)) {
-      const fallbackUrl = fallbackRendererBaseUrl;
-      petWindow.loadURL(fallbackUrl).catch((fallbackErr) => {
-        logToFile(`[PET WINDOW] fallback loadURL failed: ${String(fallbackErr)}`);
-      });
-    }
   });
 
   petWindow.once('ready-to-show', () => {
@@ -230,7 +184,8 @@ function resetPetWindow() {
   petWindow.setResizable(false);
   petWindow.setAlwaysOnTop(true);
   petWindow.setSkipTaskbar(true);
-  petWindow.setBounds(getPetBounds(), true);
+  petWindow.setSize(PET_WIDTH, PET_HEIGHT);
+  petWindow.center();
 }
 
 function withLauncherToken(rawUrl) {
@@ -270,19 +225,6 @@ function buildSettingsWindowUrl({ onboarding = false } = {}) {
 }
 
 async function resolveInitialSettingsTargetUrl() {
-  try {
-    const headers = launcherToken ? { Authorization: `Bearer ${launcherToken}` } : {};
-    const response = await fetchWithTimeout(`${backendBaseUrl}/api/gateway/status`, { headers }, 1400);
-    if (response.ok) {
-      const data = await response.json();
-      needsFirstTimeOnboarding = shouldOpenOnboardingFromGatewayStatus(data);
-      if (needsFirstTimeOnboarding) {
-        return buildSettingsWindowUrl({ onboarding: true });
-      }
-    }
-  } catch {
-    // Keep default panel route when status is temporarily unavailable.
-  }
   return buildSettingsWindowUrl();
 }
 
@@ -438,26 +380,19 @@ async function pollStartupProgress() {
 
   if (backendReady) {
     try {
-      const headers = launcherToken ? { Authorization: `Bearer ${launcherToken}` } : {};
-      const response = await fetchWithTimeout(`${backendBaseUrl}/api/gateway/status`, { headers }, 1400);
+      const response = await fetchWithTimeout(`${backendBaseUrl}/pet/token`, {}, 1400);
       if (response.ok) {
         const data = await response.json();
-        needsFirstTimeOnboarding = shouldOpenOnboardingFromGatewayStatus(data);
-        if (data.gateway_status === 'running') {
-          setStartupStepStatus('gateway', 'done', 'Gateway 已运行');
-        } else if (data.gateway_start_allowed === false) {
-          const reason = data.gateway_start_reason || '需要先完成模型配置';
-          setStartupStepStatus('gateway', 'warn', `等待配置：${reason}`);
-        } else if (data.gateway_status === 'starting' || data.gateway_status === 'restarting') {
-          setStartupStepStatus('gateway', 'running', 'Gateway 启动中…');
+        if (data?.enabled && data?.ws_url) {
+          setStartupStepStatus('gateway', 'done', 'Gateway 已运行（18790）');
         } else {
-          setStartupStepStatus('gateway', 'pending', '等待 gateway 启动…');
+          setStartupStepStatus('gateway', 'pending', '等待 pet channel 就绪…');
         }
       } else {
-        setStartupStepStatus('gateway', 'pending', '暂未获取到 gateway 状态');
+        setStartupStepStatus('gateway', 'pending', '暂未获取到 pet channel 状态');
       }
     } catch {
-      setStartupStepStatus('gateway', 'pending', '暂未获取到 gateway 状态');
+      setStartupStepStatus('gateway', 'pending', '暂未获取到 pet channel 状态');
     }
   } else {
     setStartupStepStatus('gateway', 'pending', '等待后端服务状态…');
@@ -472,9 +407,9 @@ async function pollStartupProgress() {
 
   const rendererReady = await isRendererReady();
   if (rendererReady) {
-    setStartupStepStatus('renderer', 'done', isRendererFromUrl() ? '桌宠渲染服务已就绪' : '桌宠渲染资源已就绪');
+    setStartupStepStatus('renderer', 'done', '桌宠渲染页面已就绪');
   } else {
-    setStartupStepStatus('renderer', 'running', isRendererFromUrl() ? '启动桌宠渲染服务中…' : '等待本地渲染资源（dist）…');
+    setStartupStepStatus('renderer', 'running', '等待 petclaw 桌宠页面就绪…');
   }
 
   if (rendererReady) {

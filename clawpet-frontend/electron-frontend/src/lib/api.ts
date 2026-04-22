@@ -1,4 +1,4 @@
-const DEFAULT_API_BASE = 'http://127.0.0.1:18800'
+const DEFAULT_API_BASE = 'http://127.0.0.1:18790'
 
 export const API_ENDPOINTS = {
   AUTH: {

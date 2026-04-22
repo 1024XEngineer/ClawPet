@@ -1,13 +1,13 @@
 import { defineConfig } from 'vite'
 import react from '@vitejs/plugin-react'
 
-const backendTarget = process.env.GOCLAW_BACKEND_URL || 'http://127.0.0.1:18800'
+const backendTarget = process.env.GOCLAW_BACKEND_URL || 'http://127.0.0.1:18790'
 
 export default defineConfig({
   plugins: [react()],
   base: './',
   server: {
-    port: 5173,
+    port: 3002,
     strictPort: true,
     proxy: {
       '/api': {

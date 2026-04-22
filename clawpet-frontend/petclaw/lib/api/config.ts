@@ -1,4 +1,4 @@
-const LOCAL_DEFAULT_ORIGIN = 'http://127.0.0.1:18800'
+const LOCAL_DEFAULT_ORIGIN = 'http://127.0.0.1:18790'
 const DIRECT_GATEWAY_ENV_ORIGIN = process.env.NEXT_PUBLIC_PICOCLAW_DIRECT_GATEWAY_URL || ''
 const LOCAL_DIRECT_GATEWAY_ORIGIN = 'http://127.0.0.1:18790'
 const DIRECT_GATEWAY_CACHE_KEY = 'petclaw.directGatewayBaseUrl'
@@ -28,12 +28,7 @@ function sanitizeDirectGatewayBaseUrl(value: string): string {
   }
 
   try {
-    const parsed = new URL(normalized)
-    const isLoopbackHost =
-      parsed.hostname === '127.0.0.1' || parsed.hostname === 'localhost'
-    if (isLoopbackHost && parsed.port === '18800') {
-      return LOCAL_DIRECT_GATEWAY_ORIGIN
-    }
+    new URL(normalized)
   } catch {
     return ''
   }
@@ -62,7 +57,7 @@ export function getApiBaseUrl(): string {
 
   if (typeof window !== 'undefined' && window.location?.origin) {
     const port = window.location.port
-    if (port === '3000' || port === '3001' || port === '5173') {
+    if (port === '3000' || port === '3001') {
       return LOCAL_DEFAULT_ORIGIN
     }
     return window.location.origin

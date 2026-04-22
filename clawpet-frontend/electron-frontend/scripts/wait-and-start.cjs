@@ -1,6 +1,6 @@
 const { spawn } = require('child_process')
 
-const DEFAULT_RENDERER_URL = 'http://localhost:5173'
+const DEFAULT_RENDERER_URL = 'http://localhost:3002'
 const RENDERER_URL = (process.env.ELECTRON_RENDERER_URL || DEFAULT_RENDERER_URL).replace(/\/+$/, '')
 const MAX_WAIT = 30000
 const CHECK_INTERVAL = 500

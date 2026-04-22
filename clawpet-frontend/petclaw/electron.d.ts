@@ -4,6 +4,9 @@ declare global {
   interface BubblePayload {
     text: string | null
     emotion: string
+    level?: string
+    animation?: string
+    animationHints?: string[]
     audio?: string
   }
 
@@ -22,6 +25,8 @@ declare global {
         (payload: BubblePayload): void
         (text: string | null, emotion: string, audio?: string): void
       }
+      onSettingsUpdate?: (callback: (settings: unknown) => void) => void
+      onBubbleShow?: (callback: (payload: BubblePayload) => void) => void
       onForceStopMedia?: (callback: () => void) => () => void
     }
   }

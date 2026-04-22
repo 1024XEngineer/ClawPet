@@ -67,6 +67,7 @@ web/backend/dist/*
 docker/data
 
 .omc/
+.goclaw-runtime/
 
 # Binaries
 *.exe

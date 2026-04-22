@@ -9,7 +9,7 @@ import { Spinner } from "@/components/ui/spinner"
 
 // 默认日志数据
 const defaultLogs = [
-  { time: "2024-01-15 10:30:15", level: "INFO", message: "Gateway started successfully on port 18800" },
+  { time: "2024-01-15 10:30:15", level: "INFO", message: "Gateway started successfully on port 18790" },
   { time: "2024-01-15 10:30:16", level: "INFO", message: "Pico channel connected" },
   { time: "2024-01-15 10:30:18", level: "INFO", message: "Telegram channel initialized" },
   { time: "2024-01-15 10:30:20", level: "DEBUG", message: "Loading model configuration..." },

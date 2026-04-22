@@ -1,15 +1,10 @@
 import {
-  API_ENDPOINTS,
   DIRECT_PICO_TOKEN_PATH,
   DIRECT_PICO_WS_PATH,
   DIRECT_PET_TOKEN_PATH,
   DIRECT_PET_WS_PATH,
-  getApiBaseUrl,
-  getAuthRequestCredentials,
   getDirectGatewayBaseUrl,
   isDirectGatewayEnabled,
-  getWsBaseUrl,
-  withLauncherAuthHeader,
 } from "./config"
 
 const CHAT_ACTION = "chat"
@@ -62,7 +57,6 @@ interface TokenCandidate {
   baseUrl: string
   tokenPath: string
   wsPath: string
-  useLauncherAuth: boolean
 }
 
 type WSEventData = ChatMessage | string | Record<string, unknown>
@@ -212,43 +206,21 @@ export class PicoClawWebSocket {
           baseUrl: directGatewayBase,
           tokenPath: DIRECT_PET_TOKEN_PATH,
           wsPath: DIRECT_PET_WS_PATH,
-          useLauncherAuth: false,
         },
         {
           baseUrl: directGatewayBase,
           tokenPath: DIRECT_PICO_TOKEN_PATH,
           wsPath: DIRECT_PICO_WS_PATH,
-          useLauncherAuth: false,
         },
       )
     }
-    candidates.push(
-      {
-        baseUrl: getApiBaseUrl(),
-        tokenPath: API_ENDPOINTS.PET.TOKEN,
-        wsPath: API_ENDPOINTS.CHAT.WS,
-        useLauncherAuth: true,
-      },
-      {
-        baseUrl: getApiBaseUrl(),
-        tokenPath: API_ENDPOINTS.PICO.TOKEN,
-        wsPath: API_ENDPOINTS.CHAT.WS_LEGACY,
-        useLauncherAuth: true,
-      },
-    )
 
     let lastError = "PET channel not available"
 
     for (const candidate of candidates) {
-      const input = `${candidate.baseUrl}${candidate.tokenPath}`
-      const res = await fetch(input, {
+      const res = await fetch(`${candidate.baseUrl}${candidate.tokenPath}`, {
         method: "GET",
-        headers: candidate.useLauncherAuth
-          ? withLauncherAuthHeader()
-          : undefined,
-        credentials: candidate.useLauncherAuth
-          ? getAuthRequestCredentials(input)
-          : "omit",
+        credentials: "omit",
       }).catch(() => null)
 
       if (!res) {
@@ -275,22 +247,10 @@ export class PicoClawWebSocket {
       const wsPathFromToken = this.normalizeWsPath(data.ws_url)
       const wsBaseUrl = this.normalizeWsBaseUrl(data.ws_url, candidate.baseUrl)
       const hasExplicitPicoSignal =
-        data.protocol === "pico" ||
-        candidate.tokenPath === API_ENDPOINTS.PICO.TOKEN ||
-        wsPathFromToken === DIRECT_PICO_WS_PATH ||
-        wsPathFromToken === API_ENDPOINTS.CHAT.WS_LEGACY
-      // Compatibility shim:
-      // some launcher builds expose /api/pet/token but only proxy /pico/ws upstream.
-      const resolvedPath =
-        candidate.useLauncherAuth &&
-        hasExplicitPicoSignal &&
-        wsPathFromToken === API_ENDPOINTS.CHAT.WS
-          ? API_ENDPOINTS.CHAT.WS_LEGACY
-          : wsPathFromToken || candidate.wsPath
+        data.protocol === "pico" || wsPathFromToken === DIRECT_PICO_WS_PATH
+      const resolvedPath = wsPathFromToken || candidate.wsPath
       const mode: WSMode =
-        hasExplicitPicoSignal ||
-        resolvedPath === DIRECT_PICO_WS_PATH ||
-        resolvedPath === API_ENDPOINTS.CHAT.WS_LEGACY
+        hasExplicitPicoSignal || resolvedPath === DIRECT_PICO_WS_PATH
           ? "pico"
           : "pet"
       return {
@@ -339,10 +299,6 @@ export class PicoClawWebSocket {
       } catch {
         // ignore and use fallback
       }
-    }
-
-    if (fallbackBaseUrl === getApiBaseUrl()) {
-      return getWsBaseUrl()
     }
 
     return fallbackBaseUrl

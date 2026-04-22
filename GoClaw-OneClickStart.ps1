@@ -55,8 +55,9 @@ function Get-ExitCodeOrDefault {
 }
 
 $Root = Split-Path -Parent $MyInvocation.MyCommand.Path
-$Frontend = Join-Path $Root "electron-frontend"
-$PetClaw = Join-Path $Root "petclaw"
+$FrontendRoot = Join-Path $Root "clawpet-frontend"
+$Frontend = Join-Path $FrontendRoot "electron-frontend"
+$PetClaw = Join-Path $FrontendRoot "petclaw"
 $LauncherExe = Join-Path $Root "picoclaw-web.exe"
 
 Write-Host "Project root: $Root"

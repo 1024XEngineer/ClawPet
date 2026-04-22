@@ -113,7 +113,7 @@ interface PendingAudioStream {
 }
 
 const API_BASE =
-  window.electronAPI?.getBackendBaseUrl?.()?.trim() || 'http://127.0.0.1:18800'
+  window.electronAPI?.getBackendBaseUrl?.()?.trim() || 'http://127.0.0.1:18790'
 
 const ASSET_PREFIX =
   typeof window !== 'undefined' &&

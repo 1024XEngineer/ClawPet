@@ -42,7 +42,7 @@ const emptyFormState: ConfigFormState = {
   execEnabled: false,
   cronEnabled: true,
   publicAccess: false,
-  port: 18800,
+  port: 18790,
 }
 
 function getErrorMessage(error: unknown): string {
@@ -59,7 +59,7 @@ function mapConfigToForm(config?: Config): ConfigFormState {
     execEnabled: Boolean(config?.exec?.enabled),
     cronEnabled: config?.cron?.enabled ?? true,
     publicAccess: Boolean(config?.launcher?.publicAccess),
-    port: config?.launcher?.port ?? 18800,
+    port: config?.launcher?.port ?? 18790,
   }
 }
 
@@ -491,7 +491,7 @@ export function ConfigPage() {
                       onChange={(event) =>
                         handleInputChange(
                           "port",
-                          Number.parseInt(event.target.value, 10) || 18800,
+                          Number.parseInt(event.target.value, 10) || 18790,
                         )
                       }
                       className="w-full rounded-[1.2rem] border border-white/80 bg-white/84 px-4 py-3 text-sm text-[#4b3422] outline-none transition focus:border-amber-200 focus:bg-white"
