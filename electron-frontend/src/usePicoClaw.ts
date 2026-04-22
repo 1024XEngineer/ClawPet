@@ -32,6 +32,7 @@ interface FetchJsonResult<T> {
 
 type MessageHandler = (data: any) => void
 type TransportMode = 'pico' | 'legacy'
+const DIRECT_GATEWAY_BASE = 'http://127.0.0.1:18790'
 
 const log = (msg: string, ...args: any[]) => {
   const fullMsg =
@@ -127,7 +128,12 @@ function buildBaseCandidates(configuredBase: string): string[] {
   }
 
   if (trimmedConfigured) {
+    if (trimmedConfigured !== DIRECT_GATEWAY_BASE) {
+      candidates.push(DIRECT_GATEWAY_BASE)
+    }
     candidates.push(trimmedConfigured)
+  } else {
+    candidates.push(DIRECT_GATEWAY_BASE)
   }
 
   return unique(candidates)
@@ -282,8 +288,8 @@ export function usePicoClaw(apiBaseUrl: string, callbacks?: PicoCallbacks) {
     }
 
     const bases = discoveredGatewayBase
-      ? unique([discoveredGatewayBase, ...buildBaseCandidates(apiBaseRef.current)])
-      : buildBaseCandidates(apiBaseRef.current)
+      ? unique([DIRECT_GATEWAY_BASE, discoveredGatewayBase, ...buildBaseCandidates(apiBaseRef.current)])
+      : unique([DIRECT_GATEWAY_BASE, ...buildBaseCandidates(apiBaseRef.current)])
 
     for (const base of bases) {
       const healthEndpoint = joinUrl(base, '/health')

@@ -7,6 +7,7 @@ import {
   getApiBaseUrl,
   getAuthRequestCredentials,
   getDirectGatewayBaseUrl,
+  isDirectGatewayEnabled,
   getWsBaseUrl,
   withLauncherAuthHeader,
 } from "./config"
@@ -203,19 +204,25 @@ export class PicoClawWebSocket {
     wsBaseUrl: string
     mode: WSMode
   }> {
-    const candidates: TokenCandidate[] = [
-      {
-        baseUrl: getDirectGatewayBaseUrl(),
-        tokenPath: DIRECT_PET_TOKEN_PATH,
-        wsPath: DIRECT_PET_WS_PATH,
-        useLauncherAuth: false,
-      },
-      {
-        baseUrl: getDirectGatewayBaseUrl(),
-        tokenPath: DIRECT_PICO_TOKEN_PATH,
-        wsPath: DIRECT_PICO_WS_PATH,
-        useLauncherAuth: false,
-      },
+    const candidates: TokenCandidate[] = []
+    const directGatewayBase = getDirectGatewayBaseUrl()
+    if (isDirectGatewayEnabled() && directGatewayBase) {
+      candidates.push(
+        {
+          baseUrl: directGatewayBase,
+          tokenPath: DIRECT_PET_TOKEN_PATH,
+          wsPath: DIRECT_PET_WS_PATH,
+          useLauncherAuth: false,
+        },
+        {
+          baseUrl: directGatewayBase,
+          tokenPath: DIRECT_PICO_TOKEN_PATH,
+          wsPath: DIRECT_PICO_WS_PATH,
+          useLauncherAuth: false,
+        },
+      )
+    }
+    candidates.push(
       {
         baseUrl: getApiBaseUrl(),
         tokenPath: API_ENDPOINTS.PET.TOKEN,
@@ -228,7 +235,7 @@ export class PicoClawWebSocket {
         wsPath: API_ENDPOINTS.CHAT.WS_LEGACY,
         useLauncherAuth: true,
       },
-    ]
+    )
 
     let lastError = "PET channel not available"
 

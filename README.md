@@ -1,205 +1,260 @@
-# ClawPet Development Guide
+# ClawPet 开发说明
 
-ClawPet is the current desktop-pet product shape being developed in this repo.
+ClawPet 是本仓库当前正在迭代的桌宠产品形态。
 
-The current source of truth is the beige `petclaw` console. The desktop pet opens this console, the onboarding page lives there, chat session history is shown there, and backend voice output is consumed there.
+目前以米色风格的 `petclaw` 控制台为主：桌宠会打开该控制台，onboarding 页面也在这里，聊天会话历史在这里展示，后端语音输出也在这里消费。
 
-## Local Components
+## 本地架构
 
-The local stack currently has 4 main parts:
+当前本地主链路统一为 2 个业务端口：
 
-- `launcher`: local launcher and control entry, default `127.0.0.1:18800`
-- `gateway`: PicoClaw backend gateway, default `127.0.0.1:18790`
-- `petclaw`: beige console UI, default `127.0.0.1:3000`
-- `electron-frontend`: desktop pet renderer, default `127.0.0.1:5173`
+- `frontend`（`petclaw` 控制台）：`127.0.0.1:3000`
+- `backend`（Pet channel / gateway 直连）：`127.0.0.1:18790`（优先）
 
-Current expected relationships:
+同时保留一个管理端口（非业务首选）：
 
-- the desktop pet `S` button opens `petclaw`
-- onboarding lives at `petclaw /onboarding`
-- `electron-frontend` is the pet window shell, not the main control console
-- the old dark settings UI is no longer the target UI for daily use
+- `launcher` 管理接口：`127.0.0.1:18800`（用于启动状态、鉴权与代理兜底）
 
-## Recommended Startup
+桌宠渲染页默认加载本地构建产物（`electron-frontend/dist`）；仅在未构建时回退 `5173` 开发服务。
 
-Use the full local dev script from the repo root:
+当前关系：
 
-```powershell
-powershell -ExecutionPolicy Bypass -File .\scripts\run-goclaw-dev.ps1 -Restart -PetclawMode dev -NoTerminalWindows
-```
+- 桌宠 `S` 按钮会打开 `petclaw`
+- onboarding 在 `petclaw /onboarding`
+- `electron-frontend` 负责桌宠窗口壳，不是主控制台
+- 旧的深色 settings/chat 页面不是当前主界面
 
-This script will:
+## 推荐启动方式
 
-1. Clean old GoClaw / Electron / Node processes
-2. Start launcher on `127.0.0.1:18800`
-3. Start the gateway
-4. Start `petclaw` on `127.0.0.1:3000`
-5. Start the desktop renderer on `127.0.0.1:5173`
-6. Start Electron and point its settings/onboarding window to `petclaw`
-
-## Release Package (All-In-One)
-
-If you want a release package that starts the full stack (`18800`, `18790`, `3000`, `5173` + Electron) with one click, use the Windows asset:
-
-- `clawpet_AllInOne_Windows_x86_64.zip` (or arm64 variant)
-
-After extracting, run:
-
-- `GoClaw-OneClickStart.bat`
-
-This entry delegates to:
-
-```powershell
-powershell -ExecutionPolicy Bypass -File .\scripts\run-goclaw-dev.ps1 -Restart -PetclawMode dev -NoTerminalWindows
-```
-
-and starts launcher, gateway, petclaw dashboard, electron frontend dev server, and Electron desktop pet in order.
-
-Notes for first launch:
-
-- If no model is configured yet, gateway startup may be deferred until onboarding/model setup is completed.
-- The package will auto-install npm dependencies for `petclaw` and `electron-frontend` on first run, so startup can take longer once.
-
-## One-Click Startup
-
-You can also use the root one-click entry:
-
-- `GoClaw-OneClickStart.bat`
-
-or:
-
-```powershell
-powershell -ExecutionPolicy Bypass -File .\GoClaw-OneClickStart.ps1
-```
-
-This entry currently delegates to `scripts/run-goclaw-dev.ps1`, so it starts the same full stack rather than a legacy simplified flow.
-
-## Expected URLs
-
-After a normal startup:
-
-- launcher: `http://127.0.0.1:18800`
-- petclaw console: `http://127.0.0.1:3000`
-- onboarding page: `http://127.0.0.1:3000/onboarding?mode=rerun`
-- desktop renderer: `http://127.0.0.1:5173`
-
-## UI Rules
-
-### Canonical UI
-
-Use the beige `petclaw` UI as the main console:
-
-- main console: `http://127.0.0.1:3000`
-- onboarding: `http://127.0.0.1:3000/onboarding?mode=rerun`
-
-`electron-frontend` is responsible for:
-
-- rendering the desktop pet
-- hosting the Electron shell
-- opening the `petclaw` console
-
-If you see a dark chat/settings page, that is not the current canonical UI.
-
-### Chat Behavior
-
-Current `petclaw` chat behavior:
-
-- `New Chat` creates a new local frontend session id and reconnects the websocket
-- left-side session history shows only the first user message for each session
-- session history is currently frontend-local, not server-persisted history
-
-### Voice Behavior
-
-Current voice behavior:
-
-- backend `audio` push is the primary source of playback
-- `petclaw` merges backend audio chunks and plays them
-- browser local TTS fallback is disabled
-- the microphone button is voice input only and depends on browser speech recognition support
-
-## Environment
-
-- Go `>= 1.23`
-- Node.js `>= 18`, recommended `20` or `22`
-- npm
-- on Windows, a C/C++ build environment is recommended or some SQLite capabilities may be degraded
-
-## Common Commands
-
-### Start full local dev stack
+在仓库根目录执行：
 
 ```powershell
 powershell -ExecutionPolicy Bypass -File .\scripts\run-goclaw-dev.ps1 -Restart -PetclawMode dev
 ```
 
-### Start full stack with production `petclaw`
+该脚本会：
+
+1. 清理历史 GoClaw / Electron / Node 进程
+2. 启动后端 launcher（`127.0.0.1:18800`）
+3. 启动 gateway，并让桌宠/面板优先直连 `127.0.0.1:18790`
+4. 启动 `petclaw`（`127.0.0.1:3000`）
+5. 如需则构建桌宠渲染资源
+6. 启动 Electron，并将设置/引导窗口指向 `petclaw`
+
+## 一体包启动（All-In-One）
+
+如需一键启动完整链路（`18790`、`18800`、`3000` + Electron），请使用 Windows 发行包：
+
+- `clawpet_AllInOne_Windows_x86_64.zip`（或 arm64 版本）
+
+解压后运行：
+
+- `GoClaw-OneClickStart.bat`
+
+它会代理执行：
 
 ```powershell
-powershell -ExecutionPolicy Bypass -File .\scripts\run-goclaw-dev.ps1 -Restart -PetclawMode prod -NoTerminalWindows
+powershell -ExecutionPolicy Bypass -File .\scripts\run-goclaw-dev.ps1 -Restart -PetclawMode dev
 ```
 
-### Start launcher only
+并按顺序启动：backend launcher、gateway（优先 `18790`）、petclaw 控制台、Electron 桌宠。
+
+首次启动说明：
+
+- 若尚未配置模型，gateway 可能延迟启动，需先完成 onboarding/model 设置
+- 首次会自动为 `petclaw` 与 `electron-frontend` 安装依赖，耗时可能更长
+
+## 一键入口
+
+也可直接使用根目录入口：
+
+- `GoClaw-OneClickStart.bat`
+
+或：
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\GoClaw-OneClickStart.ps1
+```
+
+该入口当前统一委托到 `scripts/run-goclaw-dev.ps1`，即使用同一套完整启动流程。
+
+## 启动后地址
+
+正常启动后：
+
+- petclaw 控制台：`http://127.0.0.1:3000`
+- backend（gateway 直连）：`http://127.0.0.1:18790`
+- launcher 管理接口：`http://127.0.0.1:18800`
+- onboarding：`http://127.0.0.1:3000/onboarding?mode=rerun`
+
+## 分窗口启动（手动）
+
+当你要单独排查“桌宠不渲染 / 网关未连上”时，建议开 3 个终端窗口按顺序启动。
+
+### 窗口 1：仅启动 launcher（管理口 `18800`）
 
 ```powershell
 powershell -ExecutionPolicy Bypass -File .\GoClaw-OneClickStart.ps1 -Mode launcher
 ```
 
-## Troubleshooting
+### 窗口 2：启动 `petclaw`（前端口 `3000`，后端优先 `18790`）
 
-### Blank console window
+```powershell
+Set-Location .\petclaw
+$env:NEXT_PUBLIC_PICOCLAW_API_URL='http://127.0.0.1:18800'
+$env:NEXT_PUBLIC_PICOCLAW_WS_URL='ws://127.0.0.1:18800'
+$env:NEXT_PUBLIC_PICOCLAW_DIRECT_GATEWAY_URL='http://127.0.0.1:18790'
+$env:NEXT_PUBLIC_PICOCLAW_LAUNCHER_TOKEN='goclaw-local-token'
+$env:NEXT_PUBLIC_PICOCLAW_USE_CREDENTIALS='true'
+npm run dev -- --hostname 127.0.0.1 --port 3000 --webpack
+```
 
-Check that `petclaw` is actually running:
+### 窗口 3：启动 Electron 桌宠窗口
+
+```powershell
+Set-Location .\electron-frontend
+$env:GOCLAW_BACKEND_URL='http://127.0.0.1:18800'
+$env:GOCLAW_DASHBOARD_URL='http://127.0.0.1:3000'
+$env:GOCLAW_LAUNCHER_TOKEN='goclaw-local-token'
+npx electron src/main.js
+```
+
+可选：若要桌宠 renderer 热更新，再开第 4 个窗口：
+
+```powershell
+Set-Location .\electron-frontend
+npm run dev
+```
+
+并在窗口 3 额外设置：
+
+```powershell
+$env:ELECTRON_RENDERER_URL='http://127.0.0.1:5173'
+```
+
+## UI 约定
+
+### 主界面
+
+以米色 `petclaw` 为主：
+
+- 主控制台：`http://127.0.0.1:3000`
+- onboarding：`http://127.0.0.1:3000/onboarding?mode=rerun`
+
+`electron-frontend` 的职责：
+
+- 渲染桌宠
+- 承载 Electron 桌面壳
+- 打开 `petclaw` 控制台
+
+如果打开的是深色聊天/设置页，说明不是当前主 UI。
+
+### 聊天行为
+
+当前 `petclaw` 聊天行为：
+
+- `New Chat` 会创建新的前端本地 session id，并重连 websocket
+- 左侧会话历史目前只显示每个会话的第一条用户消息
+- 会话历史当前为前端本地状态，不是服务端持久化历史
+
+### 语音行为
+
+当前语音行为：
+
+- 以后端 `audio` push 为主播放源
+- `petclaw` 会合并后端音频分片后播放
+- 浏览器本地 TTS fallback 默认关闭
+- 麦克风按钮仅用于语音输入，依赖浏览器语音识别支持
+
+## 环境要求
+
+- Go `>= 1.23`
+- Node.js `>= 18`（建议 `20` 或 `22`）
+- npm
+- Windows 下建议具备 C/C++ 编译环境，否则部分 SQLite 能力可能受限
+
+## 常用命令
+
+### 启动完整本地开发链路
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\scripts\run-goclaw-dev.ps1 -Restart -PetclawMode dev
+```
+
+### 以生产模式启动 `petclaw`
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\scripts\run-goclaw-dev.ps1 -Restart -PetclawMode prod
+```
+
+### 仅启动 launcher
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\GoClaw-OneClickStart.ps1 -Mode launcher
+```
+
+## 常见问题
+
+### 控制台白屏
+
+先确认 `petclaw` 正常运行：
 
 ```powershell
 curl.exe -i http://127.0.0.1:3000
 ```
 
-If `3000` is down and you click the desktop pet `S` button, Electron will only show a blank shell window.
+若 `3000` 不可用，点击桌宠 `S` 按钮会只看到空壳窗口。
 
-### Wrong UI opens
+### 打开了错误 UI
 
-If a dark settings page opens instead of the beige console, restart with:
+若打开的是深色 settings 页面而不是米色控制台，请重启：
 
 ```powershell
-powershell -ExecutionPolicy Bypass -File .\scripts\run-goclaw-dev.ps1 -Restart -PetclawMode dev -NoTerminalWindows
+powershell -ExecutionPolicy Bypass -File .\scripts\run-goclaw-dev.ps1 -Restart -PetclawMode dev
 ```
 
-### Re-run onboarding
+### 重新执行 onboarding
 
-Open:
+直接打开：
 
 ```text
 http://127.0.0.1:3000/onboarding?mode=rerun
 ```
 
-### Check gateway health
+### 查看 gateway 状态
+
+```powershell
+curl.exe -i http://127.0.0.1:18800/api/gateway/status
+```
+
+优先链路连通检查（建议先看这个）：
 
 ```powershell
 curl.exe -i http://127.0.0.1:18790/health
-curl.exe -i http://127.0.0.1:18790/ready
+curl.exe -i http://127.0.0.1:18790/pet/token
 ```
 
-### Long replies missing
+### 长回复缺失
 
-`petclaw` now accepts `ai_chat` and `audio` push payloads in object, JSON-string, and raw-string forms. If long replies still appear missing, inspect the WS payload shape in DevTools and compare it with the parser in `petclaw/lib/api/websocket.ts`.
+`petclaw` 目前支持 object / JSON string / raw string 三种 `ai_chat` 与 `audio` push 形态。若长回复仍缺失，请在 DevTools 中检查 WS payload，并对照 `petclaw/lib/api/websocket.ts` 的解析逻辑。
 
-## Important Directories
+## 关键目录
 
-- `scripts/run-goclaw-dev.ps1`: full local startup script
-- `GoClaw-OneClickStart.ps1`: one-click entry that delegates to the full startup script
-- `petclaw/`: beige console and onboarding UI
-- `electron-frontend/`: desktop pet window and Electron shell
-- `cmd/picoclaw/`: gateway entry
-- `pkg/channels/pet/`: `pet` HTTP / websocket channel
-- `pkg/pet/`: desktop-pet business logic
+- `scripts/run-goclaw-dev.ps1`：完整本地启动脚本
+- `GoClaw-OneClickStart.ps1`：一键入口（委托完整启动脚本）
+- `petclaw/`：米色控制台与 onboarding UI
+- `electron-frontend/`：桌宠窗口与 Electron 壳
+- `cmd/picoclaw/`：gateway 入口
+- `pkg/channels/pet/`：`pet` HTTP / websocket 通道
+- `pkg/pet/`：桌宠业务实现
 
-## Suggested Reading Order
+## 建议阅读顺序
 
-If you are onboarding to this codebase, this order is the easiest:
+若要快速熟悉项目，建议：
 
 1. `scripts/run-goclaw-dev.ps1`
 2. `petclaw/`
 3. `electron-frontend/src/main.js`
 4. `pkg/channels/pet/`
 
-That gives the clearest picture of startup, canonical UI, pet window ownership, and the real chat pipeline.
+这条路径最容易看清启动流程、主 UI、桌宠窗口职责和实际聊天链路。

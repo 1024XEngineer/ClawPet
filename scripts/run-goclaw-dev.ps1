@@ -675,23 +675,25 @@ try {
   throw "Gateway preflight failed: $($_.Exception.Message)"
 }
 
-$gatewayPort = Get-GatewayPortFromConfig -ConfigPath $LauncherConfigPath
-$directGatewayUrl = "http://127.0.0.1:$gatewayPort"
-
 Ensure-NpmDeps -ProjectDir $petclawDir -DisplayName "petclaw"
 Ensure-NpmDeps -ProjectDir $electronDir -DisplayName "electron-frontend"
 
+$electronDistIndex = Join-Path $electronDir "dist\index.html"
+if (-not (Test-Path $electronDistIndex)) {
+  Write-Step "Electron renderer bundle not found, running npm run build..."
+  Invoke-Npm -WorkingDir $electronDir -Arguments "run build"
+}
+
 $escapedDashboard = $DashboardUrl.Replace("'", "''")
 $escapedLauncherToken = $LauncherToken.Replace("'", "''")
-$showStartup = if ($NoTerminalWindows -or $env:GOCLAW_SHOW_STARTUP -eq "1") { "1" } else { "0" }
-$openPanelOnReady = if ($NoTerminalWindows -or $env:GOCLAW_OPEN_PANEL_ON_READY -eq "1") { "1" } else { "0" }
+$openPanelOnReady = if ($NoTerminalWindows) { "1" } else { "0" }
 
 $existingElectron = @(Get-Process -Name electron -ErrorAction SilentlyContinue)
 $electronRunning = $existingElectron.Count -gt 0
 
-if ($showStartup -eq "1" -and -not $electronRunning) {
+if ($NoTerminalWindows -and -not $electronRunning) {
   Write-Step "Starting desktop shell with startup progress page..."
-  $electronBootstrapCmd = "`$env:GOCLAW_DASHBOARD_URL='$escapedDashboard'; `$env:GOCLAW_LAUNCHER_TOKEN='$escapedLauncherToken'; `$env:GOCLAW_SHOW_STARTUP='$showStartup'; `$env:GOCLAW_OPEN_PANEL_ON_READY='$openPanelOnReady'; Set-Location '$electronDir'; npx electron src/main.js"
+  $electronBootstrapCmd = "`$env:GOCLAW_BACKEND_URL='http://127.0.0.1:18800'; `$env:GOCLAW_DASHBOARD_URL='$escapedDashboard'; `$env:GOCLAW_LAUNCHER_TOKEN='$escapedLauncherToken'; `$env:GOCLAW_SHOW_STARTUP='1'; `$env:GOCLAW_OPEN_PANEL_ON_READY='$openPanelOnReady'; Set-Location '$electronDir'; npx electron src/main.js"
   Start-DetachedPowerShell -Title "GoClaw - Electron Boot" -Command $electronBootstrapCmd
   Start-Sleep -Milliseconds 800
   $electronRunning = $true
@@ -706,12 +708,10 @@ if ((Test-HttpReady -Url $DashboardUrl -TimeoutSeconds 2) -or (Test-PortListenin
       Invoke-Npm -WorkingDir $petclawDir -Arguments "run build"
     }
     Write-Step "Starting petclaw dashboard (prod mode)..."
-    $escapedDirectGatewayUrl = $directGatewayUrl.Replace("'", "''")
-    $petclawCmd = "`$env:NEXT_PUBLIC_PICOCLAW_API_URL='http://127.0.0.1:18800'; `$env:NEXT_PUBLIC_PICOCLAW_WS_URL='ws://127.0.0.1:18800'; `$env:NEXT_PUBLIC_PICOCLAW_DIRECT_GATEWAY_URL='$escapedDirectGatewayUrl'; `$env:NEXT_PUBLIC_PICOCLAW_LAUNCHER_TOKEN='$escapedLauncherToken'; `$env:NEXT_PUBLIC_PICOCLAW_USE_CREDENTIALS='true'; Set-Location '$petclawDir'; npm run start -- --hostname 127.0.0.1 --port 3000"
+    $petclawCmd = "`$env:NEXT_PUBLIC_PICOCLAW_API_URL='http://127.0.0.1:18800'; `$env:NEXT_PUBLIC_PICOCLAW_WS_URL='ws://127.0.0.1:18800'; `$env:NEXT_PUBLIC_PICOCLAW_DIRECT_GATEWAY_URL='http://127.0.0.1:18790'; `$env:NEXT_PUBLIC_PICOCLAW_LAUNCHER_TOKEN='$escapedLauncherToken'; `$env:NEXT_PUBLIC_PICOCLAW_USE_CREDENTIALS='true'; Set-Location '$petclawDir'; npm run start -- --hostname 127.0.0.1 --port 3000"
   } else {
     Write-Step "Starting petclaw dashboard (dev mode)..."
-    $escapedDirectGatewayUrl = $directGatewayUrl.Replace("'", "''")
-    $petclawCmd = "`$env:NEXT_PUBLIC_PICOCLAW_API_URL='http://127.0.0.1:18800'; `$env:NEXT_PUBLIC_PICOCLAW_WS_URL='ws://127.0.0.1:18800'; `$env:NEXT_PUBLIC_PICOCLAW_DIRECT_GATEWAY_URL='$escapedDirectGatewayUrl'; `$env:NEXT_PUBLIC_PICOCLAW_LAUNCHER_TOKEN='$escapedLauncherToken'; `$env:NEXT_PUBLIC_PICOCLAW_USE_CREDENTIALS='true'; Set-Location '$petclawDir'; npm run dev -- --hostname 127.0.0.1 --port 3000 --webpack"
+    $petclawCmd = "`$env:NEXT_PUBLIC_PICOCLAW_API_URL='http://127.0.0.1:18800'; `$env:NEXT_PUBLIC_PICOCLAW_WS_URL='ws://127.0.0.1:18800'; `$env:NEXT_PUBLIC_PICOCLAW_DIRECT_GATEWAY_URL='http://127.0.0.1:18790'; `$env:NEXT_PUBLIC_PICOCLAW_LAUNCHER_TOKEN='$escapedLauncherToken'; `$env:NEXT_PUBLIC_PICOCLAW_USE_CREDENTIALS='true'; Set-Location '$petclawDir'; npm run dev -- --hostname 127.0.0.1 --port 3000 --webpack"
   }
 
   Start-DetachedPowerShell -Title "GoClaw - Petclaw" -Command $petclawCmd
@@ -723,25 +723,12 @@ if ((Test-HttpReady -Url $DashboardUrl -TimeoutSeconds 2) -or (Test-PortListenin
   }
 }
 
-if (-not (Test-PortListening -Port 5173)) {
-  Write-Step "Starting electron frontend vite server..."
-  $viteCmd = "Set-Location '$electronDir'; npm run dev -- --host 127.0.0.1 --port 5173 --strictPort"
-  Start-DetachedPowerShell -Title "GoClaw - Electron Vite" -Command $viteCmd
-  if (-not (Wait-HttpReady -Url "http://127.0.0.1:5173" -TimeoutSeconds 120)) {
-    Write-Warning "Electron Vite server did not become ready on http://127.0.0.1:5173 in time."
-  } else {
-    Write-Step "Electron Vite server is ready on http://127.0.0.1:5173"
-  }
-} else {
-  Write-Step "Electron frontend vite server already running on :5173"
-}
-
 $existingElectron = @(Get-Process -Name electron -ErrorAction SilentlyContinue)
 if ($existingElectron.Count -gt 0) {
   Write-Step "Electron desktop pet already running."
 } else {
   Write-Step "Starting electron desktop pet process..."
-  $electronCmd = "`$env:GOCLAW_DASHBOARD_URL='$escapedDashboard'; `$env:GOCLAW_LAUNCHER_TOKEN='$escapedLauncherToken'; `$env:GOCLAW_SHOW_STARTUP='$showStartup'; `$env:GOCLAW_OPEN_PANEL_ON_READY='$openPanelOnReady'; Set-Location '$electronDir'; npx electron src/main.js"
+  $electronCmd = "`$env:GOCLAW_BACKEND_URL='http://127.0.0.1:18800'; `$env:GOCLAW_DASHBOARD_URL='$escapedDashboard'; `$env:GOCLAW_LAUNCHER_TOKEN='$escapedLauncherToken'; `$env:GOCLAW_OPEN_PANEL_ON_READY='$openPanelOnReady'; Set-Location '$electronDir'; npx electron src/main.js"
   Start-DetachedPowerShell -Title "GoClaw - Electron" -Command $electronCmd
 }
 
@@ -751,9 +738,13 @@ $launcherSummary = $resolvedLauncherBin
 if ([string]::IsNullOrWhiteSpace($launcherSummary)) {
   $launcherSummary = "manual"
 }
+$gatewayPortSummary = Get-GatewayPortFromConfig -ConfigPath $LauncherConfigPath
 Write-Host "- Launcher:  $launcherSummary"
 Write-Host "- Config:    $LauncherConfigPath"
+Write-Host "- Backend:   http://127.0.0.1:$gatewayPortSummary (gateway direct, preferred)"
+Write-Host "- Manager:   http://127.0.0.1:18800 (launcher API)"
 Write-Host "- Dashboard: $DashboardUrl"
 Write-Host "- Petclaw:   $PetclawMode"
-Write-Host "- Auth:      Cookie + token bootstrap mode"
+Write-Host "- Auth:      Cookie + token bootstrap mode (via launcher)"
+Write-Host "- Ports:     frontend=3000, backend=$gatewayPortSummary (preferred), manager=18800"
 Write-Host "- Electron:  started or already running"

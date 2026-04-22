@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"github.com/gorilla/websocket"
 	"net/http"
+	"net/url"
 	"regexp"
 	"strings"
 	"sync"
@@ -45,6 +46,15 @@ func parsePureText(raw string) string {
 		}
 	}
 	return sb.String()
+}
+
+func isLocalhostOrigin(origin string) bool {
+	u, err := url.Parse(origin)
+	if err != nil || u.Host == "" {
+		return false
+	}
+	host := strings.ToLower(u.Hostname())
+	return host == "localhost" || host == "127.0.0.1" || host == "::1"
 }
 
 // Request 定义了客户端请求的类型
@@ -101,11 +111,20 @@ func NewPetChannel(cfg config.PetConfig, msgBus *bus.MessageBus, workspacePath s
 		if len(cfg.AllowOrigins) == 0 {
 			return true
 		}
-		origin := r.Header.Get("Origin")
+		origin := strings.TrimSpace(r.Header.Get("Origin"))
+		// Desktop renderer loaded from file:// may send Origin: null (or empty in
+		// non-browser clients). Treat these local desktop cases as trusted and rely
+		// on token auth for access control.
+		if origin == "" || origin == "null" || strings.HasPrefix(strings.ToLower(origin), "file://") {
+			return true
+		}
 		for _, allowed := range cfg.AllowOrigins {
 			if allowed == "*" || allowed == origin {
 				return true
 			}
+		}
+		if isLocalhostOrigin(origin) {
+			return true
 		}
 		return false
 	}

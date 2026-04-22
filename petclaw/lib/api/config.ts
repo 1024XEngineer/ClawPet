@@ -1,8 +1,7 @@
 const LOCAL_DEFAULT_ORIGIN = 'http://127.0.0.1:18800'
 const DIRECT_GATEWAY_ENV_ORIGIN = process.env.NEXT_PUBLIC_PICOCLAW_DIRECT_GATEWAY_URL || ''
-const LOCAL_DIRECT_GATEWAY_ORIGIN = DIRECT_GATEWAY_ENV_ORIGIN || 'http://127.0.0.1:18790'
+const LOCAL_DIRECT_GATEWAY_ORIGIN = 'http://127.0.0.1:18790'
 const DIRECT_GATEWAY_CACHE_KEY = 'petclaw.directGatewayBaseUrl'
-const LOCAL_LAUNCHER_PORT = '18800'
 export const DIRECT_PET_TOKEN_PATH = '/pet/token'
 export const DIRECT_PET_WS_PATH = '/pet/ws'
 export const DIRECT_PICO_TOKEN_PATH = '/pico/token'
@@ -32,15 +31,21 @@ function sanitizeDirectGatewayBaseUrl(value: string): string {
     const parsed = new URL(normalized)
     const isLoopbackHost =
       parsed.hostname === '127.0.0.1' || parsed.hostname === 'localhost'
-
-    if (isLoopbackHost && parsed.port === LOCAL_LAUNCHER_PORT) {
-      return normalizeBaseUrl(LOCAL_DIRECT_GATEWAY_ORIGIN)
+    if (isLoopbackHost && parsed.port === '18800') {
+      return LOCAL_DIRECT_GATEWAY_ORIGIN
     }
   } catch {
     return ''
   }
-
   return normalized
+}
+
+export function isDirectGatewayEnabled(): boolean {
+  const raw = DIRECT_GATEWAY_ENV_ORIGIN.trim().toLowerCase()
+  if (!raw) {
+    return true
+  }
+  return raw !== 'false' && raw !== 'off' && raw !== 'disabled'
 }
 
 export function getApiBaseUrl(): string {
@@ -67,8 +72,13 @@ export function getApiBaseUrl(): string {
 }
 
 export function getDirectGatewayBaseUrl(): string {
-  if (DIRECT_GATEWAY_ENV_ORIGIN.trim()) {
-    return sanitizeDirectGatewayBaseUrl(DIRECT_GATEWAY_ENV_ORIGIN)
+  if (!isDirectGatewayEnabled()) {
+    return ''
+  }
+
+  const directGatewayEnv = DIRECT_GATEWAY_ENV_ORIGIN.trim()
+  if (directGatewayEnv) {
+    return sanitizeDirectGatewayBaseUrl(directGatewayEnv)
   }
 
   if (typeof window !== 'undefined') {
@@ -88,10 +98,14 @@ export function getDirectGatewayBaseUrl(): string {
     } catch {
     }
   }
-  return sanitizeDirectGatewayBaseUrl(LOCAL_DIRECT_GATEWAY_ORIGIN)
+  return LOCAL_DIRECT_GATEWAY_ORIGIN
 }
 
 export function cacheDirectGatewayBaseUrl(value?: string | null): void {
+  if (!isDirectGatewayEnabled()) {
+    return
+  }
+
   const normalized = typeof value === 'string'
     ? sanitizeDirectGatewayBaseUrl(value)
     : ''

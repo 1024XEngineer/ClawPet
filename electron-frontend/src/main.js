@@ -31,7 +31,10 @@ function logToFile(message) {
 
 logToFile('Electron application started');
 
-const rendererBaseUrl = (process.env.ELECTRON_RENDERER_URL || 'http://localhost:5173').trim().replace(/\/+$/, '');
+const backendBaseUrl = (process.env.GOCLAW_BACKEND_URL || 'http://127.0.0.1:18800').trim().replace(/\/+$/, '');
+const configuredRendererBaseUrl = (process.env.ELECTRON_RENDERER_URL || '').trim().replace(/\/+$/, '');
+const fallbackRendererBaseUrl = 'http://127.0.0.1:5173';
+const rendererDistPath = path.join(__dirname, '..', 'dist', 'index.html');
 const dashboardBaseUrl = (process.env.GOCLAW_DASHBOARD_URL || 'http://127.0.0.1:3000').trim().replace(/\/+$/, '');
 const launcherToken = (process.env.GOCLAW_LAUNCHER_TOKEN || process.env.PICOCLAW_LAUNCHER_TOKEN || '').trim();
 const shouldOpenDevTools = process.env.ELECTRON_OPEN_DEVTOOLS === '1';
@@ -39,16 +42,32 @@ const startupMode = process.env.GOCLAW_SHOW_STARTUP === '1';
 const openPanelOnReady = process.env.GOCLAW_OPEN_PANEL_ON_READY !== '0';
 let needsFirstTimeOnboarding = false;
 
+function getPortLabel(rawUrl, fallbackPort) {
+  try {
+    const parsed = new URL(rawUrl);
+    if (parsed.port) {
+      return parsed.port;
+    }
+    return parsed.protocol === 'https:' ? '443' : fallbackPort;
+  } catch {
+    return fallbackPort;
+  }
+}
+
+const backendPortLabel = getPortLabel(backendBaseUrl, '18800');
+const dashboardPortLabel = getPortLabel(dashboardBaseUrl, '3000');
+const fallbackRendererPortLabel = getPortLabel(fallbackRendererBaseUrl, '5173');
+
 const startupState = {
   done: false,
   percent: 0,
   title: '正在启动 ClawPet',
-  subtitle: '准备桌宠与桌面面板，请稍候…',
+  subtitle: '准备后端与桌面面板，请稍候…',
   steps: [
-    { key: 'launcher', label: 'Launcher (18800)', status: 'running', detail: '正在检测服务…' },
-    { key: 'gateway', label: 'Gateway (18790)', status: 'pending', detail: '等待 launcher 状态…' },
-    { key: 'petclaw', label: '桌面面板 (3000)', status: 'pending', detail: '等待前端服务启动…' },
-    { key: 'renderer', label: '桌宠渲染 (5173)', status: 'pending', detail: '等待 Electron 渲染服务…' },
+    { key: 'backend', label: `后端服务 (${backendPortLabel})`, status: 'running', detail: '正在检测服务…' },
+    { key: 'gateway', label: '网关状态（内部）', status: 'pending', detail: '等待后端状态…' },
+    { key: 'petclaw', label: `桌面面板 (${dashboardPortLabel})`, status: 'pending', detail: '等待前端服务启动…' },
+    { key: 'renderer', label: configuredRendererBaseUrl ? '桌宠渲染（外部 URL）' : `桌宠渲染（本地资源 / ${fallbackRendererPortLabel}）`, status: 'pending', detail: '等待渲染资源就绪…' },
   ],
 };
 
@@ -137,6 +156,34 @@ async function isHttpReady(url) {
   }
 }
 
+function isRendererFromUrl() {
+  if (/^https?:\/\//i.test(configuredRendererBaseUrl)) {
+    return true;
+  }
+  return !fs.existsSync(rendererDistPath);
+}
+
+function getRendererUrl() {
+  if (/^https?:\/\//i.test(configuredRendererBaseUrl)) {
+    return configuredRendererBaseUrl;
+  }
+  return fallbackRendererBaseUrl;
+}
+
+async function isRendererReady() {
+  if (isRendererFromUrl()) {
+    return isHttpReady(getRendererUrl());
+  }
+  return fs.existsSync(rendererDistPath);
+}
+
+function loadPetRenderer(targetWindow) {
+  if (isRendererFromUrl()) {
+    return targetWindow.loadURL(getRendererUrl());
+  }
+  return targetWindow.loadFile(rendererDistPath);
+}
+
 function createPetWindow() {
   const bounds = getPetBounds();
 
@@ -155,8 +202,14 @@ function createPetWindow() {
     }
   });
 
-  petWindow.loadURL(rendererBaseUrl).catch((err) => {
-    logToFile(`[PET WINDOW] loadURL failed: ${String(err)}`);
+  loadPetRenderer(petWindow).catch((err) => {
+    logToFile(`[PET WINDOW] load renderer failed: ${String(err)}`);
+    if (!/^https?:\/\//i.test(configuredRendererBaseUrl)) {
+      const fallbackUrl = fallbackRendererBaseUrl;
+      petWindow.loadURL(fallbackUrl).catch((fallbackErr) => {
+        logToFile(`[PET WINDOW] fallback loadURL failed: ${String(fallbackErr)}`);
+      });
+    }
   });
 
   petWindow.once('ready-to-show', () => {
@@ -219,7 +272,7 @@ function buildSettingsWindowUrl({ onboarding = false } = {}) {
 async function resolveInitialSettingsTargetUrl() {
   try {
     const headers = launcherToken ? { Authorization: `Bearer ${launcherToken}` } : {};
-    const response = await fetchWithTimeout('http://127.0.0.1:18800/api/gateway/status', { headers }, 1400);
+    const response = await fetchWithTimeout(`${backendBaseUrl}/api/gateway/status`, { headers }, 1400);
     if (response.ok) {
       const data = await response.json();
       needsFirstTimeOnboarding = shouldOpenOnboardingFromGatewayStatus(data);
@@ -338,7 +391,8 @@ function createStartupWindow() {
   });
 }
 
-function completeStartupAndShowDesktop() {
+function completeStartupAndShowDesktop(options = {}) {
+  const { openPanel = openPanelOnReady } = options;
   if (startupCompleted) {
     return;
   }
@@ -358,11 +412,13 @@ function completeStartupAndShowDesktop() {
       createPetWindow();
     }
     const finish = async () => {
-      if (openPanelOnReady) {
+      if (openPanel) {
         const targetUrl = needsFirstTimeOnboarding
           ? buildSettingsWindowUrl({ onboarding: true })
           : await resolveInitialSettingsTargetUrl();
         createSettingsWindow(targetUrl);
+      } else if (openPanelOnReady) {
+        logToFile('[STARTUP] panel not ready, skip auto-open for now');
       }
       if (startupWindow && !startupWindow.isDestroyed()) {
         startupWindow.close();
@@ -373,17 +429,17 @@ function completeStartupAndShowDesktop() {
 }
 
 async function pollStartupProgress() {
-  const launcherReady = await isHttpReady('http://127.0.0.1:18800');
-  if (launcherReady) {
-    setStartupStepStatus('launcher', 'done', 'Launcher 已就绪');
+  const backendReady = await isHttpReady(backendBaseUrl);
+  if (backendReady) {
+    setStartupStepStatus('backend', 'done', '后端服务已就绪');
   } else {
-    setStartupStepStatus('launcher', 'running', '等待 launcher 响应…');
+    setStartupStepStatus('backend', 'running', '等待后端服务响应…');
   }
 
-  if (launcherReady) {
+  if (backendReady) {
     try {
       const headers = launcherToken ? { Authorization: `Bearer ${launcherToken}` } : {};
-      const response = await fetchWithTimeout('http://127.0.0.1:18800/api/gateway/status', { headers }, 1400);
+      const response = await fetchWithTimeout(`${backendBaseUrl}/api/gateway/status`, { headers }, 1400);
       if (response.ok) {
         const data = await response.json();
         needsFirstTimeOnboarding = shouldOpenOnboardingFromGatewayStatus(data);
@@ -404,25 +460,31 @@ async function pollStartupProgress() {
       setStartupStepStatus('gateway', 'pending', '暂未获取到 gateway 状态');
     }
   } else {
-    setStartupStepStatus('gateway', 'pending', '等待 launcher 状态…');
+    setStartupStepStatus('gateway', 'pending', '等待后端服务状态…');
   }
 
-  const panelReady = await isHttpReady('http://127.0.0.1:3000');
+  const panelReady = await isHttpReady(dashboardBaseUrl);
   if (panelReady) {
     setStartupStepStatus('petclaw', 'done', '桌面面板已就绪');
   } else {
     setStartupStepStatus('petclaw', 'running', '启动桌面面板服务中…');
   }
 
-  const rendererReady = await isHttpReady('http://127.0.0.1:5173');
+  const rendererReady = await isRendererReady();
   if (rendererReady) {
-    setStartupStepStatus('renderer', 'done', '桌宠渲染服务已就绪');
+    setStartupStepStatus('renderer', 'done', isRendererFromUrl() ? '桌宠渲染服务已就绪' : '桌宠渲染资源已就绪');
   } else {
-    setStartupStepStatus('renderer', 'running', '启动桌宠渲染服务中…');
+    setStartupStepStatus('renderer', 'running', isRendererFromUrl() ? '启动桌宠渲染服务中…' : '等待本地渲染资源（dist）…');
   }
 
-  if (launcherReady && panelReady && rendererReady) {
-    completeStartupAndShowDesktop();
+  if (rendererReady) {
+    if (!backendReady) {
+      setStartupStepStatus('backend', 'warn', '后端暂未就绪，桌宠先启动');
+    }
+    if (!panelReady) {
+      setStartupStepStatus('petclaw', 'warn', '面板暂未就绪，可稍后点击桌宠 S 按钮打开');
+    }
+    completeStartupAndShowDesktop({ openPanel: panelReady && openPanelOnReady });
   }
 }
 

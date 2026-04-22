@@ -3,8 +3,9 @@
   "version": "1.0.0",
   "scripts": {
     "dev": "vite",
-    "electron": "node scripts/wait-and-start.cjs",
-    "start": "concurrently -k \"npm run dev\" \"npm run electron\"",
+    "electron:dev": "node scripts/wait-and-start.cjs",
+    "start:dev": "concurrently -k \"npm run dev\" \"npm run electron:dev\"",
+    "start": "electron src/main.js",
     "build": "tsc && vite build",
     "preview": "vite preview"
   },

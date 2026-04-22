@@ -3,6 +3,7 @@ import {
   DIRECT_PET_TOKEN_PATH,
   getApiBaseUrl,
   getDirectGatewayBaseUrl,
+  isDirectGatewayEnabled,
   withLauncherAuthRequest,
 } from './config'
 import { ensureLauncherAuthSession, fetchWithAuthRetry } from './auth-bootstrap'
@@ -67,8 +68,17 @@ async function getGatewayStatus(): Promise<GatewayStatusResponse> {
 }
 
 async function isDirectGatewayHealthy(): Promise<boolean> {
+  if (!isDirectGatewayEnabled()) {
+    return false
+  }
+
+  const directBase = getDirectGatewayBaseUrl()
+  if (!directBase) {
+    return false
+  }
+
   try {
-    const res = await fetch(`${getDirectGatewayBaseUrl()}/health`)
+    const res = await fetch(`${directBase}/health`)
     return res.ok
   } catch {
     return false
@@ -76,8 +86,17 @@ async function isDirectGatewayHealthy(): Promise<boolean> {
 }
 
 async function isDirectPetChannelReady(): Promise<boolean> {
+  if (!isDirectGatewayEnabled()) {
+    return false
+  }
+
+  const directBase = getDirectGatewayBaseUrl()
+  if (!directBase) {
+    return false
+  }
+
   try {
-    const res = await fetch(`${getDirectGatewayBaseUrl()}${DIRECT_PET_TOKEN_PATH}`)
+    const res = await fetch(`${directBase}${DIRECT_PET_TOKEN_PATH}`)
     if (!res.ok) {
       return false
     }

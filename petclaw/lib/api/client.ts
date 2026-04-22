@@ -4,6 +4,7 @@ import {
   getApiBaseUrl,
   getDirectGatewayBaseUrl,
   getAuthRequestCredentials,
+  isDirectGatewayEnabled,
   withLauncherAuthHeader,
 } from './config'
 import { fetchWithAuthRetry } from './auth-bootstrap'
@@ -79,6 +80,10 @@ async function request<T>(
 }
 
 async function fetchDirectGatewayHealth(baseUrl?: string): Promise<{ uptime?: string } | null> {
+  if (!isDirectGatewayEnabled()) {
+    return null
+  }
+
   const targetBase = (baseUrl || getDirectGatewayBaseUrl()).trim()
   if (!targetBase) {
     return null
