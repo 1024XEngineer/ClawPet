@@ -24,10 +24,7 @@ type MinimaxTTS struct {
 }
 
 // newMinimaxTTS 创建MiniMax TTS实例
-// apiBase: API基础地址，为空时使用默认的MiniMax API地址
-// apiKey: API密钥
-// model: 模型名称，为空时使用speech-2.8-hd
-func newMinimaxTTS(apiBase, apiKey, model string) *MinimaxTTS {
+func newMinimaxTTS(apiBase, apiKey, model, voiceID string, extra map[string]any) *MinimaxTTS {
 	if apiBase == "" {
 		apiBase = "https://api.minimaxi.com/v1/t2a_v2"
 	}
@@ -43,6 +40,12 @@ func newMinimaxTTS(apiBase, apiKey, model string) *MinimaxTTS {
 			Timeout: 60 * time.Second,
 		},
 	}
+}
+
+func init() {
+	RegisterProvider("minimax", func(apiBase, apiKey, model, voiceID string, extra map[string]any) StreamingTTS {
+		return newMinimaxTTS(apiBase, apiKey, model, voiceID, extra)
+	})
 }
 
 // Synthesize 执行语音合成，将文本转换为语音
@@ -240,4 +243,53 @@ func (t *MinimaxTTS) parseChunk(data string) (AudioChunk, error) {
 // Close 关闭TTS连接（MiniMax不需要显式关闭）
 func (t *MinimaxTTS) Close() error {
 	return nil
+}
+
+// GetMinimaxVoices 获取 MiniMax 可用音色列表
+func GetMinimaxVoices(apiKey string) ([]MinimaxVoiceInfo, error) {
+	if apiKey == "" {
+		return nil, fmt.Errorf("api_key is required")
+	}
+
+	reqBody := map[string]any{
+		"voice_type": "all",
+	}
+
+	jsonData, err := json.Marshal(reqBody)
+	if err != nil {
+		return nil, fmt.Errorf("failed to marshal request: %w", err)
+	}
+
+	req, err := http.NewRequestWithContext(context.Background(), "POST",
+		"https://api.minimaxi.com/v1/get_voice", bytes.NewReader(jsonData))
+	if err != nil {
+		return nil, fmt.Errorf("failed to create request: %w", err)
+	}
+
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Authorization", "Bearer "+apiKey)
+
+	client := &http.Client{Timeout: 30 * time.Second}
+	resp, err := client.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("failed to send request: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		body, _ := io.ReadAll(resp.Body)
+		return nil, fmt.Errorf("API error (status %d): %s", resp.StatusCode, string(body))
+	}
+
+	var result MinimaxVoicesResp
+	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+		return nil, fmt.Errorf("failed to decode response: %w", err)
+	}
+
+	var voices []MinimaxVoiceInfo
+	voices = append(voices, result.SystemVoice...)
+	voices = append(voices, result.VoiceCloning...)
+	voices = append(voices, result.VoiceGeneration...)
+
+	return voices, nil
 }
