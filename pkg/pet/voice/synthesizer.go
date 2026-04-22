@@ -9,15 +9,15 @@ import (
 // Synthesizer 语音合成器
 // 整合TTS提供者和消息发送者，支持从带标签的文本中解析出多个语音片段及其参数
 type Synthesizer struct {
-	provider StreamingTTS // TTS提供者
-	sender   *Sender      // 消息发送者
+	loader *Loader // TTS加载器（动态获取当前provider）
+	sender *Sender // 消息发送者
 }
 
 // NewSynthesizer 创建新的合成器实例
-func NewSynthesizer(provider StreamingTTS, sender *Sender) *Synthesizer {
+func NewSynthesizer(loader *Loader, sender *Sender) *Synthesizer {
 	return &Synthesizer{
-		provider: provider,
-		sender:   sender,
+		loader: loader,
+		sender: sender,
 	}
 }
 
@@ -57,7 +57,12 @@ func (s *Synthesizer) ParseAndSynthesize(sessionID string, chatID int64, content
 			params.Vol = 1.0
 		}
 
-		ch, err := s.provider.Synthesize(parsed.Text, params)
+		provider := s.loader.GetProvider()
+		if provider == nil {
+			s.sender.SendError(sessionID, chatID, "no voice provider available")
+			continue
+		}
+		ch, err := provider.Synthesize(parsed.Text, params)
 		if err != nil {
 			s.sender.SendError(sessionID, chatID, err.Error())
 			continue
@@ -207,7 +212,19 @@ func (s *Synthesizer) SynthesizeToQueue(sessionID string, chatID int64, text str
 	go func() {
 		params := DefaultVoiceParams()
 
-		ch, err := s.provider.Synthesize(text, params)
+		provider := s.loader.GetProvider()
+		if provider == nil {
+			queue.UpdateSegment(seq, true, nil, 0, "no voice provider available")
+			if audioReady != nil {
+				select {
+				case audioReady <- seq:
+				default:
+				}
+			}
+			return
+		}
+
+		ch, err := provider.Synthesize(text, params)
 		if err != nil {
 			// 更新队列，标记错误
 			queue.UpdateSegment(seq, true, nil, 0, err.Error())
