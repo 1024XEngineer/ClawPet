@@ -1137,7 +1137,7 @@ export function OnboardingWizard({ onFinish }: OnboardingWizardProps) {
 
           <div className="shrink-0 border-t border-[#eadfce] bg-[#fff8ef]/95 px-4 py-4 backdrop-blur sm:px-6 xl:px-8">
             <div className="flex flex-wrap items-center justify-between gap-3">
-            <Button variant="ghost" onClick={handlePrevStep} disabled={step === 0 || setupRunning || summonInProgress} className="text-[#6a5644]">
+<Button variant="ghost" onClick={handlePrevStep} disabled={step === 0 || setupRunning || summonInProgress} className="text-[#6a5644]">
               上一步
             </Button>
             {step < 2 ? (
