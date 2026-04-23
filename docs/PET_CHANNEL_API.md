@@ -90,10 +90,10 @@ const ws = new WebSocket('ws://localhost:8080/ws?session=user_001');
       "avatar": "default"
     },
     "mbti": {
-      "ie": 60,
-      "sn": 40,
-      "tf": 30,
-      "jp": 50
+      "ie": 60.0,
+      "sn": 40.0,
+      "tf": 30.5,
+      "jp": 50.0
     },
     "emotion_state": {
       "pet_id": "pet_001",
@@ -124,10 +124,10 @@ const ws = new WebSocket('ws://localhost:8080/ws?session=user_001');
 | character.pet_persona_type | string | 性格类型 |
 | character.avatar | string | 头像/模型ID |
 | mbti | object | MBTI 配置 |
-| mbti.ie | int | 内向/外向 (0-100, 50中性, <50偏内向, >50偏外向) |
-| mbti.sn | int | 实感/直觉 (0-100, 50中性, <50偏实感, >50偏直觉) |
-| mbti.tf | int | 理性/感性 (0-100, 50中性, <50偏理性, >50偏感性) |
-| mbti.jp | int | 判断/感知 (0-100, 50中性, <50偏判断, >50偏感知) |
+| mbti.ie | float64 | 内向/外向 (0-100, 50中性, <50偏内向, >50偏外向) |
+| mbti.sn | float64 | 实感/直觉 (0-100, 50中性, <50偏实感, >50偏直觉) |
+| mbti.tf | float64 | 理性/感性 (0-100, 50中性, <50偏理性, >50偏感性) |
+| mbti.jp | float64 | 判断/感知 (0-100, 50中性, <50偏判断, >50偏感知) |
 | emotion_state | object | 当前情绪状态 |
 | emotion_state.emotion | string | 主要情绪标签 (neutral/joy/anger/sadness/disgust/surprise/fear) |
 | emotion_state.joy | int | 快乐值 0-100 |
