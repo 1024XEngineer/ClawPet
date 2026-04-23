@@ -49,6 +49,12 @@ contextBridge.exposeInMainWorld('electronAPI', {
    * @param {boolean} enabled - 是否启用引导模式
    */
   setOnboardingMode: (enabled) => ipcRenderer.send('set-onboarding-mode', Boolean(enabled)),
+
+  /**
+   * 完成引导流程
+   * 通知主进程解除 onboarding 锁并打开控制台页面
+   */
+  completeOnboarding: () => ipcRenderer.send('complete-onboarding'),
   
   // ==================== 窗口控制 ====================
   

@@ -570,7 +570,7 @@ export const onboardingApi = {
   status: async () => {
     try {
       return await request<{ code?: string; data?: OnboardingStatusData } | OnboardingStatusData>(
-        API_ENDPOINTS.ONBOARDING.STATUS,
+        API_ENDPOINTS.PET.ONBOARDING,
       )
     } catch (error) {
       if (isNotFoundError(error)) {
@@ -583,7 +583,7 @@ export const onboardingApi = {
   saveDraft: async (payload: OnboardingPayloadV1) => {
     try {
       return await request<{ code?: string; data?: { saved: boolean; draftUpdatedAt?: string } }>(
-        API_ENDPOINTS.ONBOARDING.DRAFT,
+        API_ENDPOINTS.PET.ONBOARDING,
         {
           method: 'PUT',
           body: JSON.stringify(payload),
@@ -605,7 +605,7 @@ export const onboardingApi = {
   complete: async (params: { schemaVersion: 1; onboardingId: string }) => {
     try {
       return await request<{ code?: string; data?: { completed: boolean; completedAt?: string } }>(
-        API_ENDPOINTS.ONBOARDING.COMPLETE,
+        API_ENDPOINTS.PET.ONBOARDING,
         {
           method: 'POST',
           body: JSON.stringify(params),
@@ -628,7 +628,7 @@ export const onboardingApi = {
   reset: async (reason = 'manual-rerun') => {
     try {
       return await request<{ code?: string; data?: { completed: boolean; hasDraft: boolean } }>(
-        API_ENDPOINTS.ONBOARDING.RESET,
+        API_ENDPOINTS.PET.ONBOARDING,
         {
           method: 'POST',
           body: JSON.stringify({ reason }),

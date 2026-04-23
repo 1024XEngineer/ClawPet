@@ -6,13 +6,14 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
-	"github.com/gorilla/websocket"
 	"net/http"
 	"net/url"
 	"regexp"
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/gorilla/websocket"
 
 	"github.com/sipeed/picoclaw/pkg/bus"
 	"github.com/sipeed/picoclaw/pkg/channels"
@@ -695,11 +696,14 @@ func (s *petStreamer) Finalize(ctx context.Context, content string) error {
 	s.waitMu.Unlock()
 
 	// 等待 audioPlayLoop 处理完剩余音频
-	select {
-	case <-s.audioPlayDone:
-		logger.DebugCF("pet", "Finalize: audioPlayLoop finished", nil)
-	case <-time.After(30 * time.Second):
-		logger.WarnCF("pet", "Finalize: audioPlayLoop timeout", nil)
+	// 某些前端不会发送 audio_done，避免在 Finalize 阶段长时间阻塞导致“无回复”体感。
+	if s.voiceEnabled && s.audioQueue != nil && !s.audioQueue.IsEmpty() {
+		select {
+		case <-s.audioPlayDone:
+			logger.DebugCF("pet", "Finalize: audioPlayLoop finished", nil)
+		case <-time.After(30 * time.Second):
+			logger.WarnCF("pet", "Finalize: audioPlayLoop timeout (fallback continue)", nil)
+		}
 	}
 
 	s.waitMu.Lock()
@@ -722,8 +726,10 @@ func (s *petStreamer) Finalize(ctx context.Context, content string) error {
 	s.hasReadyAudioCount = 0
 
 	// 发送最终状态块（带情绪状态）
+	// 语音模式下 Update 不会持续推文本，这里补发纯文本，避免前端出现“无回复”。
+	finalText := parsePureText(content)
 	s.chatID++
-	s.channel.sendStreamChunk(s.sessionID, s.chatID, "final", "", true)
+	s.channel.sendStreamChunk(s.sessionID, s.chatID, "final", finalText, true)
 
 	return nil
 }
@@ -922,8 +928,10 @@ func (c *PetChannel) sendVoicePush(sessionID string, pushType string, data any) 
 		return err
 	}
 
+	matched := 0
 	for _, pc := range c.connections {
 		if pc.sessionID == sessionID || sessionID == "broadcast" {
+			matched++
 			if err := pc.writeJSON(PetStreamResponse{
 				Type:      "push",
 				PushType:  pushType,
@@ -931,9 +939,21 @@ func (c *PetChannel) sendVoicePush(sessionID string, pushType string, data any) 
 				IsFinal:   false,
 				Timestamp: time.Now().Unix(),
 			}); err != nil {
+				logger.WarnCF("pet", "sendVoicePush writeJSON failed", map[string]any{
+					"session_id": sessionID,
+					"push_type":  pushType,
+					"error":      err.Error(),
+				})
 				return err
 			}
 		}
+	}
+
+	if matched == 0 {
+		logger.WarnCF("pet", "sendVoicePush no matched connection", map[string]any{
+			"session_id": sessionID,
+			"push_type":  pushType,
+		})
 	}
 	return nil
 }
@@ -1014,6 +1034,12 @@ func (s *petStreamer) processVoiceSegmentsLocked(content string) {
 			}
 			buffer = s.voiceBuffer.String()
 			if text != "" {
+				chunkText := parsePureText(text)
+				if strings.TrimSpace(chunkText) != "" {
+					s.chatID++
+					s.channel.sendStreamChunk(s.sessionID, s.chatID, "text", chunkText, false)
+				}
+
 				s.seqCounter++
 				err := s.voiceSynthesizer.SynthesizeToQueue(
 					s.sessionID,
@@ -1198,7 +1224,13 @@ func (s *petStreamer) sendAudioSegmentAsync(seg *voice.AudioSegment, isFinal boo
 			"is_final": isFinal,
 			"error":    seg.Error,
 		}
-		s.channel.sendVoicePush(s.sessionID, "audio_and_voice", data)
+		if err := s.channel.sendVoicePush(s.sessionID, "audio_and_voice", data); err != nil {
+			logger.WarnCF("pet", "sendAudioSegmentAsync: send voice push failed", map[string]any{
+				"seq":      seg.Seq,
+				"sessionID": s.sessionID,
+				"error":    err.Error(),
+			})
+		}
 		return
 	}
 
@@ -1220,7 +1252,13 @@ func (s *petStreamer) sendAudioSegmentAsync(seg *voice.AudioSegment, isFinal boo
 		"duration":  seg.Duration,
 	})
 
-	s.channel.sendVoicePush(s.sessionID, "audio_and_voice", data)
+	if err := s.channel.sendVoicePush(s.sessionID, "audio_and_voice", data); err != nil {
+		logger.WarnCF("pet", "sendAudioSegmentAsync: send voice push failed", map[string]any{
+			"seq":      seg.Seq,
+			"sessionID": s.sessionID,
+			"error":    err.Error(),
+		})
+	}
 
 	logger.DebugCF("pet", "sent audio segment async", map[string]any{
 		"seq":      seg.Seq,

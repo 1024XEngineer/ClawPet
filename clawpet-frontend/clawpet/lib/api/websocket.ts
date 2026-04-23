@@ -516,7 +516,7 @@ export class PicoClawWebSocket {
       if (chatId !== null) {
         if (
           this.activeAssistantLastChatId !== null &&
-          chatId <= this.activeAssistantLastChatId
+          chatId < this.activeAssistantLastChatId
         ) {
           return
         }
@@ -866,6 +866,71 @@ export class PicoClawWebSocket {
   get isConnected(): boolean {
     return this.ws?.readyState === WebSocket.OPEN
   }
+
+  async getVoiceModelList(): Promise<PetResponse & { data?: VoiceModelListData }> {
+    return this.requestAction<VoiceModelListData>("voice_model_list_get")
+  }
+
+  async getVoiceModel(name: string): Promise<PetResponse & { data?: VoiceModelData }> {
+    return this.requestAction<VoiceModelData>("voice_model_get", { name })
+  }
+
+  async updateVoiceModel(data: {
+    name: string
+    api_key?: string
+    api_base?: string
+    model?: string
+    voice_id?: string
+    enabled?: boolean
+    extra?: Record<string, unknown>
+  }): Promise<PetResponse> {
+    return this.requestAction("voice_model_update", data)
+  }
+
+  async setDefaultVoiceModel(name: string): Promise<PetResponse> {
+    return this.requestAction("voice_model_set_default", { name })
+  }
+
+  async getVoiceModelVoices(data: {
+    provider: string
+    model?: string
+    api_key?: string
+    secret_key?: string
+  }): Promise<PetResponse & { data?: VoiceModelVoicesData }> {
+    return this.requestAction<VoiceModelVoicesData>("voice_model_get_voices", data)
+  }
+}
+
+export interface VoiceModelData {
+  name: string
+  provider: string
+  api_base: string
+  model: string
+  voice_id: string
+  api_key: string
+  extra: Record<string, unknown>
+  enabled: boolean
+  is_default: boolean
+}
+
+export interface VoiceModelListData {
+  models: VoiceModelData[]
+  default: string
+}
+
+export interface VoiceModelVoicesData {
+  provider: string
+  volcengine_voices?: VoiceModelVoice[]
+}
+
+export interface VoiceModelVoice {
+  VoiceType: string
+  Name: string
+  Gender: string
+  Age: string
+  Description: string
+  Language: string
+  Emotion: string
 }
 
 let wsInstance: PicoClawWebSocket | null = null

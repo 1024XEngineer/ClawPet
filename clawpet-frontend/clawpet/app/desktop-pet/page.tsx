@@ -24,6 +24,23 @@ interface BubbleData {
   audio?: string
 }
 
+function decodeBase64Audio(value: string): Uint8Array | null {
+  const base64 = value.replace(/^data:audio\/[^;]+;base64,/, "").replace(/\s+/g, "")
+  if (!base64) {
+    return null
+  }
+  try {
+    const binary = window.atob(base64)
+    const bytes = new Uint8Array(binary.length)
+    for (let i = 0; i < binary.length; i += 1) {
+      bytes[i] = binary.charCodeAt(i)
+    }
+    return bytes
+  } catch {
+    return null
+  }
+}
+
 const happyImages = ["/pets/happy1.gif", "/pets/happy2.gif"]
 const standbyImages = ["/pets/standby1.gif", "/pets/standby2.gif", "/pets/standby3.gif"]
 
@@ -127,6 +144,7 @@ export default function DesktopPetPage() {
   const controlsVisibleRef = useRef(false)
   const currentImageRef = useRef(currentImage)
   const audioRef = useRef<HTMLAudioElement | null>(null)
+  const audioObjectUrlRef = useRef<string | null>(null)
   const bubbleTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
 
   currentImageRef.current = currentImage
@@ -157,19 +175,43 @@ export default function DesktopPetPage() {
       transitionTo(resolvePetState(data))
 
       if (data.audio) {
-        let audioUrl = data.audio
-        if (!audioUrl.startsWith("data:") && !audioUrl.startsWith("http")) {
+        const rawAudio = data.audio.trim()
+        const bytes = decodeBase64Audio(rawAudio)
+        let audioUrl = rawAudio
+
+        console.info("[petclaw] desktop bubble audio received", {
+          textLength: data.text?.length ?? 0,
+          rawLength: rawAudio.length,
+          decodedBytes: bytes?.length ?? 0,
+          emotion: data.emotion ?? "",
+        })
+
+        if (audioObjectUrlRef.current) {
+          URL.revokeObjectURL(audioObjectUrlRef.current)
+          audioObjectUrlRef.current = null
+        }
+
+        if (bytes && bytes.length > 0) {
+          const blob = new Blob([bytes], { type: "audio/mpeg" })
+          audioUrl = URL.createObjectURL(blob)
+          audioObjectUrlRef.current = audioUrl
+        } else if (!audioUrl.startsWith("data:") && !audioUrl.startsWith("http")) {
           audioUrl = `data:audio/mp3;base64,${audioUrl}`
         }
+
         if (audioRef.current) {
           audioRef.current.pause()
         }
         audioRef.current = new Audio(audioUrl)
+        audioRef.current.onerror = (errorEvent) => {
+          console.warn("[petclaw] desktop audio element error", errorEvent)
+        }
         audioRef.current.onended = () => {
           setBubble("")
           transitionTo("standby")
         }
-        audioRef.current.play().catch(() => {
+        audioRef.current.play().catch((playbackError) => {
+          console.warn("[petclaw] desktop failed to play audio", playbackError)
           setBubble("")
         })
       } else {
@@ -190,6 +232,10 @@ export default function DesktopPetPage() {
       }
       if (audioRef.current) {
         audioRef.current.pause()
+      }
+      if (audioObjectUrlRef.current) {
+        URL.revokeObjectURL(audioObjectUrlRef.current)
+        audioObjectUrlRef.current = null
       }
     }
   }, [transitionTo])

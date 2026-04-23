@@ -563,25 +563,30 @@ $directGatewayUrl = "http://127.0.0.1:$currentGatewayPort"
 Ensure-NpmDeps -ProjectDir $petclawDir -DisplayName "petclaw"
 
 $escapedDashboard = $DashboardUrl.Replace("'", "''")
+$escapedElectronLauncherToken = $LauncherToken.Replace("'", "''")
 $existingElectron = @(Get-Process -Name electron -ErrorAction SilentlyContinue)
 if ($existingElectron.Count -gt 0) {
   Write-Step "Electron desktop pet already running."
 } else {
   Write-Step "Starting electron desktop pet process (startup page mode)..."
-  $electronCmd = "`$env:GOCLAW_BACKEND_URL='http://127.0.0.1:18790'; `$env:GOCLAW_DASHBOARD_URL='$escapedDashboard'; `$env:GOCLAW_PET_RENDERER_PATH='/desktop-pet'; `$env:GOCLAW_OPEN_PANEL_ON_READY='1'; `$env:GOCLAW_SHOW_STARTUP='1'; Set-Location '$petclawDir'; npx electron electron/main.js"
+  $electronCmd = "`$env:GOCLAW_BACKEND_URL='http://127.0.0.1:18790'; `$env:GOCLAW_DASHBOARD_URL='$escapedDashboard'; `$env:GOCLAW_LAUNCHER_TOKEN='$escapedElectronLauncherToken'; `$env:PICOCLAW_LAUNCHER_TOKEN='$escapedElectronLauncherToken'; `$env:GOCLAW_PET_RENDERER_PATH='/desktop-pet'; `$env:GOCLAW_OPEN_PANEL_ON_READY='1'; `$env:GOCLAW_SHOW_STARTUP='1'; Set-Location '$petclawDir'; npx electron electron/main.js"
   Start-DetachedPowerShell -Title "GoClaw - Electron" -Command $electronCmd
 }
 
-Write-Step "Starting gateway on 127.0.0.1:18790..."
-$escapedGatewayConfigPath = $GatewayConfigPath.Replace("'", "''")
-$escapedGatewayHomeDir = $gatewayHomeDir.Replace("'", "''")
-$gatewayCmd = "`$env:PICOCLAW_HOME='$escapedGatewayHomeDir'; `$env:PICOCLAW_CONFIG='$escapedGatewayConfigPath'; Set-Location '$repoRoot'; & '$mainBinary' gateway -E"
-Start-DetachedPowerShell -Title "GoClaw - Gateway" -Command $gatewayCmd
+if ($gatewayReady) {
+  Write-Step "Gateway is already running (launcher-managed), skip direct start."
+} else {
+  Write-Step "Starting gateway on 127.0.0.1:18790..."
+  $escapedGatewayConfigPath = $GatewayConfigPath.Replace("'", "''")
+  $escapedGatewayHomeDir = $gatewayHomeDir.Replace("'", "''")
+  $gatewayCmd = "`$env:PICOCLAW_HOME='$escapedGatewayHomeDir'; `$env:PICOCLAW_CONFIG='$escapedGatewayConfigPath'; Set-Location '$repoRoot'; & '$mainBinary' gateway -E"
+  Start-DetachedPowerShell -Title "GoClaw - Gateway" -Command $gatewayCmd
 
-if (-not (Wait-HttpReady -Url "http://127.0.0.1:18790/health" -TimeoutSeconds 35)) {
-  throw "Gateway did not become ready on http://127.0.0.1:18790"
+  if (-not (Wait-HttpReady -Url "http://127.0.0.1:18790/health" -TimeoutSeconds 35)) {
+    throw "Gateway did not become ready on http://127.0.0.1:18790"
+  }
+  Write-Step "Gateway is ready at http://127.0.0.1:18790"
 }
-Write-Step "Gateway is ready at http://127.0.0.1:18790"
 
 if ((Test-HttpReady -Url $DashboardUrl -TimeoutSeconds 2)) {
   Write-Step "Petclaw dashboard already running at $DashboardUrl"
