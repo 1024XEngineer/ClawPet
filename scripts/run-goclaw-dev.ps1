@@ -83,6 +83,103 @@ function Wait-HttpReady {
   return $false
 }
 
+function Invoke-LauncherApi {
+  param(
+    [string]$Method,
+    [string]$Path,
+    [string]$LauncherToken,
+    $Body = $null
+  )
+
+  $uri = "http://127.0.0.1:18800$Path"
+  $headers = @{ Authorization = "Bearer $LauncherToken" }
+
+  try {
+    if ($null -ne $Body) {
+      return Invoke-RestMethod -Uri $uri -Method $Method -Headers $headers -ContentType "application/json" -Body ($Body | ConvertTo-Json -Depth 8) -TimeoutSec 10
+    }
+
+    return Invoke-RestMethod -Uri $uri -Method $Method -Headers $headers -TimeoutSec 10
+  } catch {
+    if ($_.Exception.Response) {
+      $statusCode = [int]$_.Exception.Response.StatusCode
+      $reader = New-Object System.IO.StreamReader($_.Exception.Response.GetResponseStream())
+      $bodyText = $reader.ReadToEnd()
+      if ($bodyText.Length -gt 400) {
+        $bodyText = $bodyText.Substring(0, 400)
+      }
+      throw "Launcher API $Method $Path failed ($statusCode): $bodyText"
+    }
+    throw
+  }
+}
+
+function Wait-GatewayRunning {
+  param(
+    [string]$LauncherToken,
+    [int]$TimeoutSeconds = 20,
+    [int]$IntervalMs = 700
+  )
+
+  $start = Get-Date
+  while (((Get-Date) - $start).TotalSeconds -lt $TimeoutSeconds) {
+    try {
+      $status = Invoke-LauncherApi -Method GET -Path "/api/gateway/status" -LauncherToken $LauncherToken
+      if ($status.gateway_status -eq "running") {
+        return $true
+      }
+    } catch {
+    }
+    Start-Sleep -Milliseconds $IntervalMs
+  }
+  return $false
+}
+
+function Start-DetachedPowerShell {
+  param(
+    [string]$Title,
+    [string]$Command
+  )
+
+  if ($NoTerminalWindows) {
+    $argList = @(
+      "-NoProfile",
+      "-ExecutionPolicy", "Bypass",
+      "-Command",
+      $Command
+    )
+    Start-Process -FilePath "powershell" -WindowStyle Hidden -ArgumentList $argList | Out-Null
+    return
+  }
+
+  $argList = @(
+    "-NoExit",
+    "-ExecutionPolicy", "Bypass",
+    "-Command",
+    "`$Host.UI.RawUI.WindowTitle='$Title'; $Command"
+  )
+
+  Start-Process -FilePath "powershell" -ArgumentList $argList -WindowStyle Hidden | Out-Null
+}
+
+function Invoke-Npm {
+  param(
+    [string]$WorkingDir,
+    [string]$Arguments
+  )
+
+  $old = Get-Location
+  try {
+    Set-Location $WorkingDir
+    & npm $Arguments.Split(" ")
+    if (-not $?) {
+      throw "npm $Arguments failed in $WorkingDir"
+    }
+  } finally {
+    Set-Location $old
+  }
+}
+
 function Get-ListeningPidsForPort {
   param([int]$Port)
 
@@ -167,6 +264,110 @@ function Ensure-NpmDeps {
 if (-not (Test-Path $frontendRoot)) {
   throw "frontend root not found: $frontendRoot"
 }
+
+function Find-FreeTcpPort {
+  param(
+    [int]$Start = 18790,
+    [int]$End = 18990
+  )
+
+  for ($p = $Start; $p -le $End; $p++) {
+    if (-not (Test-PortListening -Port $p)) {
+      return $p
+    }
+  }
+
+  throw "No free TCP port found in range $Start-$End"
+}
+
+function Ensure-GatewayPortAvailable {
+  param([string]$ConfigPath)
+
+  $fixedGatewayPort = 18790
+
+  if (-not (Test-Path $ConfigPath)) {
+    return
+  }
+
+  Normalize-JsonFileNoBom -Path $ConfigPath
+  $raw = [System.IO.File]::ReadAllText($ConfigPath, [System.Text.Encoding]::UTF8)
+  try {
+    $cfg = $raw | ConvertFrom-Json
+  } catch {
+    Write-Warning "Unable to parse config for gateway port check; skip port auto-adjust. Error: $($_.Exception.Message)"
+    return
+  }
+
+  if ($null -eq $cfg.gateway) {
+    $cfg | Add-Member -MemberType NoteProperty -Name gateway -Value @{ host = "127.0.0.1"; port = 18790 }
+  }
+
+  $targetPort = [int]$cfg.gateway.port
+  if ($targetPort -ne $fixedGatewayPort) {
+    Write-Warning "Gateway port in config is $targetPort; forcing fixed port $fixedGatewayPort to keep integration stable."
+    $targetPort = $fixedGatewayPort
+    $cfg.gateway.port = $targetPort
+    $json = $cfg | ConvertTo-Json -Depth 30
+    Write-JsonNoBom -Path $ConfigPath -Json $json
+  }
+
+  if (-not (Test-PortListening -Port $targetPort)) {
+    return
+  }
+
+  Write-Step "Gateway target port $targetPort is occupied, attempting cleanup..."
+  Stop-PidsOnPort -Port $targetPort
+  Start-Sleep -Milliseconds 250
+
+  if (-not (Test-PortListening -Port $targetPort)) {
+    Write-Step "Port $targetPort released."
+    return
+  }
+
+  $holderPid = Get-FirstListeningPidOnPort -Port $targetPort
+  throw "Port $targetPort is still occupied by PID $holderPid. Fixed gateway port mode is enabled; please stop that process and retry."
+}
+
+function Get-GatewayPortFromConfig {
+  param([string]$ConfigPath)
+
+  if (-not (Test-Path $ConfigPath)) {
+    return 18790
+  }
+
+  $raw = [System.IO.File]::ReadAllText($ConfigPath, [System.Text.Encoding]::UTF8)
+  $cfg = ($raw | ConvertFrom-Json)
+  if ($null -eq $cfg.gateway -or [int]$cfg.gateway.port -le 0) {
+    return 18790
+  }
+  return [int]$cfg.gateway.port
+}
+
+function Set-GatewayPortInConfig {
+  param(
+    [string]$ConfigPath,
+    [int]$Port
+  )
+
+  if (-not (Test-Path $ConfigPath)) {
+    return
+  }
+
+  $raw = [System.IO.File]::ReadAllText($ConfigPath, [System.Text.Encoding]::UTF8)
+  $cfg = ($raw | ConvertFrom-Json)
+  if ($null -eq $cfg.gateway) {
+    $cfg | Add-Member -MemberType NoteProperty -Name gateway -Value @{ host = "127.0.0.1"; port = $Port }
+  } else {
+    $cfg.gateway.port = $Port
+  }
+  $json = $cfg | ConvertTo-Json -Depth 30
+  Write-JsonNoBom -Path $ConfigPath -Json $json
+}
+
+if (-not (Test-Path $repoRoot)) {
+  throw "Repository root not found: $repoRoot"
+}
+
 if (-not (Test-Path $petclawDir)) {
   throw "petclaw directory not found: $petclawDir"
 }
@@ -190,6 +391,111 @@ if ($Restart) {
 } else {
   Start-Sleep -Milliseconds 400
 }
+
+if (-not [string]::IsNullOrWhiteSpace($resolvedLauncherBin)) {
+  if ((Test-HttpReady -Url "http://127.0.0.1:18800" -TimeoutSeconds 2) -or (Test-PortListening -Port 18800)) {
+    Write-Step "PicoClaw launcher already running on :18800"
+  } else {
+    Write-Step "Starting PicoClaw launcher..."
+    $configDir = Split-Path -Parent $LauncherConfigPath
+    if (-not [string]::IsNullOrWhiteSpace($configDir) -and -not (Test-Path $configDir)) {
+      New-Item -ItemType Directory -Path $configDir -Force | Out-Null
+    }
+
+    $escapedLauncherToken = $LauncherToken.Replace("'", "''")
+    $escapedLauncherConfigPath = $LauncherConfigPath.Replace("'", "''")
+    $escapedConfigDir = $configDir.Replace("'", "''")
+    $escapedMainBinary = $mainBinary.Replace("'", "''")
+    $launcherCmd = "`$env:PICOCLAW_BINARY='$escapedMainBinary'; `$env:PICOCLAW_LAUNCHER_TOKEN='$escapedLauncherToken'; `$env:PICOCLAW_HOME='$escapedConfigDir'; `$env:PICOCLAW_CONFIG='$escapedLauncherConfigPath'; & '$resolvedLauncherBin' -no-browser '$escapedLauncherConfigPath'"
+    Start-DetachedPowerShell -Title "GoClaw - Launcher" -Command $launcherCmd
+
+    if (-not (Wait-HttpReady -Url "http://127.0.0.1:18800" -TimeoutSeconds 25)) {
+      throw "Launcher did not become ready on http://127.0.0.1:18800. Please check launcher window logs."
+    } else {
+      Write-Step "Launcher is ready at http://127.0.0.1:18800"
+    }
+  }
+} else {
+  if (-not (Test-HttpReady -Url "http://127.0.0.1:18800" -TimeoutSeconds 2)) {
+    throw "Launcher binary not found and http://127.0.0.1:18800 is unavailable. Please pass -LauncherBin <path>."
+  }
+  Write-Warning "Launcher binary not found, but detected existing launcher on :18800."
+}
+
+Write-Step "Ensuring gateway is running before opening UI..."
+try {
+  $gatewayReady = $false
+  $gatewayPreconditionBlocked = $false
+  for ($attempt = 1; $attempt -le 2; $attempt++) {
+    Ensure-GatewayPortAvailable -ConfigPath $LauncherConfigPath
+
+    $gatewayStatus = Invoke-LauncherApi -Method GET -Path "/api/gateway/status" -LauncherToken $LauncherToken
+    if ($gatewayStatus.gateway_status -eq "stopped" -or $gatewayStatus.gateway_status -eq "error") {
+      try {
+        $null = Invoke-LauncherApi -Method POST -Path "/api/gateway/start" -LauncherToken $LauncherToken
+      } catch {
+        if ($_.Exception.Message -match "failed \(400\)") {
+          $latest = Invoke-LauncherApi -Method GET -Path "/api/gateway/status" -LauncherToken $LauncherToken
+          $reason = ""
+          if ($latest.gateway_start_reason) {
+            $reason = "$($latest.gateway_start_reason)"
+          }
+          if ([string]::IsNullOrWhiteSpace($reason)) {
+            $reason = "gateway start preconditions are not met yet"
+          }
+          Write-Warning "Gateway not started yet: $reason. Continuing startup so onboarding/UI can open."
+          $gatewayPreconditionBlocked = $true
+          break
+        }
+        throw
+      }
+    }
+
+    if (Wait-GatewayRunning -LauncherToken $LauncherToken -TimeoutSeconds 25) {
+      $gatewayReady = $true
+      break
+    }
+
+    $latest = Invoke-LauncherApi -Method GET -Path "/api/gateway/status" -LauncherToken $LauncherToken
+    $logs = Invoke-LauncherApi -Method GET -Path "/api/gateway/logs" -LauncherToken $LauncherToken
+    $joinedLogs = ""
+    if ($logs.logs) {
+      $joinedLogs = ($logs.logs -join "`n")
+    }
+
+    $currentPort = Get-GatewayPortFromConfig -ConfigPath $LauncherConfigPath
+    $portConflict = (Test-PortListening -Port $currentPort)
+    $bindError = $joinedLogs -match "listen tcp .*:${currentPort}: bind"
+
+    if ($attempt -lt 2 -and ($bindError -or $portConflict)) {
+      Write-Warning "Gateway failed on fixed port $currentPort; retrying once after cleanup..."
+      Stop-PidsOnPort -Port $currentPort
+      Start-Sleep -Milliseconds 300
+      continue
+    }
+
+    $reason = ""
+    if ($latest.gateway_start_reason) {
+      $reason = " reason: $($latest.gateway_start_reason)"
+    }
+    throw "Gateway is not running after startup.$reason"
+  }
+
+  if (-not $gatewayReady -and -not $gatewayPreconditionBlocked) {
+    throw "Gateway is not running after startup."
+  }
+
+  if ($gatewayReady) {
+    Write-Step "Gateway is running."
+  } else {
+    Write-Step "Gateway is not running yet (waiting for onboarding/model setup)."
+  }
+} catch {
+  throw "Gateway preflight failed: $($_.Exception.Message)"
+}
+
+$currentGatewayPort = Get-GatewayPortFromConfig -ConfigPath $LauncherConfigPath
+$directGatewayUrl = "http://127.0.0.1:$currentGatewayPort"
 
 Ensure-NpmDeps -ProjectDir $petclawDir -DisplayName "petclaw"
 
@@ -218,11 +524,8 @@ if ((Test-HttpReady -Url $DashboardUrl -TimeoutSeconds 2)) {
   Write-Step "Petclaw dashboard already running at $DashboardUrl"
 } else {
   if ($PetclawMode -eq "prod") {
-    $buildId = Join-Path $petclawDir ".next\BUILD_ID"
-    if (-not (Test-Path $buildId)) {
-      Write-Step "Petclaw prod build not found, running npm run build..."
-      Invoke-Npm -WorkingDir $petclawDir -Arguments "run build"
-    }
+    Write-Step "Building petclaw dashboard (prod mode)..."
+    Invoke-Npm -WorkingDir $petclawDir -Arguments "run build"
     Write-Step "Starting petclaw dashboard (prod mode)..."
     $petclawCmd = "`$env:NEXT_PUBLIC_PICOCLAW_API_URL='http://127.0.0.1:18790'; `$env:NEXT_PUBLIC_PICOCLAW_WS_URL='ws://127.0.0.1:18790'; `$env:NEXT_PUBLIC_PICOCLAW_DIRECT_GATEWAY_URL='http://127.0.0.1:18790'; `$env:NEXT_PUBLIC_PICOCLAW_USE_CREDENTIALS='false'; Set-Location '$petclawDir'; npm run start -- --hostname 127.0.0.1 --port 3000"
   } else {

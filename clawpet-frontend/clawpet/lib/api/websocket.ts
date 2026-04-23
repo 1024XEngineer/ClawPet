@@ -38,6 +38,13 @@ interface PetResponse {
   request_id?: string
 }
 
+interface PendingActionRequest {
+  action: string
+  resolve: (resp: PetResponse) => void
+  reject: (err: Error) => void
+  timeoutId: number
+}
+
 interface PetPush {
   type: string
   push_type: string
@@ -114,6 +121,7 @@ export class PicoClawWebSocket {
     settle: () => void
     fail: (err: Error) => void
   } | null = null
+  private pendingActionRequests: Map<string, PendingActionRequest[]> = new Map()
 
   async connect(): Promise<void> {
     return new Promise(async (resolve, reject) => {
@@ -654,11 +662,107 @@ export class PicoClawWebSocket {
   }
 
   private handleResponse(resp: PetResponse): void {
+    const actionKey = typeof resp.action === "string" ? resp.action : ""
+    if (actionKey) {
+      const queue = this.pendingActionRequests.get(actionKey)
+      if (queue && queue.length > 0) {
+        const pending = queue.shift()
+        if (queue.length === 0) {
+          this.pendingActionRequests.delete(actionKey)
+        }
+        if (pending) {
+          window.clearTimeout(pending.timeoutId)
+          if (resp.status === "error") {
+            const message = String(
+              resp.error || (resp.data?.error as string) || `Action failed: ${actionKey}`,
+            )
+            pending.reject(new Error(message))
+          } else {
+            pending.resolve(resp)
+          }
+        }
+      }
+    }
+
     if (resp.status === "error") {
       const message =
         String(resp.error || (resp.data?.error as string) || "Unknown error")
       this.emit({ type: "error", data: message })
     }
+  }
+
+  async requestAction<T extends Record<string, unknown> = Record<string, unknown>>(
+    action: string,
+    data?: Record<string, unknown>,
+    timeoutMs = 12000,
+  ): Promise<PetResponse & { data?: T }> {
+    if (!action.trim()) {
+      throw new Error("Action is required")
+    }
+
+    if (this.ws?.readyState !== WebSocket.OPEN) {
+      await this.connect()
+    }
+
+    if (this.wsMode !== "pet") {
+      throw new Error("PET channel is not available for action request")
+    }
+
+    return new Promise<PetResponse & { data?: T }>((resolve, reject) => {
+      const requestId = `req-${++this.msgIdCounter}-${Date.now()}`
+      const msg: PetRequest = {
+        action,
+        data,
+        request_id: requestId,
+      }
+
+      const timeoutId = window.setTimeout(() => {
+        const queue = this.pendingActionRequests.get(action)
+        if (!queue) {
+          return
+        }
+        const idx = queue.findIndex((item) => item.timeoutId === timeoutId)
+        if (idx >= 0) {
+          queue.splice(idx, 1)
+        }
+        if (queue.length === 0) {
+          this.pendingActionRequests.delete(action)
+        }
+        reject(new Error(`Action timeout: ${action}`))
+      }, timeoutMs)
+
+      const pending: PendingActionRequest = {
+        action,
+        resolve: (resp) => resolve(resp as PetResponse & { data?: T }),
+        reject,
+        timeoutId,
+      }
+
+      const queue = this.pendingActionRequests.get(action)
+      if (queue) {
+        queue.push(pending)
+      } else {
+        this.pendingActionRequests.set(action, [pending])
+      }
+
+      if (this.ws?.readyState === WebSocket.OPEN) {
+        this.sendRaw(msg)
+        return
+      }
+
+      window.clearTimeout(timeoutId)
+      const pendingQueue = this.pendingActionRequests.get(action)
+      if (pendingQueue) {
+        const idx = pendingQueue.indexOf(pending)
+        if (idx >= 0) {
+          pendingQueue.splice(idx, 1)
+        }
+        if (pendingQueue.length === 0) {
+          this.pendingActionRequests.delete(action)
+        }
+      }
+      reject(new Error("Connection not ready"))
+    })
   }
 
   disconnect(): void {

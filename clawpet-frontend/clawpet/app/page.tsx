@@ -3,6 +3,7 @@
 import dynamic from "next/dynamic"
 import { useEffect, useState } from "react"
 
+import { onboardingApi, type OnboardingStatusData } from "@/lib/api"
 import { cn } from "@/lib/utils"
 
 import { ChatArea } from "@/components/chat-area"
@@ -42,7 +43,7 @@ type LayoutMode = "full" | "compact" | "ultra"
 export default function Home() {
   const [activeNav, setActiveNav] = useState("聊天")
   const [bootState, setBootState] = useState<"checking" | "onboarding" | "ready">(
-    "ready",
+    "checking",
   )
   const [uiMood, setUiMood] = useState<
     "low" | "medium" | "high" | "critical"
@@ -72,23 +73,75 @@ export default function Home() {
   }, [])
 
   useEffect(() => {
-    try {
-      const hasForcedOnboarding =
-        new URLSearchParams(window.location.search).get("onboarding") === "1"
-      if (hasForcedOnboarding) {
-        setBootState("onboarding")
-        return
-      }
+    let cancelled = false
 
-      const onboardingState = loadOnboardingState()
-      if (onboardingState?.completed) {
-        applyMoodFromOnboardingState()
-        setBootState("ready")
-        return
+    const bootstrap = async () => {
+      try {
+        const searchParams = new URLSearchParams(window.location.search)
+        const hasForcedOnboarding = searchParams.get("onboarding") === "1"
+        const isConsoleSurface = searchParams.get("surface") === "console"
+
+        if (isConsoleSurface) {
+          const onboardingState = loadOnboardingState()
+          if (onboardingState?.completed) {
+            applyMoodFromOnboardingState()
+          }
+          if (!cancelled) {
+            setBootState("ready")
+          }
+          return
+        }
+
+        if (hasForcedOnboarding) {
+          if (!cancelled) {
+            setBootState("onboarding")
+          }
+          return
+        }
+
+        const raw = await onboardingApi.status()
+        if (cancelled) {
+          return
+        }
+
+        const status: OnboardingStatusData =
+          "data" in (raw as Record<string, unknown>) &&
+          (raw as { data?: OnboardingStatusData }).data
+            ? (raw as { data: OnboardingStatusData }).data
+            : (raw as OnboardingStatusData)
+
+        if (status.completed) {
+          const level = status.payload?.studentInsights?.pressurePlan?.level
+          if (
+            level === "low" ||
+            level === "medium" ||
+            level === "high" ||
+            level === "critical"
+          ) {
+            setUiMood(level)
+          } else {
+            applyMoodFromOnboardingState()
+          }
+          setBootState("ready")
+          return
+        }
+
+        setBootState("onboarding")
+      } catch {
+        const onboardingState = loadOnboardingState()
+        if (onboardingState?.completed) {
+          applyMoodFromOnboardingState()
+          setBootState("ready")
+          return
+        }
+        setBootState("onboarding")
       }
-      setBootState("onboarding")
-    } catch {
-      setBootState("ready")
+    }
+
+    void bootstrap()
+
+    return () => {
+      cancelled = true
     }
   }, [])
 

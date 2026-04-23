@@ -101,6 +101,11 @@ func NewPetService(msgBus *bus.MessageBus, cfg PetServiceConfig) (*PetService, e
 			fmt.Printf("pet: failed to load actions: %v\n", err)
 		}
 
+		defaultModelName := ""
+		if cfg.Config != nil {
+			defaultModelName = cfg.Config.Agents.Defaults.GetModelName()
+		}
+
 		if s.memoryStore != nil {
 			// 获取压缩配置
 			compressionConfig := s.configManager.GetCompression()
@@ -130,7 +135,7 @@ func NewPetService(msgBus *bus.MessageBus, cfg PetServiceConfig) (*PetService, e
 			var provider providers.LLMProvider
 			var modelCfg *config.ModelConfig
 			if cfg.Config != nil {
-				rawModel := cfg.Config.Agents.Defaults.GetModelName()
+				rawModel := defaultModelName
 				for _, m := range cfg.Config.ModelList {
 					if m.Model == rawModel {
 						modelCfg = m
@@ -158,7 +163,16 @@ func NewPetService(msgBus *bus.MessageBus, cfg PetServiceConfig) (*PetService, e
 				s.memoryStore,
 				s.charManager,
 				provider,
-				cfg.Config.Agents.Defaults.GetModelName(),
+				defaultModelName,
+			)
+		}
+		if s.userProfileManager == nil {
+			s.userProfileManager = userprofile.NewManager(
+				workspacePath,
+				s.memoryStore,
+				s.charManager,
+				nil,
+				defaultModelName,
 			)
 		}
 		if cfg.ConfigPath != "" {
