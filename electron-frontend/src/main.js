@@ -5,15 +5,19 @@ const fs = require('fs');
 
 let petWindow = null;
 let settingsWindow = null;
+let onboardingWindow = null;
 let startupWindow = null;
 let startupPollTimer = null;
 let startupCompleted = false;
+let petHoverMonitorTimer = null;
+let petHovering = false;
 
 const PET_WIDTH = 280;
 const PET_HEIGHT = 380;
 
 const userDataPath = path.join(os.homedir(), '.goclaw');
 app.setPath('userData', userDataPath);
+const onboardingStatePath = path.join(userDataPath, 'onboarding-state.json');
 
 if (!fs.existsSync(userDataPath)) {
   fs.mkdirSync(userDataPath, { recursive: true });
@@ -21,6 +25,93 @@ if (!fs.existsSync(userDataPath)) {
 
 const logFilePath = path.join(userDataPath, 'logs.txt');
 const logStream = fs.createWriteStream(logFilePath, { flags: 'a' });
+
+function loadOnboardingState() {
+  try {
+    if (!fs.existsSync(onboardingStatePath)) {
+      return null;
+    }
+    const raw = fs.readFileSync(onboardingStatePath, 'utf-8');
+    if (!raw.trim()) {
+      return null;
+    }
+    return JSON.parse(raw);
+  } catch (error) {
+    logToFile(`[ONBOARDING] failed to read onboarding state: ${String(error)}`);
+    return null;
+  }
+}
+
+function saveOnboardingState(state) {
+  try {
+    fs.writeFileSync(onboardingStatePath, JSON.stringify(state, null, 2), 'utf-8');
+  } catch (error) {
+    logToFile(`[ONBOARDING] failed to save onboarding state: ${String(error)}`);
+  }
+}
+
+function markOnboardingCompleted() {
+  saveOnboardingState({
+    completed: true,
+    completedAt: new Date().toISOString(),
+  });
+}
+
+function markOnboardingPending(reason = 'unknown') {
+  saveOnboardingState({
+    completed: false,
+    requestedAt: new Date().toISOString(),
+    reason,
+  });
+}
+
+function stopAllMediaPlayback(reason = 'unknown') {
+  logToFile(`[ONBOARDING] force-stop-media (${reason})`);
+  if (settingsWindow && !settingsWindow.isDestroyed()) {
+    settingsWindow.webContents.send('force-stop-media');
+  }
+  if (petWindow && !petWindow.isDestroyed()) {
+    petWindow.webContents.send('force-stop-media');
+  }
+}
+
+function hideRuntimeWindowsForOnboarding() {
+  if (settingsWindow && !settingsWindow.isDestroyed()) {
+    settingsWindow.hide();
+  }
+  if (petWindow && !petWindow.isDestroyed()) {
+    petWindow.hide();
+  }
+}
+
+function enterOnboardingMode(reason = 'manual', { rerun = false } = {}) {
+  onboardingLocked = true;
+  markOnboardingPending(reason);
+  stopAllMediaPlayback(reason);
+  hideRuntimeWindowsForOnboarding();
+  createOnboardingWindow(buildSettingsWindowUrl({ onboarding: true, rerun }));
+}
+
+function leaveOnboardingMode({ completed } = { completed: false }) {
+  if (completed) {
+    onboardingLocked = false;
+    markOnboardingCompleted();
+  }
+
+  if (onboardingWindow && !onboardingWindow.isDestroyed()) {
+    onboardingWindow.close();
+    onboardingWindow = null;
+  }
+
+  if (petWindow && !petWindow.isDestroyed()) {
+    resetPetWindow();
+    petWindow.show();
+  }
+
+  if (completed) {
+    createSettingsWindow(buildSettingsWindowUrl());
+  }
+}
 
 function logToFile(message) {
   const timestamp = new Date().toISOString();
@@ -30,6 +121,10 @@ function logToFile(message) {
 }
 
 logToFile('Electron application started');
+
+const persistedOnboarding = loadOnboardingState();
+onboardingLocked = !(persistedOnboarding && persistedOnboarding.completed === true);
+logToFile(`[ONBOARDING] startup locked=${onboardingLocked}`);
 
 const rendererBaseUrl = (process.env.ELECTRON_RENDERER_URL || 'http://localhost:5173').trim().replace(/\/+$/, '');
 const dashboardBaseUrl = (process.env.GOCLAW_DASHBOARD_URL || 'http://127.0.0.1:3000').trim().replace(/\/+$/, '');
@@ -70,6 +165,10 @@ function shouldOpenOnboardingFromGatewayStatus(data) {
   );
 }
 
+function isOnboardingUrl(targetUrl) {
+  return /\/onboarding(?:[/?]|$)|[?&]onboarding=1\b|[?&]mode=rerun\b/i.test(targetUrl || '');
+}
+
 function getPetBounds() {
   const display = screen.getPrimaryDisplay();
   const area = display.workArea;
@@ -79,6 +178,58 @@ function getPetBounds() {
     width: PET_WIDTH,
     height: PET_HEIGHT,
   };
+}
+
+function setPetWindowClickThrough(enabled) {
+  if (!petWindow || petWindow.isDestroyed()) {
+    return;
+  }
+
+  try {
+    if (enabled) {
+      petWindow.setIgnoreMouseEvents(true, { forward: true });
+    } else {
+      petWindow.setIgnoreMouseEvents(false);
+    }
+  } catch (error) {
+    logToFile(`[PET WINDOW] setIgnoreMouseEvents failed: ${String(error)}`);
+  }
+}
+
+function startPetHoverMonitor() {
+  if (petHoverMonitorTimer) {
+    return;
+  }
+
+  petHoverMonitorTimer = setInterval(() => {
+    if (!petWindow || petWindow.isDestroyed()) {
+      stopPetHoverMonitor();
+      return;
+    }
+
+    const cursor = screen.getCursorScreenPoint();
+    const bounds = petWindow.getBounds();
+    const hoveringNow =
+      cursor.x >= bounds.x &&
+      cursor.x <= bounds.x + bounds.width &&
+      cursor.y >= bounds.y &&
+      cursor.y <= bounds.y + bounds.height;
+
+    if (hoveringNow === petHovering) {
+      return;
+    }
+
+    petHovering = hoveringNow;
+    setPetWindowClickThrough(!hoveringNow);
+  }, 120);
+}
+
+function stopPetHoverMonitor() {
+  if (petHoverMonitorTimer) {
+    clearInterval(petHoverMonitorTimer);
+    petHoverMonitorTimer = null;
+  }
+  petHovering = false;
 }
 
 function updateStartupPercent() {
@@ -160,10 +311,15 @@ function createPetWindow() {
   });
 
   petWindow.once('ready-to-show', () => {
-    petWindow.show();
+    setPetWindowClickThrough(true);
+    startPetHoverMonitor();
+    if (!onboardingLocked) {
+      petWindow.show();
+    }
   });
 
   petWindow.on('closed', () => {
+    stopPetHoverMonitor();
     petWindow = null;
     app.quit();
   });
@@ -178,17 +334,18 @@ function resetPetWindow() {
   petWindow.setAlwaysOnTop(true);
   petWindow.setSkipTaskbar(true);
   petWindow.setBounds(getPetBounds(), true);
+  setPetWindowClickThrough(true);
+  startPetHoverMonitor();
 }
 
 function withLauncherToken(rawUrl) {
-  if (!launcherToken) {
-    return rawUrl;
-  }
-
   try {
     const parsed = new URL(rawUrl);
+    parsed.searchParams.set('ui_rev', '20260420_3');
     if (!parsed.searchParams.has('token')) {
-      parsed.searchParams.set('token', launcherToken);
+      if (launcherToken) {
+        parsed.searchParams.set('token', launcherToken);
+      }
     }
     return parsed.toString();
   } catch {
@@ -210,10 +367,10 @@ function buildDashboardUrl(pathname = '') {
   return withLauncherToken(resolved);
 }
 
-function buildSettingsWindowUrl({ onboarding = false } = {}) {
+function buildSettingsWindowUrl({ onboarding = false, rerun = false } = {}) {
   return onboarding
-    ? buildDashboardUrl('/onboarding?mode=rerun')
-    : buildDashboardUrl();
+    ? buildDashboardUrl(rerun ? '/onboarding?mode=rerun' : '/onboarding')
+    : buildDashboardUrl('/?surface=console');
 }
 
 async function resolveInitialSettingsTargetUrl() {
@@ -223,9 +380,6 @@ async function resolveInitialSettingsTargetUrl() {
     if (response.ok) {
       const data = await response.json();
       needsFirstTimeOnboarding = shouldOpenOnboardingFromGatewayStatus(data);
-      if (needsFirstTimeOnboarding) {
-        return buildSettingsWindowUrl({ onboarding: true });
-      }
     }
   } catch {
     // Keep default panel route when status is temporarily unavailable.
@@ -249,14 +403,15 @@ function createSettingsWindow(targetUrl = buildSettingsWindowUrl()) {
   }
 
   const { width, height } = screen.getPrimaryDisplay().workAreaSize;
-  const settingsWidth = Math.round(width * 0.7);
-  const settingsHeight = Math.round(height * 0.7);
+  const settingsWidth = Math.round(width * 0.72);
+  const settingsHeight = Math.round(height * 0.76);
 
   settingsWindow = new BrowserWindow({
     width: settingsWidth,
     height: settingsHeight,
     minWidth: 600,
     minHeight: 400,
+    center: true,
     show: false,
     frame: false,
     transparent: false,
@@ -295,6 +450,72 @@ function createSettingsWindow(targetUrl = buildSettingsWindowUrl()) {
 
   settingsWindow.on('closed', () => {
     settingsWindow = null;
+  });
+}
+
+function createOnboardingWindow(targetUrl = buildSettingsWindowUrl({ onboarding: true })) {
+  if (onboardingWindow && !onboardingWindow.isDestroyed()) {
+    if (targetUrl && onboardingWindow.webContents.getURL() !== targetUrl) {
+      onboardingWindow.loadURL(targetUrl).catch((err) => {
+        logToFile(`[ONBOARDING WINDOW] reload failed: ${String(err)}`);
+      });
+    }
+    if (onboardingWindow.isMinimized()) {
+      onboardingWindow.restore();
+    }
+    onboardingWindow.show();
+    onboardingWindow.focus();
+    return;
+  }
+
+  const { width, height } = screen.getPrimaryDisplay().workAreaSize;
+  const onboardingWidth = Math.round(width * 0.82);
+  const onboardingHeight = Math.round(height * 0.86);
+
+  onboardingWindow = new BrowserWindow({
+    width: onboardingWidth,
+    height: onboardingHeight,
+    minWidth: 980,
+    minHeight: 680,
+    center: true,
+    show: false,
+    frame: false,
+    transparent: false,
+    backgroundColor: '#f7ecdf',
+    alwaysOnTop: false,
+    autoHideMenuBar: true,
+    webPreferences: {
+      nodeIntegration: false,
+      contextIsolation: true,
+      preload: path.join(__dirname, 'preload.js')
+    }
+  });
+
+  const onboardingUrl = targetUrl || buildSettingsWindowUrl({ onboarding: true });
+  logToFile(`[ONBOARDING WINDOW] opening ${onboardingUrl}`);
+
+  onboardingWindow.webContents.on('did-fail-load', (_event, code, desc, url) => {
+    logToFile(`[ONBOARDING WINDOW] did-fail-load code=${code} desc=${desc} url=${url}`);
+  });
+
+  onboardingWindow.webContents.on('did-finish-load', () => {
+    logToFile('[ONBOARDING WINDOW] did-finish-load');
+  });
+
+  onboardingWindow.loadURL(onboardingUrl).catch((err) => {
+    logToFile(`[ONBOARDING WINDOW] loadURL failed: ${String(err)}`);
+  });
+
+  onboardingWindow.once('ready-to-show', () => {
+    onboardingWindow.show();
+    onboardingWindow.focus();
+    if (shouldOpenDevTools) {
+      onboardingWindow.webContents.openDevTools({ mode: 'detach' });
+    }
+  });
+
+  onboardingWindow.on('closed', () => {
+    onboardingWindow = null;
   });
 }
 
@@ -359,9 +580,7 @@ function completeStartupAndShowDesktop() {
     }
     const finish = async () => {
       if (openPanelOnReady) {
-        const targetUrl = needsFirstTimeOnboarding
-          ? buildSettingsWindowUrl({ onboarding: true })
-          : await resolveInitialSettingsTargetUrl();
+        const targetUrl = await resolveInitialSettingsTargetUrl();
         createSettingsWindow(targetUrl);
       }
       if (startupWindow && !startupWindow.isDestroyed()) {
@@ -442,17 +661,33 @@ ipcMain.on('open-settings', async () => {
 
 ipcMain.on('open-onboarding', () => {
   logToFile('[IPC] open-onboarding');
-  createSettingsWindow(buildSettingsWindowUrl({ onboarding: true }));
+  enterOnboardingMode('manual-rerun', { rerun: true });
 });
 
 ipcMain.on('set-onboarding-mode', (event, enabled) => {
   logToFile(`[IPC] set-onboarding-mode ${Boolean(enabled)}`);
-  const target = BrowserWindow.fromWebContents(event.sender);
-  if (target === petWindow) {
-    resetPetWindow();
+  if (enabled) {
+    const currentUrl = event.sender.getURL();
+    enterOnboardingMode('renderer-request', {
+      rerun: /[?&]mode=rerun\b/i.test(currentUrl),
+    });
+    const target = BrowserWindow.fromWebContents(event.sender);
+    if (target === onboardingWindow && onboardingWindow && !onboardingWindow.isDestroyed()) {
+      onboardingWindow.focus();
+    }
     return;
   }
-  logToFile('[IPC] set-onboarding-mode ignored for non-pet window');
+  logToFile('[IPC] set-onboarding-mode false ignored (completion required)');
+});
+
+ipcMain.on('complete-onboarding', () => {
+  logToFile('[IPC] complete-onboarding');
+  leaveOnboardingMode({ completed: true });
+});
+
+ipcMain.on('set-pet-click-through', (_event, enabled) => {
+  logToFile(`[IPC] set-pet-click-through ${Boolean(enabled)}`);
+  setPetWindowClickThrough(Boolean(enabled));
 });
 
 ipcMain.on('window-minimize', (event) => {
@@ -531,6 +766,20 @@ ipcMain.on('chat-history', (_event, history) => {
 });
 
 ipcMain.on('show-bubble', (_event, data) => {
+  const audio = typeof data?.audio === 'string' ? data.audio.trim() : '';
+  const text = typeof data?.text === 'string' ? data.text.trim() : '';
+  const emotion = typeof data?.emotion === 'string' ? data.emotion.trim() : '';
+  const fingerprint = `${audio}|${text}|${emotion}`;
+  const now = Date.now();
+
+  if (fingerprint && fingerprint === lastBubbleFingerprint && now - lastBubbleAt < 2500) {
+    logToFile('[IPC] show-bubble dropped duplicated payload');
+    return;
+  }
+
+  lastBubbleFingerprint = fingerprint;
+  lastBubbleAt = now;
+
   if (petWindow && !petWindow.isDestroyed()) {
     petWindow.webContents.send('bubble-show', data);
   }
@@ -551,6 +800,9 @@ app.whenReady().then(() => {
     return;
   }
   createPetWindow();
+  if (onboardingLocked) {
+    enterOnboardingMode('first-run');
+  }
 });
 
 app.on('window-all-closed', () => {

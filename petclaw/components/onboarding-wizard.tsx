@@ -22,8 +22,15 @@ import {
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Progress } from "@/components/ui/progress"
-import { API_ENDPOINTS, getApiBaseUrl } from "@/lib/api"
+import {
+  API_ENDPOINTS,
+  getApiBaseUrl,
+  onboardingApi,
+  type OnboardingPayloadV1,
+  type OnboardingStatusData,
+} from "@/lib/api"
 import { fetchWithAuthRetry } from "@/lib/api/auth-bootstrap"
+import { getWebSocketInstance } from "@/lib/api/websocket"
 import { saveOnboardingState, SCHEDULE_ICS_NAME_STORAGE_KEY } from "@/lib/onboarding"
 import { buildLearningRhythm, buildPressurePlan } from "@/lib/student-insights"
 
@@ -88,6 +95,21 @@ const showcaseLines = [
   "把状态调到舒服区，桌宠会更懂你的小情绪。",
 ]
 const MIN_SUMMON_LOADING_MS = 6200
+const ONBOARDING_SESSION_ID_STORAGE_KEY = "petclaw.onboarding.sessionId"
+
+function normalizeLanguageCode(input: string): string {
+  const value = input.trim().toLowerCase()
+  if (!value) {
+    return "zh-CN"
+  }
+  if (value === "中文" || value === "简体中文" || value === "zh" || value === "zh-cn") {
+    return "zh-CN"
+  }
+  if (value === "english" || value === "en" || value === "en-us") {
+    return "en-US"
+  }
+  return input.trim()
+}
 
 function pickRandomIndex(size: number, current?: number): number {
   if (size <= 1) return 0
@@ -96,6 +118,20 @@ function pickRandomIndex(size: number, current?: number): number {
     next = Math.floor(Math.random() * size)
   }
   return next
+}
+
+function createOnboardingSessionId(): string {
+  if (typeof crypto !== "undefined" && typeof crypto.randomUUID === "function") {
+    return crypto.randomUUID()
+  }
+  return `onb-${Date.now()}-${Math.random().toString(36).slice(2, 10)}`
+}
+
+function getErrorMessage(error: unknown): string {
+  if (error instanceof Error && error.message) {
+    return error.message
+  }
+  return "请求失败，请稍后重试"
 }
 
 function withStatus(tasks: SetupTask[], id: string, status: SetupStatus): SetupTask[] {
@@ -149,14 +185,190 @@ export function OnboardingWizard({ onFinish }: OnboardingWizardProps) {
   const [isMajorMenuOpen, setIsMajorMenuOpen] = useState(false)
   const [displayProgress, setDisplayProgress] = useState(0)
   const [isFinishing, setIsFinishing] = useState(false)
+  const [statusLoading, setStatusLoading] = useState(true)
+  const [draftSyncError, setDraftSyncError] = useState<string | null>(null)
+  const [onboardingSessionId, setOnboardingSessionId] = useState("")
   const displayProgressRef = useRef(0)
   const majorMenuRef = useRef<HTMLDivElement | null>(null)
 
   const hasElectronApi = typeof window !== "undefined" && Boolean(window.electronAPI)
 
+  const isRerunMode =
+    typeof window !== "undefined" &&
+    new URLSearchParams(window.location.search).get("mode") === "rerun"
+
+  const resolveSessionId = () => {
+    if (onboardingSessionId) {
+      return onboardingSessionId
+    }
+
+    let id = ""
+    try {
+      id = window.localStorage.getItem(ONBOARDING_SESSION_ID_STORAGE_KEY) || ""
+    } catch {
+    }
+
+    if (!id) {
+      id = createOnboardingSessionId()
+      try {
+        window.localStorage.setItem(ONBOARDING_SESSION_ID_STORAGE_KEY, id)
+      } catch {
+      }
+    }
+
+    setOnboardingSessionId(id)
+    return id
+  }
+
+  const hydrateFromPayload = (payload: OnboardingPayloadV1) => {
+    setProfile((prev) => ({
+      ...prev,
+      displayName: payload.profile.displayName || prev.displayName,
+      role: payload.profile.role || prev.role,
+      language: payload.profile.language || prev.language,
+    }))
+
+    setApp({
+      autoConnectOnLaunch: payload.app.autoConnectOnLaunch,
+      enableDesktopBubble: payload.app.enableDesktopBubble,
+      openConsoleOnPetClick: payload.app.openConsoleOnPetClick,
+    })
+
+    const petName = payload.pet.petName?.trim() || ""
+    if (petName) {
+      setNickname(petName)
+      setCustomNickname(petName)
+    }
+
+    if (
+      payload.pet.personality === "阴阳怪气" ||
+      payload.pet.personality === "抽象发疯" ||
+      payload.pet.personality === "甜心夹子"
+    ) {
+      setPersonalityTone(payload.pet.personality)
+    }
+
+    setActivityLevel(payload.pet.voiceStyle === "活泼碎碎念" ? 70 : 58)
+  }
+
+  const getPayloadForStep = (nextStep: number): OnboardingPayloadV1 => {
+    const finalNickname = customNickname.trim() || nickname
+    const voiceStyle = activityLevel >= 65 ? "活泼碎碎念" : "温和陪伴型"
+
+    return {
+      schemaVersion: 1,
+      onboardingId: resolveSessionId(),
+      step: (Math.min(Math.max(nextStep, 0), 2) + 1) as 1 | 2 | 3,
+      profile: {
+        displayName: profile.displayName.trim() || finalNickname,
+        role: profile.role,
+        language: profile.language,
+      },
+      pet: {
+        petName: finalNickname,
+        personality: personalityTone,
+        voiceStyle,
+      },
+      app: {
+        ...app,
+        enableDesktopBubble: permissions.popupReminder,
+      },
+      studentInsights: {
+        learningRhythm: learningRhythmInsight,
+        pressurePlan: pressurePlanInsight,
+      },
+    }
+  }
+
+  const saveDraft = async (nextStep: number, silent = false): Promise<boolean> => {
+    try {
+      await onboardingApi.saveDraft(getPayloadForStep(nextStep))
+      setDraftSyncError(null)
+      return true
+    } catch (error) {
+      if (!silent) {
+        setDraftSyncError(`草稿保存失败：${getErrorMessage(error)}`)
+      }
+      return false
+    }
+  }
+
   useEffect(() => {
     displayProgressRef.current = displayProgress
   }, [displayProgress])
+
+  useEffect(() => {
+    if (typeof window === "undefined") {
+      setStatusLoading(false)
+      return
+    }
+
+    let cancelled = false
+
+    const bootstrap = async () => {
+      const localId = resolveSessionId()
+
+      try {
+        if (isRerunMode) {
+          try {
+            await onboardingApi.reset('manual-rerun')
+          } catch {
+          }
+        }
+
+        const raw = await onboardingApi.status()
+        if (cancelled) return
+
+        const status: OnboardingStatusData =
+          "data" in (raw as Record<string, unknown>) &&
+          (raw as { data?: OnboardingStatusData }).data
+            ? (raw as { data: OnboardingStatusData }).data
+            : (raw as OnboardingStatusData)
+
+        if (status.onboardingId && status.onboardingId !== onboardingSessionId) {
+          setOnboardingSessionId(status.onboardingId)
+          try {
+            window.localStorage.setItem(
+              ONBOARDING_SESSION_ID_STORAGE_KEY,
+              status.onboardingId,
+            )
+          } catch {
+          }
+        } else {
+          setOnboardingSessionId(localId)
+        }
+
+        if (status.completed && !isRerunMode) {
+          onFinish()
+          return
+        }
+
+        if (status.hasDraft && status.payload) {
+          hydrateFromPayload(status.payload)
+          const restoredStep = Math.min(
+            Math.max((status.step ?? status.payload.step ?? 1) - 1, 0),
+            2,
+          )
+          setStep(restoredStep)
+        }
+      } catch (error) {
+        if (!cancelled) {
+          setDraftSyncError(`初始化草稿加载失败：${getErrorMessage(error)}`)
+          setOnboardingSessionId(localId)
+        }
+      } finally {
+        if (!cancelled) {
+          setStatusLoading(false)
+        }
+      }
+    }
+
+    void bootstrap()
+
+    return () => {
+      cancelled = true
+    }
+  }, [isRerunMode, onFinish])
 
   const learningRhythmInsight = useMemo(() => {
     return buildLearningRhythm({
@@ -239,7 +451,7 @@ export function OnboardingWizard({ onFinish }: OnboardingWizardProps) {
     }
     if (step === 0) {
       if (icsFileName) {
-        return `收到课表 ${icsFileName}，我会尽量避开上课时段提醒你。`
+        return `已记录课表文件 ${icsFileName}，后续会把它作为你的作息参考占位信息。`
       }
       if (selectedBreakers.length > 3) {
         return "我看到你的压力点比较密集，后续提醒会更聚焦、少废话。"
@@ -403,6 +615,31 @@ export function OnboardingWizard({ onFinish }: OnboardingWizardProps) {
     }
   }
 
+  const handlePrevStep = async () => {
+    if (step === 0 || setupRunning || summonInProgress) {
+      return
+    }
+    await saveDraft(step, true)
+    setStep((prev) => Math.max(0, prev - 1))
+  }
+
+  const handleNextStep = async () => {
+    if (setupRunning || summonInProgress) {
+      return
+    }
+    const nextStep = Math.min(2, step + 1)
+    await saveDraft(nextStep)
+    setStep(nextStep)
+  }
+
+  const handleOpenCompletionCard = async () => {
+    if (setupRunning || summonInProgress) {
+      return
+    }
+    await saveDraft(3)
+    setShowCompletionCard(true)
+  }
+
   const complete = async () => {
     const trimmedApiKey = apiKey.trim()
     if (trimmedApiKey) {
@@ -437,11 +674,80 @@ export function OnboardingWizard({ onFinish }: OnboardingWizardProps) {
     })
 
     if (!ready) {
-      setSetupError("自动配置未完全成功，已先进入控制台；你可以稍后在配置页重试。")
+      setSetupError("后端环境尚未就绪，无法完成初始化。请修复后重试。")
+      setSummonInProgress(false)
+      setDisplayProgress(0)
+      return
     }
 
     const finalNickname = customNickname.trim() || nickname
     const voiceStyle = activityLevel >= 65 ? "活泼碎碎念" : "温和陪伴型"
+
+    const completedPayload = getPayloadForStep(2)
+    const finalSessionId = completedPayload.onboardingId
+
+    const draftOk = await saveDraft(2)
+    if (!draftOk) {
+      setSummonInProgress(false)
+      setDisplayProgress(0)
+      return
+    }
+
+    try {
+      const ws = getWebSocketInstance()
+
+      const personaType =
+        personalityTone === "甜心夹子"
+          ? "gentle"
+          : personalityTone === "抽象发疯"
+            ? "playful"
+            : "cool"
+
+      await ws.requestAction("onboarding_config", {
+        pet_name: finalNickname,
+        pet_persona: personalityTone,
+        pet_persona_type: personaType,
+      })
+
+      const profileResp = await ws.requestAction("user_profile_update", {
+        display_name: profile.displayName.trim() || finalNickname,
+        role: profile.role,
+        language: normalizeLanguageCode(profile.language),
+        chronotype: learningRhythmInsight.chronotype,
+        personality_tone: personalityTone,
+        anxiety_level: anxietyLevel,
+        pressure_level: pressurePlanInsight.level,
+        extra: {
+          focus_windows: learningRhythmInsight.focusWindows,
+          quiet_windows: learningRhythmInsight.quietWindows,
+          selected_breakers: selectedBreakers,
+          reminder_cadence: learningRhythmInsight.reminderCadence,
+          learning_summary: learningRhythmInsight.summary,
+        },
+      })
+
+      const profileStatus = String(profileResp.data?.status || "").toLowerCase()
+      if (profileStatus && profileStatus !== "ok") {
+        throw new Error(`用户画像提交失败: ${profileStatus}`)
+      }
+    } catch (error) {
+      setSetupError(`初始化画像提交失败：${getErrorMessage(error)}`)
+      setSummonInProgress(false)
+      setDisplayProgress(0)
+      return
+    }
+
+    try {
+      await onboardingApi.complete({
+        schemaVersion: 1,
+        onboardingId: finalSessionId,
+      })
+    } catch (error) {
+      setSetupError(`初始化提交失败：${getErrorMessage(error)}`)
+      setSummonInProgress(false)
+      setDisplayProgress(0)
+      return
+    }
 
     try {
       window.localStorage.setItem("petclaw.userIdentity", "student")
@@ -483,10 +789,22 @@ export function OnboardingWizard({ onFinish }: OnboardingWizardProps) {
         pressurePlan: pressurePlanInsight,
       },
     })
+
     setIsFinishing(true)
     window.setTimeout(() => {
       onFinish()
     }, 420)
+  }
+
+  if (statusLoading) {
+    return (
+      <div className="flex h-full w-full items-center justify-center rounded-[1.6rem] border border-[#e8dccd] bg-[linear-gradient(145deg,rgba(255,252,248,0.96),rgba(255,246,238,0.9))]">
+        <div className="inline-flex items-center gap-2 rounded-full border border-white/80 bg-white/85 px-4 py-2 text-sm text-[#7a5a40]">
+          <Loader2 className="h-4 w-4 animate-spin text-amber-600" />
+          正在恢复初始化进度...
+        </div>
+      </div>
+    )
   }
 
   return (
@@ -544,6 +862,11 @@ export function OnboardingWizard({ onFinish }: OnboardingWizardProps) {
             </div>
             <h1 className="animate-float text-xl font-semibold text-gradient-warm text-shadow-warm sm:text-2xl xl:text-3xl">{steps[step]}</h1>
             <p className="mt-1 text-sm text-gradient-milestone font-decorated">阶段：<span className="animate-text-shimmer">{milestones[step]}</span> · 已完成 {step + 1}/3</p>
+            {draftSyncError && (
+              <p className="mt-2 rounded-lg border border-rose-200 bg-rose-50 px-3 py-1.5 text-xs text-rose-700">
+                {draftSyncError}
+              </p>
+            )}
           </div>
 
           <div className="min-h-0 flex-1 overflow-y-auto overscroll-contain px-4 py-4 sm:px-6 sm:py-5 xl:px-8 xl:py-6">
@@ -663,7 +986,7 @@ export function OnboardingWizard({ onFinish }: OnboardingWizardProps) {
 
                 <div className={`rounded-2xl border border-white/70 bg-[linear-gradient(130deg,rgba(255,255,255,0.9),rgba(255,246,232,0.9),rgba(237,249,255,0.82))] p-5 ${moodTheme.cardGlow}`}>
                   <p className="mb-3 text-2xl font-semibold text-gradient-warm text-shadow-soft">课表导入（.ics）</p>
-                  <p className="mb-2 text-sm text-gradient-milestone">导入后可自动识别上课时段，避免在上课时高频打扰。</p>
+                  <p className="mb-2 text-sm text-gradient-milestone">当前仅记录课表文件名，作为后续课表配置的占位信息。</p>
                   <label
                     onDragOver={(e) => {
                       e.preventDefault()
@@ -814,19 +1137,19 @@ export function OnboardingWizard({ onFinish }: OnboardingWizardProps) {
 
           <div className="shrink-0 border-t border-[#eadfce] bg-[#fff8ef]/95 px-4 py-4 backdrop-blur sm:px-6 xl:px-8">
             <div className="flex flex-wrap items-center justify-between gap-3">
-            <Button variant="ghost" onClick={() => setStep((prev) => Math.max(0, prev - 1))} disabled={step === 0 || setupRunning} className="text-[#6a5644]">
+<Button variant="ghost" onClick={handlePrevStep} disabled={step === 0 || setupRunning || summonInProgress} className="text-[#6a5644]">
               上一步
             </Button>
             {step < 2 ? (
               <Button
-                onClick={() => setStep((prev) => Math.min(2, prev + 1))}
+                onClick={handleNextStep}
                 disabled={setupRunning || summonInProgress}
                 className={`rounded-full px-6 text-white transition-colors duration-500 ${moodTheme.accent}`}
               >
                 <span className="animate-text-shimmer">下一步喵~</span>
               </Button>
             ) : (
-              <Button onClick={() => setShowCompletionCard(true)} disabled={setupRunning || summonInProgress} className="rounded-full bg-[#ff9100] px-6 text-white hover:bg-[#e67f00]">
+              <Button onClick={handleOpenCompletionCard} disabled={setupRunning || summonInProgress} className="rounded-full bg-[#ff9100] px-6 text-white hover:bg-[#e67f00]">
                 {setupRunning ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Check className="mr-2 h-4 w-4" />}<span className="animate-text-shimmer">大功告成，召唤桌宠</span>
               </Button>
             )}

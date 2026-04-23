@@ -155,7 +155,7 @@ function Start-DetachedPowerShell {
     "`$Host.UI.RawUI.WindowTitle='$Title'; $Command"
   )
 
-  Start-Process -FilePath "powershell" -ArgumentList $argList | Out-Null
+  Start-Process -FilePath "powershell" -ArgumentList $argList -WindowStyle Hidden | Out-Null
 }
 
 function Invoke-Npm {
@@ -448,6 +448,8 @@ function Find-FreeTcpPort {
 function Ensure-GatewayPortAvailable {
   param([string]$ConfigPath)
 
+  $fixedGatewayPort = 18790
+
   if (-not (Test-Path $ConfigPath)) {
     return
   }
@@ -466,9 +468,12 @@ function Ensure-GatewayPortAvailable {
   }
 
   $targetPort = [int]$cfg.gateway.port
-  if ($targetPort -le 0) {
-    $targetPort = 18790
+  if ($targetPort -ne $fixedGatewayPort) {
+    Write-Warning "Gateway port in config is $targetPort; forcing fixed port $fixedGatewayPort to keep integration stable."
+    $targetPort = $fixedGatewayPort
     $cfg.gateway.port = $targetPort
+    $json = $cfg | ConvertTo-Json -Depth 30
+    Write-JsonNoBom -Path $ConfigPath -Json $json
   }
 
   if (-not (Test-PortListening -Port $targetPort)) {
@@ -485,11 +490,7 @@ function Ensure-GatewayPortAvailable {
   }
 
   $holderPid = Get-FirstListeningPidOnPort -Port $targetPort
-  $newPort = Find-FreeTcpPort -Start ($targetPort + 1) -End ($targetPort + 200)
-  $cfg.gateway.port = $newPort
-  $json = $cfg | ConvertTo-Json -Depth 30
-  Write-JsonNoBom -Path $ConfigPath -Json $json
-  Write-Warning "Port $targetPort is still occupied by PID $holderPid. Switched gateway port to $newPort in $ConfigPath"
+  throw "Port $targetPort is still occupied by PID $holderPid. Fixed gateway port mode is enabled; please stop that process and retry."
 }
 
 function Get-GatewayPortFromConfig {
@@ -649,9 +650,9 @@ try {
     $bindError = $joinedLogs -match "listen tcp .*:${currentPort}: bind"
 
     if ($attempt -lt 2 -and ($bindError -or $portConflict)) {
-      $newPort = Find-FreeTcpPort -Start ($currentPort + 1) -End ($currentPort + 200)
-      Set-GatewayPortInConfig -ConfigPath $LauncherConfigPath -Port $newPort
-      Write-Warning "Gateway failed on port $currentPort; switched to $newPort and retrying start..."
+      Write-Warning "Gateway failed on fixed port $currentPort; retrying once after cleanup..."
+      Stop-PidsOnPort -Port $currentPort
+      Start-Sleep -Milliseconds 300
       continue
     }
 
@@ -675,8 +676,8 @@ try {
   throw "Gateway preflight failed: $($_.Exception.Message)"
 }
 
-$gatewayPort = Get-GatewayPortFromConfig -ConfigPath $LauncherConfigPath
-$directGatewayUrl = "http://127.0.0.1:$gatewayPort"
+$currentGatewayPort = Get-GatewayPortFromConfig -ConfigPath $LauncherConfigPath
+$directGatewayUrl = "http://127.0.0.1:$currentGatewayPort"
 
 Ensure-NpmDeps -ProjectDir $petclawDir -DisplayName "petclaw"
 Ensure-NpmDeps -ProjectDir $electronDir -DisplayName "electron-frontend"
@@ -699,11 +700,8 @@ if ((Test-HttpReady -Url $DashboardUrl -TimeoutSeconds 2) -or (Test-PortListenin
   Write-Step "Petclaw dashboard already running at $DashboardUrl"
 } else {
   if ($PetclawMode -eq "prod") {
-    $buildId = Join-Path $petclawDir ".next\BUILD_ID"
-    if (-not (Test-Path $buildId)) {
-      Write-Step "Petclaw prod build not found, running npm run build..."
-      Invoke-Npm -WorkingDir $petclawDir -Arguments "run build"
-    }
+    Write-Step "Building petclaw dashboard (prod mode)..."
+    Invoke-Npm -WorkingDir $petclawDir -Arguments "run build"
     Write-Step "Starting petclaw dashboard (prod mode)..."
     $escapedDirectGatewayUrl = $directGatewayUrl.Replace("'", "''")
     $petclawCmd = "`$env:NEXT_PUBLIC_PICOCLAW_API_URL='http://127.0.0.1:18800'; `$env:NEXT_PUBLIC_PICOCLAW_WS_URL='ws://127.0.0.1:18800'; `$env:NEXT_PUBLIC_PICOCLAW_DIRECT_GATEWAY_URL='$escapedDirectGatewayUrl'; `$env:NEXT_PUBLIC_PICOCLAW_LAUNCHER_TOKEN='$escapedLauncherToken'; `$env:NEXT_PUBLIC_PICOCLAW_USE_CREDENTIALS='true'; Set-Location '$petclawDir'; npm run start -- --hostname 127.0.0.1 --port 3000"
