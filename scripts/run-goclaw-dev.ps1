@@ -3,6 +3,7 @@ param(
   [switch]$Restart,
   [ValidateSet("prod", "dev")]
   [string]$PetclawMode = "prod",
+  [switch]$ForceFrontendBuild,
   [string]$GatewayConfigPath = "",
   [switch]$NoTerminalWindows,
   [switch]$ShowTerminalWindows
@@ -592,8 +593,15 @@ if ((Test-HttpReady -Url $DashboardUrl -TimeoutSeconds 2)) {
   Write-Step "Petclaw dashboard already running at $DashboardUrl"
 } else {
   if ($PetclawMode -eq "prod") {
-    Write-Step "Building petclaw dashboard (prod mode)..."
-    Invoke-Npm -WorkingDir $petclawDir -Arguments "run build"
+    $buildIdPath = Join-Path $petclawDir ".next\BUILD_ID"
+    $shouldBuild = $ForceFrontendBuild -or -not (Test-Path $buildIdPath)
+    if ($shouldBuild) {
+      Write-Step "Building petclaw dashboard (prod mode)..."
+      Invoke-Npm -WorkingDir $petclawDir -Arguments "run build"
+    } else {
+      Write-Step "Using existing petclaw production build (.next/BUILD_ID detected)."
+    }
+
     Write-Step "Starting petclaw dashboard (prod mode)..."
     $petclawCmd = "`$env:NEXT_PUBLIC_PICOCLAW_API_URL='http://127.0.0.1:18790'; `$env:NEXT_PUBLIC_PICOCLAW_WS_URL='ws://127.0.0.1:18790'; `$env:NEXT_PUBLIC_PICOCLAW_DIRECT_GATEWAY_URL='http://127.0.0.1:18790'; `$env:NEXT_PUBLIC_PICOCLAW_USE_CREDENTIALS='false'; Set-Location '$petclawDir'; npm run start -- --hostname 127.0.0.1 --port 3000"
   } else {

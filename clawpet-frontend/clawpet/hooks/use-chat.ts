@@ -250,6 +250,10 @@ export function useChat(options: UseChatOptions = {}): UseChatResult {
   const currentAudioRef = useRef<HTMLAudioElement | null>(null)
   const currentAudioUrlRef = useRef<string | null>(null)
   const audioAdvanceTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+  const lastQueuedSegmentRef = useRef<{ chatId: number | null; seq: number | null }>({
+    chatId: null,
+    seq: null,
+  })
   const lastAssistantTextRef = useRef("")
   const lastEmotionRef = useRef("neutral")
   const lastPlayedAudioRef = useRef<{ value: string; at: number }>({
@@ -511,6 +515,7 @@ export function useChat(options: UseChatOptions = {}): UseChatResult {
       if (audioExpectedSeqRef.current === null) {
         audioExpectedSeqRef.current = audioQueueRef.current[0]?.seq ?? segment.seq
       }
+      lastQueuedSegmentRef.current = { chatId: segment.chatId, seq: segment.seq }
 
       drainAudioQueue()
     },
