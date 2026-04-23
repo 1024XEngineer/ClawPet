@@ -549,8 +549,8 @@ export interface OnboardingStatusData {
   payload: OnboardingPayloadV1 | null
 }
 
-function isNotFoundError(error: unknown): boolean {
-  return error instanceof ApiError && error.status === 404
+function isOnboardingFallbackError(error: unknown): boolean {
+  return error instanceof ApiError && (error.status === 404 || error.status === 405)
 }
 
 function emptyOnboardingStatus(): OnboardingStatusData {
@@ -573,7 +573,7 @@ export const onboardingApi = {
         API_ENDPOINTS.PET.ONBOARDING,
       )
     } catch (error) {
-      if (isNotFoundError(error)) {
+      if (isOnboardingFallbackError(error)) {
         return emptyOnboardingStatus()
       }
       throw error
@@ -590,7 +590,7 @@ export const onboardingApi = {
         },
       )
     } catch (error) {
-      if (isNotFoundError(error)) {
+      if (isOnboardingFallbackError(error)) {
         return {
           code: 'FALLBACK',
           data: {
@@ -612,7 +612,7 @@ export const onboardingApi = {
         },
       )
     } catch (error) {
-      if (isNotFoundError(error)) {
+      if (isOnboardingFallbackError(error)) {
         return {
           code: 'FALLBACK',
           data: {
@@ -635,7 +635,7 @@ export const onboardingApi = {
         },
       )
     } catch (error) {
-      if (isNotFoundError(error)) {
+      if (isOnboardingFallbackError(error)) {
         return {
           code: 'FALLBACK',
           data: {
