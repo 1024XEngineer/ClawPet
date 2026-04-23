@@ -634,19 +634,6 @@ func (s *petStreamer) Update(ctx context.Context, content string) error {
 	// 语音关闭：使用原来的流式文本逻辑
 	s.voiceEnabled = false
 
-	sendVoice := func() {
-		if s.voiceSynthesizer != nil {
-			emotion := ""
-			if char := s.channel.service.CharManager().GetCurrent(); char != nil {
-				emotion, _ = char.GetEmotionEngine().GetDominantEmotion()
-			}
-			rawText := s.textVoiceBuffer.String()
-			parsedText := parsePureText(rawText)
-			go s.voiceSynthesizer.ParseAndSynthesize(s.sessionID, s.chatID, parsedText, emotion)
-		}
-		s.textVoiceBuffer.Reset()
-	}
-
 	sendPending := func() {
 		if len(s.buffer) > 0 {
 			textToSend := s.buffer
@@ -662,7 +649,6 @@ func (s *petStreamer) Update(ctx context.Context, content string) error {
 				s.inTextTag = false
 				i := strings.Index(s.buffer, "]")
 				s.buffer = s.buffer[:i]
-				sendVoice()
 			}
 			sendPending()
 		} else if strings.Contains(s.buffer, "[text:") {
@@ -721,9 +707,11 @@ func (s *petStreamer) Finalize(ctx context.Context, content string) error {
 	s.hasSentFirst = false
 	s.hasReadyAudioCount = 0
 
-	// 发送最终状态块（带情绪状态）
-	s.chatID++
-	s.channel.sendStreamChunk(s.sessionID, s.chatID, "final", "", true)
+	// 只有语音关闭时才发送 final（语音开启时由最后一个 audio chunk 发送）
+	if !s.voiceEnabled {
+		s.chatID++
+		s.channel.sendStreamChunk(s.sessionID, s.chatID, "final", "", true)
+	}
 
 	return nil
 }
@@ -1197,6 +1185,7 @@ func (s *petStreamer) sendAudioSegmentAsync(seg *voice.AudioSegment, isFinal boo
 			"duration": 0,
 			"is_final": isFinal,
 			"error":    seg.Error,
+			"emotion":  "",
 		}
 		s.channel.sendVoicePush(s.sessionID, "audio_and_voice", data)
 		return
@@ -1205,12 +1194,19 @@ func (s *petStreamer) sendAudioSegmentAsync(seg *voice.AudioSegment, isFinal boo
 	// Base64编码音频
 	encoded := base64.StdEncoding.EncodeToString(seg.AudioData)
 
+	// 获取当前情绪
+	emotion := ""
+	if char := s.channel.service.CharManager().GetCurrent(); char != nil {
+		emotion, _ = char.GetEmotionEngine().GetDominantEmotion()
+	}
+
 	data := map[string]any{
 		"seq":      seg.Seq,
 		"text":     seg.Text,
 		"audio":    encoded,
 		"duration": seg.Duration,
 		"is_final": isFinal,
+		"emotion":  emotion,
 	}
 
 	logger.DebugCF("pet", "sendAudioSegmentAsync", map[string]any{
