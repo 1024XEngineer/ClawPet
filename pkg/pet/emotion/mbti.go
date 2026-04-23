@@ -81,7 +81,7 @@ func (e *EmotionEngine) DriftByLabel(dimension string, label rune) {
 	defer e.mu.Unlock()
 
 	// 确定目标值
-	var targetVal int
+	var targetVal float64
 	switch label {
 	case MBTILetterI, MBTILetterS, MBTILetterT, MBTILetterJ:
 		targetVal = 0 // I/S/T/J 指向内向/实感/理性/判断
@@ -92,24 +92,12 @@ func (e *EmotionEngine) DriftByLabel(dimension string, label rune) {
 	}
 
 	// 获取当前维度值
-	var currentVal float64
-	switch dimension {
-	case MBTIDimensionIE:
-		currentVal = float64(e.personality.IE)
-	case MBTIDimensionSN:
-		currentVal = float64(e.personality.SN)
-	case MBTIDimensionTF:
-		currentVal = float64(e.personality.TF)
-	case MBTIDimensionJP:
-		currentVal = float64(e.personality.JP)
-	default:
-		return
-	}
+	currentVal := e.getPersonalityFloat64(dimension)
 
 	// 计算非线性阻力漂移
 	// resistance = 1 - |currentVal - targetVal| / 100
 	// actualDelta = 1 * resistance
-	distance := math.Abs(currentVal - float64(targetVal))
+	distance := math.Abs(currentVal - targetVal)
 	resistance := 1.0 - (distance / 100.0)
 	if resistance < 0 {
 		resistance = 0
@@ -125,17 +113,8 @@ func (e *EmotionEngine) DriftByLabel(dimension string, label rune) {
 		newVal = 100
 	}
 
-	// 更新维度值（转为int，存储时四舍五入）
-	switch dimension {
-	case MBTIDimensionIE:
-		e.personality.IE = int(newVal)
-	case MBTIDimensionSN:
-		e.personality.SN = int(newVal)
-	case MBTIDimensionTF:
-		e.personality.TF = int(newVal)
-	case MBTIDimensionJP:
-		e.personality.JP = int(newVal)
-	}
+	// 更新维度值
+	e.setPersonalityFloat64(dimension, newVal)
 }
 
 // =============================================================================
@@ -173,38 +152,12 @@ func (e *EmotionEngine) DriftMBTI(dimension string, delta int) {
 	e.mu.Lock()
 	defer e.mu.Unlock()
 
-	// 获取当前维度值
-	var currentVal int
-	switch dimension {
-	case MBTIDimensionIE:
-		currentVal = e.personality.IE
-	case MBTIDimensionSN:
-		currentVal = e.personality.SN
-	case MBTIDimensionTF:
-		currentVal = e.personality.TF
-	case MBTIDimensionJP:
-		currentVal = e.personality.JP
-	default:
-		return
-	}
-
-	// 计算漂移
-	newVal := calcMBTIDrift(currentVal, delta)
-
-	// 更新维度值
-	switch dimension {
-	case MBTIDimensionIE:
-		e.personality.IE = newVal
-	case MBTIDimensionSN:
-		e.personality.SN = newVal
-	case MBTIDimensionTF:
-		e.personality.TF = newVal
-	case MBTIDimensionJP:
-		e.personality.JP = newVal
-	}
+	currentVal := e.getPersonalityFloat64(dimension)
+	newVal := calcMBTIDriftFloat(currentVal, float64(delta))
+	e.setPersonalityFloat64(dimension, newVal)
 }
 
-// calcMBTIDrift 计算MBTI漂移值（内部函数）
+// calcMBTIDriftFloat 计算MBTI漂移值（内部函数）
 // 参数：
 //   - currentVal: 当前值（0-100）
 //   - baseDelta: 基础变化值
@@ -221,26 +174,27 @@ func (e *EmotionEngine) DriftMBTI(dimension string, delta int) {
 //
 //	resistance = max(0, 1 - |currentVal - 50| / 50)
 //	actualDelta = baseDelta * resistance
-//	newVal = clamp(currentVal + actualDelta)
-func calcMBTIDrift(currentVal, baseDelta int) int {
-	// 计算距离中心点的距离
-	distanceFromCenter := abs(currentVal - NeutralValue)
+//	newVal = clampFloat(currentVal + actualDelta)
+func calcMBTIDriftFloat(currentVal, baseDelta float64) float64 {
+	const centerValue = 50.0
+	const maxValue = 100.0
 
-	// 计算阻力因子
-	// 距离越远，阻力越大
-	resistance := 1.0 - (float64(distanceFromCenter) / 50.0)
-
-	// 确保阻力不为负数
+	distanceFromCenter := math.Abs(currentVal - centerValue)
+	resistance := 1.0 - (distanceFromCenter / 50.0)
 	if resistance < 0 {
 		resistance = 0
 	}
 
-	// 计算实际变化值
-	actualDelta := float64(baseDelta) * resistance
+	actualDelta := baseDelta * resistance
+	newVal := currentVal + actualDelta
 
-	// 应用变化并确保在有效范围内
-	newVal := currentVal + int(actualDelta)
-	return clamp(newVal)
+	if newVal < 0 {
+		return 0
+	}
+	if newVal > maxValue {
+		return maxValue
+	}
+	return newVal
 }
 
 // UpdateMBTIFromTags 批量更新MBTI（从LLM标签）
