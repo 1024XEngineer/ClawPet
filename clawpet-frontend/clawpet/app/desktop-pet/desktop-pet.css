@@ -1,0 +1,131 @@
+.desktop-pet-app {
+  width: 100%;
+  height: 100%;
+  background: transparent !important;
+  user-select: none;
+  position: relative;
+  overflow: visible;
+  isolation: isolate;
+}
+
+.desktop-pet-container {
+  position: relative;
+  width: 100%;
+  height: 100%;
+  pointer-events: none;
+}
+
+.desktop-pet-stack {
+  position: fixed;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 10px;
+  z-index: 80;
+  pointer-events: auto;
+}
+
+.desktop-pet-controls {
+  position: static;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  z-index: 240;
+  pointer-events: none;
+  -webkit-app-region: no-drag;
+  opacity: 0;
+  transform: translateY(-6px);
+  transition: opacity 160ms ease, transform 160ms ease;
+}
+
+.desktop-pet-controls--visible {
+  pointer-events: auto;
+  opacity: 1;
+  transform: translateY(0);
+}
+
+.desktop-pet-btn {
+  width: 28px;
+  height: 28px;
+  border: none;
+  border-radius: 50%;
+  background: rgba(255, 255, 255, 0.9);
+  cursor: pointer;
+  font-size: 14px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: all 0.2s;
+  pointer-events: auto;
+  -webkit-app-region: no-drag;
+}
+
+.desktop-pet-btn-icon {
+  width: 14px;
+  height: 14px;
+  stroke-width: 2.2;
+}
+
+.desktop-pet-btn:hover {
+  background: rgba(255, 255, 255, 1);
+  transform: scale(1.1);
+}
+
+.desktop-pet-btn-close:hover {
+  background: rgba(255, 59, 48, 0.9);
+  color: #fff;
+}
+
+.desktop-pet-bubble {
+  position: absolute;
+  top: 48px;
+  left: 50%;
+  transform: translateX(-50%);
+  background: rgba(255, 255, 255, 0.95);
+  border-radius: 12px;
+  padding: 8px 12px;
+  max-width: 180px;
+  min-width: 50px;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.15);
+  z-index: 180;
+  border: 2px solid #667eea;
+  font-size: 12px;
+  color: #444;
+  word-break: break-word;
+  text-align: center;
+  pointer-events: none;
+}
+
+.desktop-pet-area {
+  position: static;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  cursor: grab;
+  z-index: 20;
+  pointer-events: auto;
+  width: fit-content;
+  height: fit-content;
+}
+
+.desktop-pet-area:active {
+  cursor: grabbing;
+}
+
+.desktop-pet-image {
+  width: auto;
+  height: auto;
+  max-width: 160px;
+  max-height: 160px;
+  object-fit: contain;
+  object-position: center center;
+  transform: none;
+  display: block;
+}
+
+.desktop-pet-state {
+  display: none;
+}

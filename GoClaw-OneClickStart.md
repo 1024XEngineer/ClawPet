@@ -1,4 +1,4 @@
-﻿# GoClaw-OneClickStart 使用说明
+# GoClaw-OneClickStart 使用说明
 
 `GoClaw-OneClickStart.ps1` 现在默认委托到 `scripts/run-goclaw-dev.ps1`，使用统一的两端口架构：
 
@@ -33,7 +33,7 @@ $env:PICOCLAW_CONFIG = (Resolve-Path .\.goclaw-runtime\config.json)
 ### 仅 PetClaw 前端
 
 ```powershell
-Set-Location .\clawpet-frontend\petclaw
+Set-Location .\clawpet-frontend\clawpet
 $env:NEXT_PUBLIC_PICOCLAW_API_URL='http://127.0.0.1:18790'
 $env:NEXT_PUBLIC_PICOCLAW_WS_URL='ws://127.0.0.1:18790'
 $env:NEXT_PUBLIC_PICOCLAW_DIRECT_GATEWAY_URL='http://127.0.0.1:18790'
@@ -44,11 +44,11 @@ npm run dev -- --hostname 127.0.0.1 --port 3000 --webpack
 ### 仅 Electron 桌宠
 
 ```powershell
-Set-Location .\clawpet-frontend\electron-frontend
+Set-Location .\clawpet-frontend\clawpet
 $env:GOCLAW_BACKEND_URL='http://127.0.0.1:18790'
 $env:GOCLAW_DASHBOARD_URL='http://127.0.0.1:3000'
 $env:GOCLAW_PET_RENDERER_PATH='/desktop-pet'
-npx electron src/main.js
+npx electron .\electron\main.js
 ```
 
 ## 说明

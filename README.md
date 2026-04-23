@@ -1,54 +1,60 @@
-﻿# ClawPet 开发说明
+# ClawPet 开发说明
 
-本仓库已重构为 **两端口架构**：
+本仓库采用两端口架构：
 
-- 前端：`http://127.0.0.1:3000`（`clawpet-frontend/petclaw`）
-- 后端：`http://127.0.0.1:18790`（gateway / pet channel）
+- 前端：`http://127.0.0.1:3000`
+- 后端：`http://127.0.0.1:18790`
 
-Electron 桌宠渲染页统一从 `petclaw` 的 `/desktop-pet` 加载，不再依赖 `5173`。
+桌宠渲染页统一来自 `http://127.0.0.1:3000/desktop-pet`，不再依赖 `5173`。  
+桌宠窗口默认出现在主屏幕工作区右下角（不是屏幕中间）。
 
-## 目录结构
+## 前端结构（已合并）
 
-- `clawpet-frontend/petclaw`：主前端面板（Next.js）
-- `clawpet-frontend/electron-frontend`：Electron 桌宠外壳
-- `pkg/channels/pet`：Pet Channel 协议层
-- `pkg/pet`：Pet 业务实现
-- `scripts/run-goclaw-dev.ps1`：推荐的一键开发启动脚本
+- `clawpet-frontend/clawpet`：Next.js 面板 + Electron 桌宠壳层
+- `clawpet-frontend/clawpet/electron`：Electron 主进程、preload、启动页
 
 ## 一键启动（推荐）
-
-在仓库根目录执行：
 
 ```powershell
 powershell -ExecutionPolicy Bypass -File .\scripts\run-goclaw-dev.ps1 -Restart -PetclawMode dev
 ```
 
-该脚本会：
+启动行为：
 
-1. 清理旧进程和旧端口（含 `5173` / `18800`）
-2. 启动后端 `18790`
-3. 启动前端 `3000`
-4. 启动 Electron，并加载 `http://127.0.0.1:3000/desktop-pet`
+1. 清理旧进程和旧端口（含 `5173` / `18800`）。
+2. 启动 Electron 启动页（默认隐藏后台命令行窗口）。
+3. 启动后端 `18790`。
+4. 启动前端 `3000`。
+5. 自动切换到桌宠窗口。
 
-## 单独窗口启动
+如需显示后台命令行窗口：
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\scripts\run-goclaw-dev.ps1 -Restart -PetclawMode dev -ShowTerminalWindows
+```
+
+## 分别启动前后端
 
 ### 1) 仅启动后端（18790）
 
 ```powershell
+$env:PICOCLAW_HOME = (Resolve-Path .\.goclaw-runtime)
 $env:PICOCLAW_CONFIG = (Resolve-Path .\.goclaw-runtime\config.json)
 .\picoclaw.exe gateway -E
 ```
 
-如果你本地没有 `picoclaw.exe`，可用：
+如果本地没有 `picoclaw.exe`：
 
 ```powershell
+$env:PICOCLAW_HOME = (Resolve-Path .\.goclaw-runtime)
+$env:PICOCLAW_CONFIG = (Resolve-Path .\.goclaw-runtime\config.json)
 go run -tags "goolm,stdjson" .\cmd\picoclaw gateway
 ```
 
-### 2) 仅启动前端面板（3000）
+### 2) 仅启动前端（3000）
 
 ```powershell
-Set-Location .\clawpet-frontend\petclaw
+Set-Location .\clawpet-frontend\clawpet
 $env:NEXT_PUBLIC_PICOCLAW_API_URL='http://127.0.0.1:18790'
 $env:NEXT_PUBLIC_PICOCLAW_WS_URL='ws://127.0.0.1:18790'
 $env:NEXT_PUBLIC_PICOCLAW_DIRECT_GATEWAY_URL='http://127.0.0.1:18790'
@@ -59,37 +65,33 @@ npm run dev -- --hostname 127.0.0.1 --port 3000 --webpack
 ### 3) 仅启动桌宠窗口（Electron）
 
 ```powershell
-Set-Location .\clawpet-frontend\electron-frontend
+Set-Location .\clawpet-frontend\clawpet
 $env:GOCLAW_BACKEND_URL='http://127.0.0.1:18790'
 $env:GOCLAW_DASHBOARD_URL='http://127.0.0.1:3000'
 $env:GOCLAW_PET_RENDERER_PATH='/desktop-pet'
-npx electron src/main.js
+$env:GOCLAW_SHOW_STARTUP='1'
+npx electron .\electron\main.js
 ```
 
 ## 常见排查
 
 ### 桌宠没渲染
 
-先确认这两个地址可访问：
-
 ```powershell
-curl.exe -i http://127.0.0.1:3000
 curl.exe -i http://127.0.0.1:3000/desktop-pet
+curl.exe -i http://127.0.0.1:3000/pets/standby1.gif
 ```
 
-### 网关没连上
-
-优先检查后端：
+### 网关没连上（优先检查 18790）
 
 ```powershell
 curl.exe -i http://127.0.0.1:18790/health
 curl.exe -i http://127.0.0.1:18790/pet/token
 ```
 
-### 确认 5173 已停用
+### 确认旧端口已停用
 
 ```powershell
 netstat -ano | findstr :5173
+netstat -ano | findstr :18800
 ```
-
-若有进程占用，执行一键脚本会自动清理。

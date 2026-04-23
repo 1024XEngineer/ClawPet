@@ -4,19 +4,30 @@ param(
   [ValidateSet("prod", "dev")]
   [string]$PetclawMode = "prod",
   [string]$GatewayConfigPath = "",
-  [switch]$NoTerminalWindows
+  [switch]$NoTerminalWindows,
+  [switch]$ShowTerminalWindows
 )
 
 $ErrorActionPreference = "Stop"
 
 $repoRoot = Split-Path -Parent $PSScriptRoot
 $frontendRoot = Join-Path $repoRoot "clawpet-frontend"
-$petclawDir = Join-Path $frontendRoot "petclaw"
-$electronDir = Join-Path $frontendRoot "electron-frontend"
+$petclawDir = Join-Path $frontendRoot "clawpet"
+$electronEntry = Join-Path $petclawDir "electron\main.js"
 $mainBinary = Join-Path $repoRoot "picoclaw.exe"
+$gatewayHomeDir = Join-Path $repoRoot ".goclaw-runtime"
+$hideTerminalWindows = $true
+if ($ShowTerminalWindows) {
+  $hideTerminalWindows = $false
+} elseif ($NoTerminalWindows) {
+  $hideTerminalWindows = $true
+}
 
 if ([string]::IsNullOrWhiteSpace($GatewayConfigPath)) {
   $GatewayConfigPath = Join-Path $repoRoot ".goclaw-runtime\config.json"
+}
+if (-not (Test-Path $gatewayHomeDir)) {
+  New-Item -ItemType Directory -Path $gatewayHomeDir -Force | Out-Null
 }
 
 function Write-Step([string]$message) {
@@ -118,7 +129,7 @@ function Start-DetachedPowerShell {
     [string]$Command
   )
 
-  if ($NoTerminalWindows) {
+  if ($hideTerminalWindows) {
     $argList = @(
       "-NoProfile",
       "-ExecutionPolicy", "Bypass",
@@ -159,8 +170,8 @@ if (-not (Test-Path $frontendRoot)) {
 if (-not (Test-Path $petclawDir)) {
   throw "petclaw directory not found: $petclawDir"
 }
-if (-not (Test-Path $electronDir)) {
-  throw "electron-frontend directory not found: $electronDir"
+if (-not (Test-Path $electronEntry)) {
+  throw "electron entry not found: $electronEntry"
 }
 if (-not (Test-Path $mainBinary)) {
   throw "gateway binary not found: $mainBinary"
@@ -181,19 +192,27 @@ if ($Restart) {
 }
 
 Ensure-NpmDeps -ProjectDir $petclawDir -DisplayName "petclaw"
-Ensure-NpmDeps -ProjectDir $electronDir -DisplayName "electron-frontend"
+
+$escapedDashboard = $DashboardUrl.Replace("'", "''")
+$existingElectron = @(Get-Process -Name electron -ErrorAction SilentlyContinue)
+if ($existingElectron.Count -gt 0) {
+  Write-Step "Electron desktop pet already running."
+} else {
+  Write-Step "Starting electron desktop pet process (startup page mode)..."
+  $electronCmd = "`$env:GOCLAW_BACKEND_URL='http://127.0.0.1:18790'; `$env:GOCLAW_DASHBOARD_URL='$escapedDashboard'; `$env:GOCLAW_PET_RENDERER_PATH='/desktop-pet'; `$env:GOCLAW_OPEN_PANEL_ON_READY='1'; `$env:GOCLAW_SHOW_STARTUP='1'; Set-Location '$petclawDir'; npx electron electron/main.js"
+  Start-DetachedPowerShell -Title "GoClaw - Electron" -Command $electronCmd
+}
 
 Write-Step "Starting gateway on 127.0.0.1:18790..."
 $escapedGatewayConfigPath = $GatewayConfigPath.Replace("'", "''")
-$gatewayCmd = "`$env:PICOCLAW_CONFIG='$escapedGatewayConfigPath'; Set-Location '$repoRoot'; & '$mainBinary' gateway -E"
+$escapedGatewayHomeDir = $gatewayHomeDir.Replace("'", "''")
+$gatewayCmd = "`$env:PICOCLAW_HOME='$escapedGatewayHomeDir'; `$env:PICOCLAW_CONFIG='$escapedGatewayConfigPath'; Set-Location '$repoRoot'; & '$mainBinary' gateway -E"
 Start-DetachedPowerShell -Title "GoClaw - Gateway" -Command $gatewayCmd
 
 if (-not (Wait-HttpReady -Url "http://127.0.0.1:18790/health" -TimeoutSeconds 35)) {
   throw "Gateway did not become ready on http://127.0.0.1:18790"
 }
 Write-Step "Gateway is ready at http://127.0.0.1:18790"
-
-$escapedDashboard = $DashboardUrl.Replace("'", "''")
 
 if ((Test-HttpReady -Url $DashboardUrl -TimeoutSeconds 2)) {
   Write-Step "Petclaw dashboard already running at $DashboardUrl"
@@ -218,15 +237,6 @@ if ((Test-HttpReady -Url $DashboardUrl -TimeoutSeconds 2)) {
   } else {
     Write-Step "Petclaw is ready at $DashboardUrl"
   }
-}
-
-$existingElectron = @(Get-Process -Name electron -ErrorAction SilentlyContinue)
-if ($existingElectron.Count -gt 0) {
-  Write-Step "Electron desktop pet already running."
-} else {
-  Write-Step "Starting electron desktop pet process..."
-  $electronCmd = "`$env:GOCLAW_BACKEND_URL='http://127.0.0.1:18790'; `$env:GOCLAW_DASHBOARD_URL='$escapedDashboard'; `$env:GOCLAW_PET_RENDERER_PATH='/desktop-pet'; `$env:GOCLAW_OPEN_PANEL_ON_READY='1'; Set-Location '$electronDir'; npx electron src/main.js"
-  Start-DetachedPowerShell -Title "GoClaw - Electron" -Command $electronCmd
 }
 
 Write-Host ""

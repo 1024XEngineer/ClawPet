@@ -172,8 +172,7 @@ jobs:
             cp -f ../GoClaw-OneClickStart.bat allinone/GoClaw-OneClickStart.bat
             cp -f ../GoClaw-OneClickStart.ps1 allinone/GoClaw-OneClickStart.ps1
             cp -f ../scripts/run-goclaw-dev.ps1 allinone/scripts/run-goclaw-dev.ps1
-            cp -r ../petclaw allinone/petclaw
-            cp -r ../electron-frontend allinone/electron-frontend
+            cp -r ../clawpet allinone/clawpet
             (
               cd allinone
               zip -r "../${ALL_BASE}.zip" .
