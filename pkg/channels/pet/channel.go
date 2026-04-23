@@ -6,13 +6,14 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
-	"github.com/gorilla/websocket"
 	"net/http"
 	"net/url"
 	"regexp"
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/gorilla/websocket"
 
 	"github.com/sipeed/picoclaw/pkg/bus"
 	"github.com/sipeed/picoclaw/pkg/channels"
@@ -681,11 +682,14 @@ func (s *petStreamer) Finalize(ctx context.Context, content string) error {
 	s.waitMu.Unlock()
 
 	// 等待 audioPlayLoop 处理完剩余音频
-	select {
-	case <-s.audioPlayDone:
-		logger.DebugCF("pet", "Finalize: audioPlayLoop finished", nil)
-	case <-time.After(30 * time.Second):
-		logger.WarnCF("pet", "Finalize: audioPlayLoop timeout", nil)
+	// 某些前端不会发送 audio_done，避免在 Finalize 阶段长时间阻塞导致“无回复”体感。
+	if s.voiceEnabled && s.audioQueue != nil && !s.audioQueue.IsEmpty() {
+		select {
+		case <-s.audioPlayDone:
+			logger.DebugCF("pet", "Finalize: audioPlayLoop finished", nil)
+		case <-time.After(30 * time.Second):
+			logger.WarnCF("pet", "Finalize: audioPlayLoop timeout (fallback continue)", nil)
+		}
 	}
 
 	s.waitMu.Lock()
@@ -1187,7 +1191,7 @@ func (s *petStreamer) sendAudioSegmentAsync(seg *voice.AudioSegment, isFinal boo
 			"error":    seg.Error,
 			"emotion":  "",
 		}
-		s.channel.sendVoicePush(s.sessionID, "audio_and_voice", data)
+		_ = s.channel.sendVoicePush(s.sessionID, "audio_and_voice", data)
 		return
 	}
 
@@ -1216,7 +1220,7 @@ func (s *petStreamer) sendAudioSegmentAsync(seg *voice.AudioSegment, isFinal boo
 		"duration":  seg.Duration,
 	})
 
-	s.channel.sendVoicePush(s.sessionID, "audio_and_voice", data)
+	_ = s.channel.sendVoicePush(s.sessionID, "audio_and_voice", data)
 
 	logger.DebugCF("pet", "sent audio segment async", map[string]any{
 		"seq":      seg.Seq,

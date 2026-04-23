@@ -25,6 +25,7 @@ import { Progress } from "@/components/ui/progress"
 import {
   API_ENDPOINTS,
   getApiBaseUrl,
+  getDirectGatewayBaseUrl,
   onboardingApi,
   type OnboardingPayloadV1,
   type OnboardingStatusData,
@@ -472,21 +473,40 @@ export function OnboardingWizard({ onFinish }: OnboardingWizardProps) {
 
     try {
       const baseUrl = getApiBaseUrl()
+      const directBaseUrl = getDirectGatewayBaseUrl()
+      let directGatewayMode = false
 
       setSetupTasks((prev) => withStatus(prev, "env", "running"))
       const authRes = await fetchWithAuthRetry(`${baseUrl}${API_ENDPOINTS.AUTH.STATUS}`, { credentials: "include" }, false)
-      if (![200, 401].includes(authRes.status)) throw new Error(`环境检查失败（${authRes.status}）`)
+      if (authRes.status === 404) {
+        directGatewayMode = true
+      } else if (![200, 401].includes(authRes.status)) {
+        throw new Error(`环境检查失败（${authRes.status}）`)
+      }
 
       setSetupTasks((prev) => withStatus(withStatus(prev, "env", "done"), "gateway", "running"))
-      const gatewayRes = await fetchWithAuthRetry(`${baseUrl}${API_ENDPOINTS.GATEWAY.STATUS}`, { credentials: "include" })
-      if (![200, 401].includes(gatewayRes.status)) throw new Error(`网关检查失败（${gatewayRes.status}）`)
+      if (!directGatewayMode) {
+        const gatewayRes = await fetchWithAuthRetry(`${baseUrl}${API_ENDPOINTS.GATEWAY.STATUS}`, { credentials: "include" })
+        if (gatewayRes.status === 404) {
+          directGatewayMode = true
+        } else if (![200, 401].includes(gatewayRes.status)) {
+          throw new Error(`网关检查失败（${gatewayRes.status}）`)
+        }
+      }
 
       setSetupTasks((prev) => withStatus(withStatus(prev, "gateway", "done"), "pico", "running"))
-      const setupRes = await fetchWithAuthRetry(`${baseUrl}${API_ENDPOINTS.PET.SETUP}`, { method: "POST", credentials: "include" })
-      if (!setupRes.ok) throw new Error(`Pet Channel 初始化失败（${setupRes.status}）`)
+      if (!directGatewayMode) {
+        const setupRes = await fetchWithAuthRetry(`${baseUrl}${API_ENDPOINTS.PET.SETUP}`, { method: "POST", credentials: "include" })
+        if (!setupRes.ok) throw new Error(`Pet Channel 初始化失败（${setupRes.status}）`)
+      }
 
       setSetupTasks((prev) => withStatus(withStatus(prev, "pico", "done"), "token", "running"))
-      const tokenRes = await fetchWithAuthRetry(`${baseUrl}${API_ENDPOINTS.PET.TOKEN}`, { credentials: "include" })
+      const tokenInput = directGatewayMode && directBaseUrl
+        ? `${directBaseUrl}/pet/token`
+        : `${baseUrl}${API_ENDPOINTS.PET.TOKEN}`
+      const tokenRes = directGatewayMode
+        ? await fetch(tokenInput, { credentials: "omit" })
+        : await fetchWithAuthRetry(tokenInput, { credentials: "include" })
       if (!tokenRes.ok) throw new Error(`连接验证失败（${tokenRes.status}）`)
 
       setSetupTasks((prev) => withStatus(prev, "token", "done"))

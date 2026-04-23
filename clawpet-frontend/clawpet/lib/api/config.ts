@@ -35,6 +35,16 @@ function sanitizeDirectGatewayBaseUrl(value: string): string {
   return normalized
 }
 
+function isLocalDevPage(): boolean {
+  if (typeof window === 'undefined' || !window.location) {
+    return false
+  }
+  const host = window.location.hostname
+  const port = window.location.port
+  const isLocalHost = host === '127.0.0.1' || host === 'localhost'
+  return isLocalHost && (port === '3000' || port === '3001')
+}
+
 export function isDirectGatewayEnabled(): boolean {
   const raw = DIRECT_GATEWAY_ENV_ORIGIN.trim().toLowerCase()
   if (!raw) {
@@ -74,6 +84,12 @@ export function getDirectGatewayBaseUrl(): string {
   const directGatewayEnv = DIRECT_GATEWAY_ENV_ORIGIN.trim()
   if (directGatewayEnv) {
     return sanitizeDirectGatewayBaseUrl(directGatewayEnv)
+  }
+
+  // Local dev should always target the fixed local gateway endpoint.
+  // This avoids stale cached URLs after launcher/gateway restarts.
+  if (isLocalDevPage()) {
+    return LOCAL_DIRECT_GATEWAY_ORIGIN
   }
 
   if (typeof window !== 'undefined') {

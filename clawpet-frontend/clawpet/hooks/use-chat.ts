@@ -57,6 +57,14 @@ interface AudioPushData {
   is_final?: boolean
 }
 
+interface AudioSegmentItem {
+  chatId: number | null
+  seq: number
+  text: string
+  audioBase64: string
+  durationMs: number
+}
+
 const EMPTY_SESSION_TITLE = "新对话"
 function normalizeTimestamp(value: number | string): number {
   const numeric = typeof value === "number" ? value : Number(value)
@@ -217,51 +225,6 @@ function resolveAudioChunkPayload(data: AudioPushData): string {
   return ""
 }
 
-function buildAudioChunkKey(payload: string): string {
-  const normalized = payload
-    .replace(/^data:audio\/[^;]+;base64,/, "")
-    .replace(/\s+/g, "")
-  if (!normalized) {
-    return ""
-  }
-  if (normalized.length <= 80) {
-    return normalized
-  }
-  return `${normalized.length}:${normalized.slice(0, 40)}:${normalized.slice(-40)}`
-}
-
-function createAudioStreamState(chatId: number | null = null) {
-  return {
-    chatId,
-    chunks: [] as Uint8Array[],
-    seenSeq: new Set<number>(),
-    seenChunkKeys: new Set<string>(),
-  }
-}
-
-function mergeAudioChunks(chunks: Uint8Array[]): Uint8Array {
-  const totalLength = chunks.reduce((sum, chunk) => sum + chunk.length, 0)
-  const merged = new Uint8Array(totalLength)
-  let offset = 0
-  for (const chunk of chunks) {
-    merged.set(chunk, offset)
-    offset += chunk.length
-  }
-  return merged
-}
-
-function bytesToBase64(bytes: Uint8Array): string {
-  if (bytes.length === 0) {
-    return ""
-  }
-
-  let binary = ""
-  for (let i = 0; i < bytes.length; i += 1) {
-    binary += String.fromCharCode(bytes[i])
-  }
-  return window.btoa(binary)
-}
-
 export function useChat(options: UseChatOptions = {}): UseChatResult {
   const [isConnected, setIsConnected] = useState(false)
   const [isTyping, setIsTyping] = useState(false)
@@ -279,18 +242,22 @@ export function useChat(options: UseChatOptions = {}): UseChatResult {
     storedSessions?.sessions || [createSessionState(initialSessionIdRef.current)],
   )
   const activeSessionIdRef = useRef(activeSessionId)
-  const audioStreamRef = useRef<ReturnType<typeof createAudioStreamState>>(
-    createAudioStreamState(),
-  )
+  const audioQueueRef = useRef<AudioSegmentItem[]>([])
+  const audioExpectedSeqRef = useRef<number | null>(null)
+  const audioActiveChatIdRef = useRef<number | null>(null)
+  const audioIsPlayingRef = useRef(false)
+  const audioSeenSeqRef = useRef<Set<string>>(new Set())
   const currentAudioRef = useRef<HTMLAudioElement | null>(null)
+  const currentAudioUrlRef = useRef<string | null>(null)
+  const audioAdvanceTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+  const lastQueuedSegmentRef = useRef<{ chatId: number | null; seq: number | null }>({
+    chatId: null,
+    seq: null,
+  })
   const lastAssistantTextRef = useRef("")
   const lastEmotionRef = useRef("neutral")
   const lastPlayedAudioRef = useRef<{ value: string; at: number }>({
     value: "",
-    at: 0,
-  })
-  const lastFinalizedAudioChatRef = useRef<{ chatId: number | null; at: number }>({
-    chatId: null,
     at: 0,
   })
 
@@ -398,9 +365,22 @@ export function useChat(options: UseChatOptions = {}): UseChatResult {
     })
   }, [])
 
+  const clearAudioAdvanceTimer = useCallback(() => {
+    if (audioAdvanceTimerRef.current) {
+      clearTimeout(audioAdvanceTimerRef.current)
+      audioAdvanceTimerRef.current = null
+    }
+  }, [])
+
   const playAudioBase64 = useCallback(
-    (audioBase64: string) => {
+    (
+      audioBase64: string,
+      bubbleText?: string | null,
+      durationMs?: number,
+      onSettled?: () => void,
+    ) => {
       if (!audioBase64) {
+        onSettled?.()
         return
       }
 
@@ -408,6 +388,7 @@ export function useChat(options: UseChatOptions = {}): UseChatResult {
         lastPlayedAudioRef.current.value === audioBase64 &&
         Date.now() - lastPlayedAudioRef.current.at < 4000
       ) {
+        onSettled?.()
         return
       }
 
@@ -417,20 +398,128 @@ export function useChat(options: UseChatOptions = {}): UseChatResult {
       }
 
       if (window.electronAPI?.showBubble) {
-        showBubble(lastAssistantTextRef.current || null, audioBase64)
+        showBubble(bubbleText ?? (lastAssistantTextRef.current || null), audioBase64)
+        const fallbackDelay = Math.min(
+          Math.max((bubbleText?.trim().length ?? 0) * 120, 900),
+          8_000,
+        )
+        const resolvedDurationMs =
+          typeof durationMs === "number" && durationMs > 0
+            ? durationMs
+            : fallbackDelay
+        const advanceDelay = Math.max(resolvedDurationMs, 200)
+        clearAudioAdvanceTimer()
+        audioAdvanceTimerRef.current = setTimeout(() => {
+          audioAdvanceTimerRef.current = null
+          onSettled?.()
+        }, advanceDelay)
         return
       }
 
-      const audioUrl = `data:audio/mp3;base64,${audioBase64}`
+      const decoded = decodeBase64Chunk(audioBase64)
+      let audioUrl = `data:audio/mp3;base64,${audioBase64}`
+
+      if (currentAudioUrlRef.current) {
+        URL.revokeObjectURL(currentAudioUrlRef.current)
+        currentAudioUrlRef.current = null
+      }
+
+      if (decoded && decoded.length > 0) {
+        const blob = new Blob([decoded], { type: "audio/mpeg" })
+        audioUrl = URL.createObjectURL(blob)
+        currentAudioUrlRef.current = audioUrl
+      }
+
       if (currentAudioRef.current) {
         currentAudioRef.current.pause()
       }
       currentAudioRef.current = new Audio(audioUrl)
+      currentAudioRef.current.onended = () => {
+        if (currentAudioUrlRef.current) {
+          URL.revokeObjectURL(currentAudioUrlRef.current)
+          currentAudioUrlRef.current = null
+        }
+        onSettled?.()
+      }
+      currentAudioRef.current.onerror = (errorEvent) => {
+        console.warn("[petclaw] audio element error", errorEvent)
+        onSettled?.()
+      }
       void currentAudioRef.current.play().catch((playbackError) => {
         console.warn("[petclaw] failed to play audio", playbackError)
+        onSettled?.()
       })
     },
-    [showBubble],
+    [clearAudioAdvanceTimer, showBubble],
+  )
+
+  const resetAudioQueue = useCallback(() => {
+    clearAudioAdvanceTimer()
+    audioQueueRef.current = []
+    audioExpectedSeqRef.current = null
+    audioActiveChatIdRef.current = null
+    audioSeenSeqRef.current = new Set()
+    audioIsPlayingRef.current = false
+    lastQueuedSegmentRef.current = { chatId: null, seq: null }
+  }, [clearAudioAdvanceTimer])
+
+  const drainAudioQueue = useCallback(() => {
+    if (audioIsPlayingRef.current) {
+      return
+    }
+
+    const queue = audioQueueRef.current
+    if (queue.length === 0) {
+      return
+    }
+
+    if (audioExpectedSeqRef.current === null) {
+      audioExpectedSeqRef.current = queue[0]?.seq ?? null
+    }
+
+    let nextIndex = queue.findIndex((item) => item.seq === audioExpectedSeqRef.current)
+    if (nextIndex < 0) {
+      nextIndex = 0
+      audioExpectedSeqRef.current = queue[0]?.seq ?? null
+    }
+
+    if (nextIndex < 0 || audioExpectedSeqRef.current === null) {
+      return
+    }
+
+    const [nextSegment] = queue.splice(nextIndex, 1)
+    audioIsPlayingRef.current = true
+
+    playAudioBase64(
+      nextSegment.audioBase64,
+      nextSegment.text || null,
+      nextSegment.durationMs,
+      () => {
+        audioIsPlayingRef.current = false
+        audioExpectedSeqRef.current = nextSegment.seq + 1
+        drainAudioQueue()
+      },
+    )
+  }, [playAudioBase64])
+
+  const enqueueAudioSegment = useCallback(
+    (segment: AudioSegmentItem) => {
+      const seqKey = `${segment.chatId ?? "na"}:${segment.seq}`
+      if (audioSeenSeqRef.current.has(seqKey)) {
+        return
+      }
+      audioSeenSeqRef.current.add(seqKey)
+
+      audioQueueRef.current.push(segment)
+      audioQueueRef.current.sort((left, right) => left.seq - right.seq)
+      if (audioExpectedSeqRef.current === null) {
+        audioExpectedSeqRef.current = audioQueueRef.current[0]?.seq ?? segment.seq
+      }
+      lastQueuedSegmentRef.current = { chatId: segment.chatId, seq: segment.seq }
+
+      drainAudioQueue()
+    },
+    [drainAudioQueue],
   )
 
   const connectWithBootstrap = useCallback(async () => {
@@ -503,83 +592,40 @@ export function useChat(options: UseChatOptions = {}): UseChatResult {
           }
 
           if (data.type === "error" || data.error) {
-            audioStreamRef.current = createAudioStreamState()
+            resetAudioQueue()
             break
           }
 
           const parsedChatId = Number(data.chat_id)
-          const hasExplicitChatId = Number.isFinite(parsedChatId)
-          const incomingChatId = hasExplicitChatId ? parsedChatId : null
+          const incomingChatId = Number.isFinite(parsedChatId) ? parsedChatId : null
 
-          let currentStream = audioStreamRef.current
-          if (hasExplicitChatId) {
-            if (
-              currentStream.chatId !== null &&
-              currentStream.chatId !== incomingChatId
-            ) {
-              currentStream = createAudioStreamState(incomingChatId)
-              audioStreamRef.current = currentStream
-            } else if (currentStream.chatId === null) {
-              currentStream.chatId = incomingChatId
-              audioStreamRef.current = currentStream
-            }
-          }
-
-          const streamChatId = incomingChatId ?? currentStream.chatId
           if (
-            data.is_final &&
-            streamChatId !== null &&
-            lastFinalizedAudioChatRef.current.chatId === streamChatId &&
-            Date.now() - lastFinalizedAudioChatRef.current.at < 8000
+            incomingChatId !== null &&
+            audioActiveChatIdRef.current !== null &&
+            incomingChatId !== audioActiveChatIdRef.current
           ) {
-            break
+            resetAudioQueue()
+          }
+          if (incomingChatId !== null) {
+            audioActiveChatIdRef.current = incomingChatId
           }
 
           const audioChunkPayload = resolveAudioChunkPayload(data)
-          if (audioChunkPayload) {
-            const parsedSeq = Number(data.seq)
-            const hasSeq = Number.isFinite(parsedSeq)
-            if (hasSeq && currentStream.seenSeq.has(parsedSeq)) {
-              break
-            }
+          const parsedSeq = Number(data.seq)
+          const seq = Number.isFinite(parsedSeq) ? parsedSeq : -1
+          const parsedDuration = Number(data.duration)
+          const durationMs = Number.isFinite(parsedDuration) ? parsedDuration : 0
 
-            const chunkKey = buildAudioChunkKey(audioChunkPayload)
-            if (chunkKey && currentStream.seenChunkKeys.has(chunkKey)) {
-              break
-            }
-
-            const chunkBytes = decodeBase64Chunk(audioChunkPayload)
-            if (chunkBytes === null) {
-              audioStreamRef.current = createAudioStreamState()
-              break
-            }
-            if (hasSeq) {
-              currentStream.seenSeq.add(parsedSeq)
-            }
-            if (chunkKey) {
-              currentStream.seenChunkKeys.add(chunkKey)
-            }
-            if (chunkBytes.length > 0) {
-              currentStream.chunks.push(chunkBytes)
-            }
+          if (audioChunkPayload && seq >= 0) {
+            enqueueAudioSegment({
+              chatId: incomingChatId,
+              seq,
+              text: typeof data.text === "string" ? data.text : "",
+              audioBase64: audioChunkPayload,
+              durationMs,
+            })
           }
 
-          if (!data.is_final) {
-            break
-          }
-
-          const merged = mergeAudioChunks(currentStream.chunks)
-          audioStreamRef.current = createAudioStreamState()
-          if (streamChatId !== null) {
-            lastFinalizedAudioChatRef.current = {
-              chatId: streamChatId,
-              at: Date.now(),
-            }
-          }
-          const audioBase64 = bytesToBase64(merged)
-          if (audioBase64) {
-            playAudioBase64(audioBase64)
-          }
           break
         }
 
@@ -626,19 +672,27 @@ export function useChat(options: UseChatOptions = {}): UseChatResult {
     return () => {
       unsubscribe()
       ws.disconnect()
+      resetAudioQueue()
       if (currentAudioRef.current) {
         currentAudioRef.current.pause()
         currentAudioRef.current = null
       }
-      audioStreamRef.current = createAudioStreamState()
+      clearAudioAdvanceTimer()
+      if (currentAudioUrlRef.current) {
+        URL.revokeObjectURL(currentAudioUrlRef.current)
+        currentAudioUrlRef.current = null
+      }
       lastAssistantTextRef.current = ""
       lastPlayedAudioRef.current = { value: "", at: 0 }
-      lastFinalizedAudioChatRef.current = { chatId: null, at: 0 }
     }
   }, [
     connectWithBootstrap,
+    drainAudioQueue,
+    enqueueAudioSegment,
     playAudioBase64,
+    resetAudioQueue,
     updateSessionMessages,
+    clearAudioAdvanceTimer,
   ])
 
   const sendMessage = useCallback(
@@ -678,10 +732,9 @@ export function useChat(options: UseChatOptions = {}): UseChatResult {
     if (currentAudioRef.current) {
       currentAudioRef.current.pause()
     }
+    resetAudioQueue()
     lastPlayedAudioRef.current = { value: "", at: 0 }
     lastAssistantTextRef.current = ""
-    audioStreamRef.current = createAudioStreamState()
-    lastFinalizedAudioChatRef.current = { chatId: null, at: 0 }
     setIsTyping(false)
     setError(null)
 
@@ -703,7 +756,7 @@ export function useChat(options: UseChatOptions = {}): UseChatResult {
     setActiveSessionId(nextSessionId)
 
     await connectWithBootstrap()
-  }, [connectWithBootstrap])
+  }, [connectWithBootstrap, resetAudioQueue])
 
   const switchSession = useCallback(
     async (sessionId: string) => {
@@ -721,9 +774,8 @@ export function useChat(options: UseChatOptions = {}): UseChatResult {
       if (currentAudioRef.current) {
         currentAudioRef.current.pause()
       }
+      resetAudioQueue()
       lastPlayedAudioRef.current = { value: "", at: 0 }
-      audioStreamRef.current = createAudioStreamState()
-      lastFinalizedAudioChatRef.current = { chatId: null, at: 0 }
       lastAssistantTextRef.current = ""
       setIsTyping(false)
       setError(null)
@@ -731,7 +783,7 @@ export function useChat(options: UseChatOptions = {}): UseChatResult {
 
       await connectWithBootstrap()
     },
-    [connectWithBootstrap, loadSessionHistory, sessionsState],
+    [connectWithBootstrap, loadSessionHistory, resetAudioQueue, sessionsState],
   )
 
   const reconnect = useCallback(() => {
@@ -755,11 +807,14 @@ export function useChat(options: UseChatOptions = {}): UseChatResult {
         currentAudioRef.current.pause()
         currentAudioRef.current = null
       }
+      if (currentAudioUrlRef.current) {
+        URL.revokeObjectURL(currentAudioUrlRef.current)
+        currentAudioUrlRef.current = null
+      }
+      resetAudioQueue()
       wsRef.current.disconnect()
-      audioStreamRef.current = createAudioStreamState()
       lastAssistantTextRef.current = ""
       lastPlayedAudioRef.current = { value: "", at: 0 }
-      lastFinalizedAudioChatRef.current = { chatId: null, at: 0 }
       setIsTyping(false)
       setError(null)
     })
@@ -767,7 +822,7 @@ export function useChat(options: UseChatOptions = {}): UseChatResult {
     return () => {
       unlisten?.()
     }
-  }, [])
+  }, [resetAudioQueue])
 
   const activeSession =
     sessionsState.find((session) => session.id === activeSessionId) ??
