@@ -727,9 +727,8 @@ func (s *petStreamer) Finalize(ctx context.Context, content string) error {
 
 	// 发送最终状态块（带情绪状态）
 	// 语音模式下 Update 不会持续推文本，这里补发纯文本，避免前端出现“无回复”。
-	finalText := parsePureText(content)
 	s.chatID++
-	s.channel.sendStreamChunk(s.sessionID, s.chatID, "final", finalText, true)
+	s.channel.sendStreamChunk(s.sessionID, s.chatID, "final", "", true)
 
 	return nil
 }
