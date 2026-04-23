@@ -93,28 +93,28 @@ func (h *PetHook) BeforeLLM(ctx context.Context, req *agent.LLMHookRequest) (*ag
 
 	// 确定 MBTI 类型的各个维度
 	var IE string
-	if char.GetEmotionEngine().GetPersonality().IE > 50 {
+	if char.GetEmotionEngine().GetPersonality().IE > 50.0 {
 		IE = "i"
 	} else {
 		IE = "e"
 	}
 
 	var SN string
-	if char.GetEmotionEngine().GetPersonality().SN > 50 {
+	if char.GetEmotionEngine().GetPersonality().SN > 50.0 {
 		SN = "s"
 	} else {
 		SN = "n"
 	}
 
 	var TF string
-	if char.GetEmotionEngine().GetPersonality().TF > 50 {
+	if char.GetEmotionEngine().GetPersonality().TF > 50.0 {
 		TF = "t"
 	} else {
 		TF = "f"
 	}
 
 	var JP string
-	if char.GetEmotionEngine().GetPersonality().JP > 50 {
+	if char.GetEmotionEngine().GetPersonality().JP > 50.0 {
 		JP = "j"
 	} else {
 		JP = "p"
