@@ -713,8 +713,9 @@ func (s *petStreamer) Finalize(ctx context.Context, content string) error {
 
 	// 发送最终状态块（带情绪状态）
 	// 语音模式下 Update 不会持续推文本，这里补发纯文本，避免前端出现“无回复”。
+	finalText := parsePureText(content)
 	s.chatID++
-	s.channel.sendStreamChunk(s.sessionID, s.chatID, "final", "", true)
+	s.channel.sendStreamChunk(s.sessionID, s.chatID, "final", finalText, true)
 
 	return nil
 }
@@ -913,8 +914,10 @@ func (c *PetChannel) sendVoicePush(sessionID string, pushType string, data any) 
 		return err
 	}
 
+	matched := 0
 	for _, pc := range c.connections {
 		if pc.sessionID == sessionID || sessionID == "broadcast" {
+			matched++
 			if err := pc.writeJSON(PetStreamResponse{
 				Type:      "push",
 				PushType:  pushType,
@@ -922,9 +925,21 @@ func (c *PetChannel) sendVoicePush(sessionID string, pushType string, data any) 
 				IsFinal:   false,
 				Timestamp: time.Now().Unix(),
 			}); err != nil {
+				logger.WarnCF("pet", "sendVoicePush writeJSON failed", map[string]any{
+					"session_id": sessionID,
+					"push_type":  pushType,
+					"error":      err.Error(),
+				})
 				return err
 			}
 		}
+	}
+
+	if matched == 0 {
+		logger.WarnCF("pet", "sendVoicePush no matched connection", map[string]any{
+			"session_id": sessionID,
+			"push_type":  pushType,
+		})
 	}
 	return nil
 }
@@ -1005,6 +1020,12 @@ func (s *petStreamer) processVoiceSegmentsLocked(content string) {
 			}
 			buffer = s.voiceBuffer.String()
 			if text != "" {
+				chunkText := parsePureText(text)
+				if strings.TrimSpace(chunkText) != "" {
+					s.chatID++
+					s.channel.sendStreamChunk(s.sessionID, s.chatID, "text", chunkText, false)
+				}
+
 				s.seqCounter++
 				err := s.voiceSynthesizer.SynthesizeToQueue(
 					s.sessionID,
@@ -1190,7 +1211,13 @@ func (s *petStreamer) sendAudioSegmentAsync(seg *voice.AudioSegment, isFinal boo
 			"error":    seg.Error,
 			"emotion":  "",
 		}
-		_ = s.channel.sendVoicePush(s.sessionID, "audio_and_voice", data)
+		if err := s.channel.sendVoicePush(s.sessionID, "audio_and_voice", data); err != nil {
+			logger.WarnCF("pet", "sendAudioSegmentAsync: send voice push failed", map[string]any{
+				"seq":       seg.Seq,
+				"sessionID": s.sessionID,
+				"error":     err.Error(),
+			})
+		}
 		return
 	}
 
@@ -1219,7 +1246,13 @@ func (s *petStreamer) sendAudioSegmentAsync(seg *voice.AudioSegment, isFinal boo
 		"duration":  seg.Duration,
 	})
 
-	_ = s.channel.sendVoicePush(s.sessionID, "audio_and_voice", data)
+	if err := s.channel.sendVoicePush(s.sessionID, "audio_and_voice", data); err != nil {
+		logger.WarnCF("pet", "sendAudioSegmentAsync: send voice push failed", map[string]any{
+			"seq":       seg.Seq,
+			"sessionID": s.sessionID,
+			"error":     err.Error(),
+		})
+	}
 
 	logger.DebugCF("pet", "sent audio segment async", map[string]any{
 		"seq":      seg.Seq,
