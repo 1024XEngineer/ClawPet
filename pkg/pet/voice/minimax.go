@@ -67,6 +67,9 @@ func (t *MinimaxTTS) Synthesize(text string, params VoiceParams) (<-chan AudioCh
 		"model":  t.model,
 		"text":   text,
 		"stream": true, // 启用流式输出
+		"stream_options": map[string]any{
+			"exclude_aggregated_audio": true,
+		},
 		"voice_setting": map[string]any{
 			"voice_id": t.voiceID,
 			"speed":    params.Speed,
