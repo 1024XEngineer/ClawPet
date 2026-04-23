@@ -87,17 +87,17 @@ func TestDefaultEmotionState(t *testing.T) {
 func TestDefaultMBTI(t *testing.T) {
 	mbti := DefaultMBTI()
 
-	if mbti.IE != 50 {
-		t.Errorf("IE=%d, want 50", mbti.IE)
+	if mbti.IE != 50.0 {
+		t.Errorf("IE=%f, want 50.0", mbti.IE)
 	}
-	if mbti.SN != 50 {
-		t.Errorf("SN=%d, want 50", mbti.SN)
+	if mbti.SN != 50.0 {
+		t.Errorf("SN=%f, want 50.0", mbti.SN)
 	}
-	if mbti.TF != 50 {
-		t.Errorf("TF=%d, want 50", mbti.TF)
+	if mbti.TF != 50.0 {
+		t.Errorf("TF=%f, want 50.0", mbti.TF)
 	}
-	if mbti.JP != 50 {
-		t.Errorf("JP=%d, want 50", mbti.JP)
+	if mbti.JP != 50.0 {
+		t.Errorf("JP=%f, want 50.0", mbti.JP)
 	}
 }
 
