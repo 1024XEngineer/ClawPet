@@ -129,10 +129,10 @@ type SixEmotions struct {
 // - TF: 理性(T) <-> 感性(F)，50为中性
 // - JP: 判断(J) <-> 感知(P)，50为中性
 type MBTIPersonality struct {
-	IE int `json:"ie"` // 内向-外向维度
-	SN int `json:"sn"` // 实感-直觉维度
-	TF int `json:"tf"` // 理性-感性维度
-	JP int `json:"jp"` // 判断-感知维度
+	IE float64 `json:"ie"` // 内向-外向维度
+	SN float64 `json:"sn"` // 实感-直觉维度
+	TF float64 `json:"tf"` // 理性-感性维度
+	JP float64 `json:"jp"` // 判断-感知维度
 }
 
 // EmotionEngine 情绪状态机
@@ -220,7 +220,7 @@ type EmotionPush struct {
 func NewEmotionEngine(persistPath string) *EmotionEngine {
 	now := time.Now()
 	return &EmotionEngine{
-		personality: MBTIPersonality{IE: NeutralValue, SN: NeutralValue, TF: NeutralValue, JP: NeutralValue},
+		personality: MBTIPersonality{IE: 50.0, SN: 50.0, TF: 50.0, JP: 50.0},
 		emotions:    SixEmotions{Joy: NeutralValue, Anger: NeutralValue, Sadness: NeutralValue, Disgust: NeutralValue, Surprise: NeutralValue, Fear: NeutralValue},
 		volatility:  1.0,
 		lastUpdate:  now,
@@ -270,6 +270,34 @@ func (e *EmotionEngine) SetPersonality(p MBTIPersonality) {
 	e.mu.Lock()
 	defer e.mu.Unlock()
 	e.personality = p
+}
+
+func (e *EmotionEngine) getPersonalityFloat64(dimension string) float64 {
+	switch dimension {
+	case MBTIDimensionIE:
+		return e.personality.IE
+	case MBTIDimensionSN:
+		return e.personality.SN
+	case MBTIDimensionTF:
+		return e.personality.TF
+	case MBTIDimensionJP:
+		return e.personality.JP
+	default:
+		return 50.0
+	}
+}
+
+func (e *EmotionEngine) setPersonalityFloat64(dimension string, value float64) {
+	switch dimension {
+	case MBTIDimensionIE:
+		e.personality.IE = value
+	case MBTIDimensionSN:
+		e.personality.SN = value
+	case MBTIDimensionTF:
+		e.personality.TF = value
+	case MBTIDimensionJP:
+		e.personality.JP = value
+	}
 }
 
 // GetVolatility 获取当前波动系数
