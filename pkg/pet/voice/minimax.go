@@ -20,6 +20,7 @@ type MinimaxTTS struct {
 	apiBase    string       // API地址
 	apiKey     string       // API密钥
 	model      string       // 使用的模型名称
+	voiceID    string       // 音色ID
 	httpClient *http.Client // HTTP客户端，包含60秒超时
 }
 
@@ -31,11 +32,15 @@ func newMinimaxTTS(apiBase, apiKey, model, voiceID string, extra map[string]any)
 	if model == "" {
 		model = "speech-2.8-hd"
 	}
+	if voiceID == "" {
+		voiceID = "male-qn-qingse"
+	}
 
 	return &MinimaxTTS{
 		apiBase: apiBase,
 		apiKey:  apiKey,
 		model:   model,
+		voiceID: voiceID,
 		httpClient: &http.Client{
 			Timeout: 60 * time.Second,
 		},
@@ -66,7 +71,7 @@ func (t *MinimaxTTS) Synthesize(text string, params VoiceParams) (<-chan AudioCh
 			"exclude_aggregated_audio": true,
 		},
 		"voice_setting": map[string]any{
-			"voice_id": "male-qn-qingse", // 使用默认音色
+			"voice_id": t.voiceID,
 			"speed":    params.Speed,
 			"vol":      params.Vol,
 			"pitch":    params.Pitch,
