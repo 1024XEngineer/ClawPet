@@ -254,10 +254,6 @@ export function useChat(options: UseChatOptions = {}): UseChatResult {
     value: "",
     at: 0,
   })
-  const lastQueuedSegmentRef = useRef<{ chatId: number | null; seq: number | null }>({
-    chatId: null,
-    seq: null,
-  })
 
   const updateSessionMessages = useCallback(
     (sessionId: string, updater: (messages: ChatMessage[]) => ChatMessage[]) => {
@@ -434,7 +430,6 @@ export function useChat(options: UseChatOptions = {}): UseChatResult {
     audioActiveChatIdRef.current = null
     audioSeenSeqRef.current = new Set()
     audioIsPlayingRef.current = false
-    lastQueuedSegmentRef.current = { chatId: null, seq: null }
   }, [])
 
   const drainAudioQueue = useCallback(() => {
@@ -464,13 +459,6 @@ export function useChat(options: UseChatOptions = {}): UseChatResult {
     const [nextSegment] = queue.splice(nextIndex, 1)
     audioIsPlayingRef.current = true
 
-    console.info("[petclaw] audio segment play", {
-      chatId: nextSegment.chatId,
-      seq: nextSegment.seq,
-      textLength: nextSegment.text.length,
-      queueLeft: queue.length,
-    })
-
     playAudioBase64(nextSegment.audioBase64, nextSegment.text || null, () => {
       audioIsPlayingRef.current = false
       audioExpectedSeqRef.current = nextSegment.seq + 1
@@ -491,18 +479,6 @@ export function useChat(options: UseChatOptions = {}): UseChatResult {
       if (audioExpectedSeqRef.current === null) {
         audioExpectedSeqRef.current = audioQueueRef.current[0]?.seq ?? segment.seq
       }
-
-      lastQueuedSegmentRef.current = {
-        chatId: segment.chatId,
-        seq: segment.seq,
-      }
-
-      console.info("[petclaw] audio segment queued", {
-        chatId: segment.chatId,
-        seq: segment.seq,
-        queueSize: audioQueueRef.current.length,
-        expectedSeq: audioExpectedSeqRef.current,
-      })
 
       drainAudioQueue()
     },
@@ -579,7 +555,6 @@ export function useChat(options: UseChatOptions = {}): UseChatResult {
           }
 
           if (data.type === "error" || data.error) {
-            console.warn("[petclaw] audio push error", data.error || data.type)
             resetAudioQueue()
             break
           }
@@ -611,15 +586,6 @@ export function useChat(options: UseChatOptions = {}): UseChatResult {
             })
           }
 
-          if (data.is_final) {
-            console.info("[petclaw] audio segment final marker", {
-              chatId: incomingChatId,
-              seq,
-              queueSize: audioQueueRef.current.length,
-              expectedSeq: audioExpectedSeqRef.current,
-              lastQueued: lastQueuedSegmentRef.current,
-            })
-          }
           break
         }
 

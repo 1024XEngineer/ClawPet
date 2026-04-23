@@ -179,13 +179,6 @@ export default function DesktopPetPage() {
         const bytes = decodeBase64Audio(rawAudio)
         let audioUrl = rawAudio
 
-        console.info("[petclaw] desktop bubble audio received", {
-          textLength: data.text?.length ?? 0,
-          rawLength: rawAudio.length,
-          decodedBytes: bytes?.length ?? 0,
-          emotion: data.emotion ?? "",
-        })
-
         if (audioObjectUrlRef.current) {
           URL.revokeObjectURL(audioObjectUrlRef.current)
           audioObjectUrlRef.current = null
