@@ -62,6 +62,7 @@ interface AudioSegmentItem {
   seq: number
   text: string
   audioBase64: string
+  durationMs: number
 }
 
 const EMPTY_SESSION_TITLE = "新对话"
@@ -248,6 +249,7 @@ export function useChat(options: UseChatOptions = {}): UseChatResult {
   const audioSeenSeqRef = useRef<Set<string>>(new Set())
   const currentAudioRef = useRef<HTMLAudioElement | null>(null)
   const currentAudioUrlRef = useRef<string | null>(null)
+  const audioAdvanceTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   const lastAssistantTextRef = useRef("")
   const lastEmotionRef = useRef("neutral")
   const lastPlayedAudioRef = useRef<{ value: string; at: number }>({
@@ -359,10 +361,18 @@ export function useChat(options: UseChatOptions = {}): UseChatResult {
     })
   }, [])
 
+  const clearAudioAdvanceTimer = useCallback(() => {
+    if (audioAdvanceTimerRef.current) {
+      clearTimeout(audioAdvanceTimerRef.current)
+      audioAdvanceTimerRef.current = null
+    }
+  }, [])
+
   const playAudioBase64 = useCallback(
     (
       audioBase64: string,
       bubbleText?: string | null,
+      durationMs?: number,
       onSettled?: () => void,
     ) => {
       if (!audioBase64) {
@@ -385,6 +395,21 @@ export function useChat(options: UseChatOptions = {}): UseChatResult {
 
       if (window.electronAPI?.showBubble) {
         showBubble(bubbleText ?? (lastAssistantTextRef.current || null), audioBase64)
+        const fallbackDelay = Math.min(
+          Math.max((bubbleText?.trim().length ?? 0) * 120, 900),
+          8_000,
+        )
+        const resolvedDurationMs =
+          typeof durationMs === "number" && durationMs > 0
+            ? durationMs
+            : fallbackDelay
+        const advanceDelay = Math.max(resolvedDurationMs, 200)
+        clearAudioAdvanceTimer()
+        audioAdvanceTimerRef.current = setTimeout(() => {
+          audioAdvanceTimerRef.current = null
+          onSettled?.()
+        }, advanceDelay)
+        return
       }
 
       const decoded = decodeBase64Chunk(audioBase64)
@@ -421,16 +446,18 @@ export function useChat(options: UseChatOptions = {}): UseChatResult {
         onSettled?.()
       })
     },
-    [showBubble],
+    [clearAudioAdvanceTimer, showBubble],
   )
 
   const resetAudioQueue = useCallback(() => {
+    clearAudioAdvanceTimer()
     audioQueueRef.current = []
     audioExpectedSeqRef.current = null
     audioActiveChatIdRef.current = null
     audioSeenSeqRef.current = new Set()
     audioIsPlayingRef.current = false
-  }, [])
+    lastQueuedSegmentRef.current = { chatId: null, seq: null }
+  }, [clearAudioAdvanceTimer])
 
   const drainAudioQueue = useCallback(() => {
     if (audioIsPlayingRef.current) {
@@ -459,11 +486,16 @@ export function useChat(options: UseChatOptions = {}): UseChatResult {
     const [nextSegment] = queue.splice(nextIndex, 1)
     audioIsPlayingRef.current = true
 
-    playAudioBase64(nextSegment.audioBase64, nextSegment.text || null, () => {
-      audioIsPlayingRef.current = false
-      audioExpectedSeqRef.current = nextSegment.seq + 1
-      drainAudioQueue()
-    })
+    playAudioBase64(
+      nextSegment.audioBase64,
+      nextSegment.text || null,
+      nextSegment.durationMs,
+      () => {
+        audioIsPlayingRef.current = false
+        audioExpectedSeqRef.current = nextSegment.seq + 1
+        drainAudioQueue()
+      },
+    )
   }, [playAudioBase64])
 
   const enqueueAudioSegment = useCallback(
@@ -576,6 +608,8 @@ export function useChat(options: UseChatOptions = {}): UseChatResult {
           const audioChunkPayload = resolveAudioChunkPayload(data)
           const parsedSeq = Number(data.seq)
           const seq = Number.isFinite(parsedSeq) ? parsedSeq : -1
+          const parsedDuration = Number(data.duration)
+          const durationMs = Number.isFinite(parsedDuration) ? parsedDuration : 0
 
           if (audioChunkPayload && seq >= 0) {
             enqueueAudioSegment({
@@ -583,6 +617,7 @@ export function useChat(options: UseChatOptions = {}): UseChatResult {
               seq,
               text: typeof data.text === "string" ? data.text : "",
               audioBase64: audioChunkPayload,
+              durationMs,
             })
           }
 
@@ -637,6 +672,7 @@ export function useChat(options: UseChatOptions = {}): UseChatResult {
         currentAudioRef.current.pause()
         currentAudioRef.current = null
       }
+      clearAudioAdvanceTimer()
       if (currentAudioUrlRef.current) {
         URL.revokeObjectURL(currentAudioUrlRef.current)
         currentAudioUrlRef.current = null
@@ -651,6 +687,7 @@ export function useChat(options: UseChatOptions = {}): UseChatResult {
     playAudioBase64,
     resetAudioQueue,
     updateSessionMessages,
+    clearAudioAdvanceTimer,
   ])
 
   const sendMessage = useCallback(
