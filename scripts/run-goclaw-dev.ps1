@@ -26,8 +26,71 @@ if ($ShowTerminalWindows) {
 if ([string]::IsNullOrWhiteSpace($GatewayConfigPath)) {
   $GatewayConfigPath = Join-Path $repoRoot ".goclaw-runtime\config.json"
 }
+$LauncherConfigPath = $GatewayConfigPath
 if (-not (Test-Path $gatewayHomeDir)) {
   New-Item -ItemType Directory -Path $gatewayHomeDir -Force | Out-Null
+}
+
+$LauncherToken = "goclaw-local-token"
+$launcherCandidates = @(
+  (Join-Path $repoRoot "picoclaw-web.exe"),
+  (Join-Path $repoRoot "picoclaw-launcher.exe"),
+  (Join-Path $repoRoot "build\picoclaw-launcher.exe")
+)
+$resolvedLauncherBin = $null
+foreach ($candidate in $launcherCandidates) {
+  if (Test-Path $candidate) {
+    $resolvedLauncherBin = $candidate
+    break
+  }
+}
+
+function Write-JsonNoBom {
+  param(
+    [string]$Path,
+    [string]$Json
+  )
+
+  $utf8NoBom = New-Object System.Text.UTF8Encoding($false)
+  [System.IO.File]::WriteAllText($Path, $Json, $utf8NoBom)
+}
+
+function Normalize-JsonFileNoBom {
+  param([string]$Path)
+
+  if (-not (Test-Path $Path)) {
+    return
+  }
+
+  $raw = [System.IO.File]::ReadAllText($Path)
+  Write-JsonNoBom -Path $Path -Json $raw
+}
+
+function Test-PortListening {
+  param([int]$Port)
+
+  $line = netstat -ano -p tcp | Select-String -Pattern ":$Port\s+.*LISTENING" | Select-Object -First 1
+  return $null -ne $line
+}
+
+function Get-FirstListeningPidOnPort {
+  param([int]$Port)
+
+  $line = netstat -ano -p tcp | Select-String -Pattern ":$Port\s+.*LISTENING" | Select-Object -First 1
+  if (-not $line) {
+    return 0
+  }
+
+  $parts = ($line.Line -replace "\s+", " ").Trim().Split(" ")
+  if ($parts.Count -lt 5) {
+    return 0
+  }
+
+  $pid = 0
+  if ([int]::TryParse($parts[4], [ref]$pid)) {
+    return $pid
+  }
+  return 0
 }
 
 function Write-Step([string]$message) {

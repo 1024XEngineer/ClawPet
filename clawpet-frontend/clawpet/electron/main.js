@@ -14,23 +14,25 @@
  * - 前端面板：通过环境变量 GOCLAW_DASHBOARD_URL 连接（默认 3000）
  */
 
-let petWindow = null;
-let settingsWindow = null;
-let onboardingWindow = null;
-let startupWindow = null;
-let startupPollTimer = null;
-let startupCompleted = false;
-let petHoverMonitorTimer = null;
-let petHovering = false;
+const { app, BrowserWindow, ipcMain, screen } = require('electron');
+const path = require('path');
+const os = require('os');
+const fs = require('fs');
 
 // 全局窗口引用
-let petWindow = null;          // 桌宠窗口
-let settingsWindow = null;     // 设置窗口
-let startupWindow = null;      // 启动进度窗口
-let startupPollTimer = null;   // startup polling timer
-let petRendererRetryTimer = null; // pet renderer retry timer
-let petRendererRetryCount = 0;    // pet renderer retry count
-let startupCompleted = false;  // startup completed flag
+let petWindow = null;              // 桌宠窗口
+let settingsWindow = null;         // 设置窗口
+let onboardingWindow = null;       // 初始化窗口
+let startupWindow = null;          // 启动进度窗口
+let startupPollTimer = null;       // startup polling timer
+let petRendererRetryTimer = null;  // pet renderer retry timer
+let petRendererRetryCount = 0;     // pet renderer retry count
+let startupCompleted = false;      // startup completed flag
+let petHoverMonitorTimer = null;
+let petHovering = false;
+let onboardingLocked = false;
+let lastBubbleFingerprint = '';
+let lastBubbleAt = 0;
 
 // 桌宠窗口尺寸（宽度280px，高度380px）
 const PET_WIDTH = 280;
@@ -158,6 +160,7 @@ const persistedOnboarding = loadOnboardingState();
 onboardingLocked = !(persistedOnboarding && persistedOnboarding.completed === true);
 logToFile(`[ONBOARDING] startup locked=${onboardingLocked}`);
 
+const backendBaseUrl = (process.env.GOCLAW_BACKEND_URL || 'http://127.0.0.1:18790').trim().replace(/\/+$/, '');
 const rendererBaseUrl = (process.env.ELECTRON_RENDERER_URL || 'http://localhost:5173').trim().replace(/\/+$/, '');
 const dashboardBaseUrl = (process.env.GOCLAW_DASHBOARD_URL || 'http://127.0.0.1:3000').trim().replace(/\/+$/, '');
 const launcherToken = (process.env.GOCLAW_LAUNCHER_TOKEN || process.env.PICOCLAW_LAUNCHER_TOKEN || '').trim();
