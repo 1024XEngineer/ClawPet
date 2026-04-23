@@ -145,10 +145,10 @@ type SixEmotions struct {
 // MBTIConfig MBTI性格四维配置
 // 每个维度0-100，50为中心点
 type MBTIConfig struct {
-	IE int `json:"ie"` // 内向(I)-外向(E)：<50偏内向，>50偏外向
-	SN int `json:"sn"` // 实感(S)-直觉(N)：<50偏实感，>50偏直觉
-	TF int `json:"tf"` // 理性(T)-感性(F)：<50偏理性，>50偏感性
-	JP int `json:"jp"` // 判断(J)-感知(P)：<50偏判断，>50偏感知
+	IE float64 `json:"ie"` // 内向(I)-外向(E)：<50偏内向，>50偏外向
+	SN float64 `json:"sn"` // 实感(S)-直觉(N)：<50偏实感，>50偏直觉
+	TF float64 `json:"tf"` // 理性(T)-感性(F)：<50偏理性，>50偏感性
+	JP float64 `json:"jp"` // 判断(J)-感知(P)：<50偏判断，>50偏感知
 }
 
 // VoiceConfig 语音配置结构
@@ -229,10 +229,10 @@ func DefaultEmotionState() *EmotionState {
 // DefaultMBTI 返回默认的MBTI配置
 func DefaultMBTI() *MBTIConfig {
 	return &MBTIConfig{
-		IE: 50,
-		SN: 50,
-		TF: 50,
-		JP: 50,
+		IE: 50.0,
+		SN: 50.0,
+		TF: 50.0,
+		JP: 50.0,
 	}
 }
 

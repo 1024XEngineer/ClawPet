@@ -295,15 +295,15 @@ type CharacterConfig struct {
 
 // MBTIConfig MBTI 性格四维配置
 type MBTIConfig struct {
-	IE int `json:"ie"` // 内向(I)-外向(E): 0-100, 50中性
-	SN int `json:"sn"` // 实感(S)-直觉(N): 0-100, 50中性
-	TF int `json:"tf"` // 理性(T)-感性(F): 0-100, 50中性
-	JP int `json:"jp"` // 判断(J)-感知(P): 0-100, 50中性
+	IE float64 `json:"ie"` // 内向(I)-外向(E): 0-100, 50中性
+	SN float64 `json:"sn"` // 实感(S)-直觉(N): 0-100, 50中性
+	TF float64 `json:"tf"` // 理性(T)-感性(F): 0-100, 50中性
+	JP float64 `json:"jp"` // 判断(J)-感知(P): 0-100, 50中性
 }
 
 // DefaultMBTI 返回默认的中性 MBTI 配置
 func DefaultMBTI() MBTIConfig {
-	return MBTIConfig{IE: 50, SN: 50, TF: 50, JP: 50}
+	return MBTIConfig{IE: 50.0, SN: 50.0, TF: 50.0, JP: 50.0}
 }
 
 // EmotionState 情绪状态
