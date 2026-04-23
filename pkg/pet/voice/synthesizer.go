@@ -4,6 +4,8 @@ import (
 	"regexp"
 	"strconv"
 	"strings"
+
+	"github.com/sipeed/picoclaw/pkg/logger"
 )
 
 // Synthesizer 语音合成器
@@ -253,6 +255,15 @@ func (s *Synthesizer) SynthesizeToQueue(sessionID string, chatID int64, text str
 		// MiniMax: 128000 bps = 16000 bytes/s
 		if duration == 0 && len(audioData) > 0 {
 			duration = len(audioData) * 1000 / 16000
+		}
+
+		if len(audioData) == 0 {
+			logger.WarnCF("pet-voice", "SynthesizeToQueue produced empty audio", map[string]any{
+				"session_id": sessionID,
+				"chat_id":    chatID,
+				"seq":        seq,
+				"text_len":   len(text),
+			})
 		}
 
 		queue.UpdateSegment(seq, true, audioData, duration, "")
