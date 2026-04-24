@@ -18,6 +18,7 @@ import (
 	petconfig "github.com/sipeed/picoclaw/pkg/pet/config"
 	"github.com/sipeed/picoclaw/pkg/pet/memory"
 	"github.com/sipeed/picoclaw/pkg/pet/modelconfig"
+	"github.com/sipeed/picoclaw/pkg/pet/skills"
 	"github.com/sipeed/picoclaw/pkg/pet/userprofile"
 	"github.com/sipeed/picoclaw/pkg/pet/voice"
 	"github.com/sipeed/picoclaw/pkg/providers"
@@ -41,6 +42,7 @@ type PetService struct {
 	modelConfigManager *modelconfig.Manager
 	cronService        *cron.CronService
 	userProfileManager *userprofile.Manager
+	skillsMgr          *skills.Manager
 
 	connSessions map[string]string
 
@@ -59,29 +61,31 @@ type PetServiceConfig struct {
 
 func NewPetService(msgBus *bus.MessageBus, cfg PetServiceConfig) (*PetService, error) {
 	ctx, cancel := context.WithCancel(context.Background())
+	homePath := config.GetHome()
 	s := &PetService{
-		msgBus:        msgBus,
-		config:        cfg,
-		actionManager: action.NewActionManager(cfg.WorkspacePath),
-		connSessions:  make(map[string]string),
-		ctx:           ctx,
-		cancel:        cancel,
+		msgBus:       msgBus,
+		config:       cfg,
+		connSessions: make(map[string]string),
+		ctx:          ctx,
+		cancel:       cancel,
 	}
 	workspacePath := cfg.WorkspacePath
-	if workspacePath != "" {
-		logger.Debugf("pet: workspacePath=%s", workspacePath)
-		s.configManager = petconfig.NewManager(workspacePath)
+	if homePath != "" {
+		// 优先使用 homePath 配置
+		logger.Debugf("pet: homePath=%s", homePath)
+		// 创建配置管理器
+		s.configManager = petconfig.NewManager(homePath)
 		if s.configManager == nil {
 			return nil, fmt.Errorf("failed to create config manager")
 		}
-
+		// 创建角色管理器
 		var err error
 		s.charManager, err = characters.NewManager(s.configManager.GetCharacters(), s.configManager)
 		if err != nil {
 			fmt.Printf("pet: failed to create character manager: %v\n", err)
 			return nil, err
 		}
-
+		// 创建语音加载器
 		s.voiceLoader = voice.NewLoader(s.configManager.GetVoice())
 		if err := s.voiceLoader.Load(); err != nil {
 			fmt.Printf("pet: failed to load voice: %v\n", err)
@@ -92,7 +96,11 @@ func NewPetService(msgBus *bus.MessageBus, cfg PetServiceConfig) (*PetService, e
 			fmt.Println("pet: voice provider is nil after loading")
 		}
 
-		s.memoryStore, err = memory.NewStore(cfg.WorkspacePath)
+		// 创建动作管理器
+		s.actionManager = action.NewActionManager(homePath)
+
+		// 创建记忆内存存储
+		s.memoryStore, err = memory.NewStore(homePath)
 		if err != nil {
 			fmt.Printf("pet: failed to create memory store: %v\n", err)
 		}
@@ -101,11 +109,7 @@ func NewPetService(msgBus *bus.MessageBus, cfg PetServiceConfig) (*PetService, e
 			fmt.Printf("pet: failed to load actions: %v\n", err)
 		}
 
-		defaultModelName := ""
-		if cfg.Config != nil {
-			defaultModelName = cfg.Config.Agents.Defaults.GetModelName()
-		}
-
+		// 创建对话存储
 		if s.memoryStore != nil {
 			// 获取压缩配置
 			compressionConfig := s.configManager.GetCompression()
@@ -126,7 +130,7 @@ func NewPetService(msgBus *bus.MessageBus, cfg PetServiceConfig) (*PetService, e
 			}
 
 			// 创建对话存储（使用 SQLite 持久化）
-			s.conversationStore, err = compression.NewConversationStore(cfg.WorkspacePath, threshold, callback)
+			s.conversationStore, err = compression.NewConversationStore(homePath, threshold, callback)
 			if err != nil {
 				logger.Warnf("pet: failed to create conversation store: %v", err)
 			}
@@ -135,7 +139,7 @@ func NewPetService(msgBus *bus.MessageBus, cfg PetServiceConfig) (*PetService, e
 			var provider providers.LLMProvider
 			var modelCfg *config.ModelConfig
 			if cfg.Config != nil {
-				rawModel := defaultModelName
+				rawModel := cfg.Config.Agents.Defaults.GetModelName()
 				for _, m := range cfg.Config.ModelList {
 					if m.Model == rawModel {
 						modelCfg = m
@@ -159,31 +163,46 @@ func NewPetService(msgBus *bus.MessageBus, cfg PetServiceConfig) (*PetService, e
 
 			// 创建用户画像管理器
 			s.userProfileManager = userprofile.NewManager(
-				workspacePath,
+				homePath,
 				s.memoryStore,
 				s.charManager,
 				provider,
-				defaultModelName,
+				cfg.Config.Agents.Defaults.GetModelName(),
 			)
 		}
+		// 创建用户画像管理器
 		if s.userProfileManager == nil {
 			s.userProfileManager = userprofile.NewManager(
-				workspacePath,
+				homePath,
 				s.memoryStore,
 				s.charManager,
 				nil,
-				defaultModelName,
+				cfg.Config.Agents.Defaults.GetModelName(),
 			)
 		}
-		if cfg.ConfigPath != "" {
-			s.modelConfigManager = modelconfig.NewManager(cfg.ConfigPath)
-		}
+	}
+
+	if cfg.ConfigPath != "" {
+		s.modelConfigManager = modelconfig.NewManager(cfg.ConfigPath)
+	}
+
+	if workspacePath != "" {
 		// 初始化 cron 服务
 		cronStorePath := filepath.Join(workspacePath, "cron", "jobs.json")
 		s.cronService = cron.NewCronService(cronStorePath, nil)
 		logger.DebugCF("pet", "PetService: cron service initialized, store=", map[string]any{
 			"store_path": cronStorePath,
 		})
+		// 初始化 skills 管理器
+		if cfg.Config != nil {
+			var err error
+			s.skillsMgr, err = skills.NewManager(cfg.Config)
+			if err != nil {
+				logger.WarnCF("pet", "PetService: failed to create skills manager", map[string]any{"error": err.Error()})
+			} else {
+				logger.DebugCF("pet", "PetService: skills manager initialized", nil)
+			}
+		}
 	}
 
 	return s, nil
@@ -468,6 +487,16 @@ func (s *PetService) HandleRequest(connID string, req Request) error {
 		return s.handleVoiceModelSetDefault(sessionID, req)
 	case ActionVoiceModelGetVoices:
 		return s.handleVoiceModelGetVoices(sessionID, req)
+	case ActionSkillList:
+		return s.handleSkillList(sessionID, req)
+	case ActionSkillSearch:
+		return s.handleSkillSearch(sessionID, req)
+	case ActionSkillInstall:
+		return s.handleSkillInstall(sessionID, req)
+	case ActionSkillRemove:
+		return s.handleSkillRemove(sessionID, req)
+	case ActionSkillGet:
+		return s.handleSkillGet(sessionID, req)
 	default:
 		return s.sendError(sessionID, req.Action, fmt.Sprintf("unknown action: %s", req.Action))
 	}
@@ -1393,4 +1422,125 @@ func (s *PetService) handleVoiceModelGetVoices(sessionID string, req Request) er
 	}
 
 	return s.sendResponse(sessionID, req.Action, result)
+}
+
+func (s *PetService) handleSkillList(sessionID string, req Request) error {
+	if s.skillsMgr == nil {
+		return s.sendError(sessionID, req.Action, "skills manager not initialized")
+	}
+
+	skillsList := s.skillsMgr.ListSkills()
+	return s.sendResponse(sessionID, req.Action, map[string]interface{}{
+		"skills": skillsList,
+	})
+}
+
+func (s *PetService) handleSkillSearch(sessionID string, req Request) error {
+	if s.skillsMgr == nil {
+		return s.sendError(sessionID, req.Action, "skills manager not initialized")
+	}
+
+	var data struct {
+		Query string `json:"query"`
+		Limit int    `json:"limit"`
+	}
+	if err := json.Unmarshal(req.Data, &data); err != nil {
+		return s.sendError(sessionID, req.Action, "invalid request data")
+	}
+
+	if data.Query == "" {
+		return s.sendError(sessionID, req.Action, "query is required")
+	}
+
+	if data.Limit <= 0 {
+		data.Limit = 10
+	}
+
+	results, err := s.skillsMgr.SearchSkills(s.ctx, data.Query, data.Limit)
+	if err != nil {
+		return s.sendError(sessionID, req.Action, err.Error())
+	}
+
+	return s.sendResponse(sessionID, req.Action, map[string]interface{}{
+		"results": results,
+	})
+}
+
+func (s *PetService) handleSkillInstall(sessionID string, req Request) error {
+	if s.skillsMgr == nil {
+		return s.sendError(sessionID, req.Action, "skills manager not initialized")
+	}
+
+	var data struct {
+		Slug     string `json:"slug"`
+		Registry string `json:"registry"`
+		Version  string `json:"version"`
+	}
+	if err := json.Unmarshal(req.Data, &data); err != nil {
+		return s.sendError(sessionID, req.Action, "invalid request data")
+	}
+
+	if data.Slug == "" {
+		return s.sendError(sessionID, req.Action, "slug is required")
+	}
+	if data.Registry == "" {
+		data.Registry = "clawhub"
+	}
+
+	result, err := s.skillsMgr.InstallSkill(s.ctx, data.Slug, data.Registry, data.Version)
+	if err != nil {
+		return s.sendError(sessionID, req.Action, err.Error())
+	}
+
+	return s.sendResponse(sessionID, req.Action, result)
+}
+
+func (s *PetService) handleSkillRemove(sessionID string, req Request) error {
+	if s.skillsMgr == nil {
+		return s.sendError(sessionID, req.Action, "skills manager not initialized")
+	}
+
+	var data struct {
+		Name string `json:"name"`
+	}
+	if err := json.Unmarshal(req.Data, &data); err != nil {
+		return s.sendError(sessionID, req.Action, "invalid request data")
+	}
+
+	if data.Name == "" {
+		return s.sendError(sessionID, req.Action, "name is required")
+	}
+
+	if err := s.skillsMgr.RemoveSkill(data.Name); err != nil {
+		return s.sendError(sessionID, req.Action, err.Error())
+	}
+
+	return s.sendResponse(sessionID, req.Action, map[string]string{"name": data.Name})
+}
+
+func (s *PetService) handleSkillGet(sessionID string, req Request) error {
+	if s.skillsMgr == nil {
+		return s.sendError(sessionID, req.Action, "skills manager not initialized")
+	}
+
+	var data struct {
+		Name string `json:"name"`
+	}
+	if err := json.Unmarshal(req.Data, &data); err != nil {
+		return s.sendError(sessionID, req.Action, "invalid request data")
+	}
+
+	if data.Name == "" {
+		return s.sendError(sessionID, req.Action, "name is required")
+	}
+
+	content, ok := s.skillsMgr.GetSkillContent(data.Name)
+	if !ok {
+		return s.sendError(sessionID, req.Action, "skill not found")
+	}
+
+	return s.sendResponse(sessionID, req.Action, map[string]interface{}{
+		"name":    data.Name,
+		"content": content,
+	})
 }
