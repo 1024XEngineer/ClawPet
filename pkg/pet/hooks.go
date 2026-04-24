@@ -452,7 +452,7 @@ func (h *PetHook) pushActionTrigger(act *action.Action) {
 
 	h.petService.Push(Push{
 		Type:     "push",
-		PushType: "action_trigger",
+		PushType: PushTypeActionTrigger,
 		Data:     data,
 	})
 }
@@ -482,7 +482,7 @@ func (h *PetHook) pushEmotionChange(push emotion.EmotionPush) {
 
 	h.petService.Push(Push{
 		Type:     "push",
-		PushType: "emotion_change",
+		PushType: PushTypeEmotionChange,
 		Data:     data,
 	})
 }

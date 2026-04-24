@@ -288,7 +288,7 @@ LLM 解析到动作标签时推送。
 
 ---
 
-### 3.7 audio_and_voice - 语音流式合成音频
+### 3.7 text_and_audio - 语音流式合成音频
 
 当 `voice_enabled` 启用时，AI 回复会触发语音流式合成。后端将文本按标点符号和 `[text:]` 标签分割成多个片段，异步合成音频后按顺序推送给前端播放。
 
@@ -297,7 +297,7 @@ LLM 解析到动作标签时推送。
 ```json
 {
   "type": "push",
-  "push_type": "audio_and_voice",
+  "push_type": "text_and_audio",
   "data": {
     "seq": 1,
     "text": "你好呀，很高兴见到你",
@@ -316,7 +316,7 @@ LLM 解析到动作标签时推送。
 ```json
 {
   "type": "push",
-  "push_type": "audio_and_voice",
+  "push_type": "text_and_audio",
   "data": {
     "seq": 2,
     "text": "你好",
@@ -335,7 +335,7 @@ LLM 解析到动作标签时推送。
 ```json
 {
   "type": "push",
-  "push_type": "audio_and_voice",
+  "push_type": "text_and_audio",
   "data": {
     "seq": 0,
     "text": "",
@@ -374,8 +374,8 @@ LLM 解析到动作标签时推送。
 **前端处理逻辑**：
 
 ```javascript
-// 接收 audio_and_voice 推送
-if (msg.push_type === 'audio_and_voice') {
+// 接收 text_and_audio 推送
+if (msg.push_type === 'text_and_audio') {
     const data = msg.data;
     
     if (data.is_final) {
@@ -2357,7 +2357,7 @@ async def send_chat(ws, text):
 | emotion_change | 情绪变化时 | 推送情绪状态更新 |
 | action_trigger | LLM 解析到动作时 | 推送动作触发 |
 | character_switch | 角色切换后 | 推送切换后的角色ID |
-| audio_and_voice | 语音流式合成 | 流式推送语音音频片段，按顺序播放 |
+| text_and_audio | 语音流式合成 | 流式推送语音音频片段，按顺序播放 |
 | heartbeat | 每 30 秒 | 保活检测 |
 
 ---

@@ -877,7 +877,7 @@ func (c *PetChannel) sendStreamChunk(sessionID string, chatID int64, contentType
 		if pc.sessionID == sessionID || sessionID == "broadcast" {
 			pc.writeJSON(PetStreamResponse{
 				Type:      "push",
-				PushType:  "ai_chat",
+				PushType:  pet.PushTypeAIChat,
 				Data:      dataBytes,
 				IsFinal:   isFinal,
 				Timestamp: time.Now().Unix(),
@@ -1191,7 +1191,7 @@ func (s *petStreamer) sendAudioSegmentAsync(seg *voice.AudioSegment, isFinal boo
 			"error":    seg.Error,
 			"emotion":  "",
 		}
-		_ = s.channel.sendVoicePush(s.sessionID, "audio_and_voice", data)
+		_ = s.channel.sendVoicePush(s.sessionID, pet.PushTypeTextAndAudio, data)
 		return
 	}
 
@@ -1220,7 +1220,7 @@ func (s *petStreamer) sendAudioSegmentAsync(seg *voice.AudioSegment, isFinal boo
 		"duration":  seg.Duration,
 	})
 
-	_ = s.channel.sendVoicePush(s.sessionID, "audio_and_voice", data)
+	_ = s.channel.sendVoicePush(s.sessionID, pet.PushTypeTextAndAudio, data)
 
 	logger.DebugCF("pet", "sent audio segment async", map[string]any{
 		"seq":      seg.Seq,
