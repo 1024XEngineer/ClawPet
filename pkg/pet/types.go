@@ -46,6 +46,11 @@ const (
 	ActionVoiceModelUpdate     = "voice_model_update"      // 更新语音模型配置
 	ActionVoiceModelSetDefault = "voice_model_set_default" // 设置默认语音模型
 	ActionVoiceModelGetVoices  = "voice_model_get_voices"  // 获取供应商可用音色
+	ActionSkillList            = "skill_list"              // 列出 skills
+	ActionSkillSearch          = "skill_search"            // 搜索 skills
+	ActionSkillInstall         = "skill_install"           // 安装 skill
+	ActionSkillRemove          = "skill_remove"            // 删除 skill
+	ActionSkillGet             = "skill_get"               // 获取 skill 内容
 )
 
 // =============================================================================
@@ -271,6 +276,51 @@ type CronListResponse struct {
 type CronAddResponse struct {
 	JobID string `json:"job_id"` // 新创建的任务ID
 	Name  string `json:"name"`   // 任务名称
+}
+
+// =============================================================================
+// Skills 请求和响应定义
+// =============================================================================
+
+// SkillListRequest 列出 skills 请求数据
+type SkillListRequest struct {
+}
+
+// SkillSearchRequest 搜索 skills 请求数据
+type SkillSearchRequest struct {
+	Query string `json:"query"` // 搜索关键词
+	Limit int    `json:"limit"` // 返回条数限制
+}
+
+// SkillInstallRequest 安装 skill 请求数据
+type SkillInstallRequest struct {
+	Slug     string `json:"slug"`     // skill slug
+	Registry string `json:"registry"` // registry 名称
+	Version  string `json:"version"`  // 版本（可选）
+}
+
+// SkillRemoveRequest 删除 skill 请求数据
+type SkillRemoveRequest struct {
+	Name string `json:"name"` // skill 名称
+}
+
+// SkillGetRequest 获取 skill 内容请求数据
+type SkillGetRequest struct {
+	Name string `json:"name"` // skill 名称
+}
+
+// SkillInfo skill 信息
+type SkillInfo struct {
+	Name        string `json:"name"`
+	Description string `json:"description"`
+	Path        string `json:"path"`
+	Source      string `json:"source"`
+}
+
+// SkillDetailResponse skill 详情响应
+type SkillDetailResponse struct {
+	Name    string `json:"name"`
+	Content string `json:"content"`
 }
 
 // =============================================================================
