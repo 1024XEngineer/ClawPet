@@ -96,6 +96,11 @@ type CharacterConfig struct {
 	Name        string `json:"name"`         // 角色名称
 	Persona     string `json:"persona"`      // 性格描述
 	PersonaType string `json:"persona_type"` // 性格类型（如gentle/playful等）
+	SpeechTone  string `json:"speech_tone"`  // 说话风格
+	Catchphrase string `json:"catchphrase"`  // 口头禅
+	Hobbies     string `json:"hobbies"`      // 兴趣爱好
+	Background  string `json:"background"`   // 背景设定
+	Preferences string `json:"preferences"`  // 偏好
 	Avatar      string `json:"avatar"`       // 头像/模型ID
 }
 
@@ -243,7 +248,12 @@ func DefaultCharacterConfig() *CharacterConfig {
 		Name:        "艾莉",
 		Persona:     "温柔体贴，善于关心他人",
 		PersonaType: "gentle",
-		Avatar:      "default",
+		SpeechTone:  "温柔",
+		Catchphrase: "主人～",
+		Hobbies:     "陪伴、倾听、撒娇",
+		Background:  "一只可爱的小猫桌宠",
+		Preferences: "喜欢被抚摸、喜欢温暖的地方",
+		Avatar:      "cute_cat",
 	}
 }
 
