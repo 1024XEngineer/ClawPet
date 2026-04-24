@@ -445,6 +445,10 @@ func (s *PetService) HandleRequest(connID string, req Request) error {
 		return s.handleCharacterUpdate(sessionID, req)
 	case ActionCharacterSwitch:
 		return s.handleCharacterSwitch(sessionID, req)
+	case ActionCharacterCreate:
+		return s.handleCharacterCreate(sessionID, req)
+	case ActionUserProfileGet:
+		return s.handleUserProfileGet(sessionID, req)
 	case ActionConfigGet:
 		return s.handleConfigGet(sessionID, req)
 	case ActionConfigUpdate:
@@ -533,7 +537,7 @@ func (s *PetService) handleOnboardingConfig(sessionID string, req Request) error
 		char.Name = data.PetName
 		char.Persona = data.PetPersona
 		char.PersonaType = data.PetPersonaType
-		s.charManager.UpdateCharacter(char.ID, data.PetName, data.PetPersona, data.PetPersonaType)
+		s.charManager.UpdateCharacter(char.ID, data.PetName, data.PetPersona, data.PetPersonaType, "", "", "", "", "")
 		// 保存会在 shutdown 时统一进行
 	}
 
@@ -541,9 +545,22 @@ func (s *PetService) handleOnboardingConfig(sessionID string, req Request) error
 }
 
 func (s *PetService) handleCharacterGet(sessionID string, req Request) error {
-	char := s.charManager.GetCurrent()
-	if char == nil {
-		return s.sendError(sessionID, req.Action, "no active character")
+	var data CharacterGetRequest
+	if err := json.Unmarshal(req.Data, &data); err != nil {
+		data = CharacterGetRequest{}
+	}
+
+	var char *characters.Character
+	if data.PetID != "" {
+		char = s.charManager.Get(data.PetID)
+		if char == nil {
+			return s.sendError(sessionID, req.Action, "character not found")
+		}
+	} else {
+		char = s.charManager.GetCurrent()
+		if char == nil {
+			return s.sendError(sessionID, req.Action, "no active character")
+		}
 	}
 
 	charConfig := CharacterConfig{
@@ -551,6 +568,11 @@ func (s *PetService) handleCharacterGet(sessionID string, req Request) error {
 		PetName:        char.Name,
 		PetPersona:     char.Persona,
 		PetPersonaType: char.PersonaType,
+		SpeechTone:     char.SpeechTone,
+		Catchphrase:    char.Catchphrase,
+		Hobbies:        char.Hobbies,
+		Background:     char.Background,
+		Preferences:    char.Preferences,
 		Avatar:         char.Avatar,
 	}
 	return s.sendResponse(sessionID, req.Action, charConfig)
@@ -573,11 +595,127 @@ func (s *PetService) handleCharacterUpdate(sessionID string, req Request) error 
 		if data.PetPersonaType != "" {
 			char.PersonaType = data.PetPersonaType
 		}
-		s.charManager.UpdateCharacter(char.ID, data.PetName, data.PetPersona, data.PetPersonaType)
+		if data.SpeechTone != "" {
+			char.SpeechTone = data.SpeechTone
+		}
+		if data.Catchphrase != "" {
+			char.Catchphrase = data.Catchphrase
+		}
+		if data.Hobbies != "" {
+			char.Hobbies = data.Hobbies
+		}
+		if data.Background != "" {
+			char.Background = data.Background
+		}
+		if data.Preferences != "" {
+			char.Preferences = data.Preferences
+		}
+		s.charManager.UpdateCharacter(char.ID, data.PetName, data.PetPersona, data.PetPersonaType, data.SpeechTone, data.Catchphrase, data.Hobbies, data.Background, data.Preferences)
 		data.PetID = char.ID
 	}
 
 	return s.sendResponse(sessionID, req.Action, data)
+}
+
+func (s *PetService) handleCharacterCreate(sessionID string, req Request) error {
+	var data CharacterCreateRequest
+	if err := json.Unmarshal(req.Data, &data); err != nil {
+		return s.sendError(sessionID, req.Action, "invalid character create data")
+	}
+
+	if data.PetName == "" {
+		return s.sendError(sessionID, req.Action, "pet_name is required")
+	}
+
+	if s.charManager == nil || s.configManager == nil {
+		return s.sendError(sessionID, req.Action, "character manager not available")
+	}
+
+	existingChars := s.charManager.List()
+	var maxID int
+	for _, c := range existingChars {
+		var idNum int
+		fmt.Sscanf(c.ID, "pet_%d", &idNum)
+		if idNum > maxID {
+			maxID = idNum
+		}
+	}
+	newIDNum := maxID + 1
+	newID := fmt.Sprintf("pet_%03d", newIDNum)
+
+	avatar := data.Avatar
+	if avatar == "" {
+		avatar = "cute_cat"
+	}
+
+	newChar := characters.NewCharacter(
+		newID,
+		data.PetName,
+		data.PetPersona,
+		data.PetPersonaType,
+		data.SpeechTone,
+		data.Catchphrase,
+		data.Hobbies,
+		data.Background,
+		data.Preferences,
+		avatar,
+	)
+
+	s.charManager.Add(newChar)
+
+	charCfg := &petconfig.CharacterConfig{
+		ID:          newID,
+		Name:        data.PetName,
+		Persona:     data.PetPersona,
+		PersonaType: data.PetPersonaType,
+		SpeechTone:  data.SpeechTone,
+		Catchphrase: data.Catchphrase,
+		Hobbies:     data.Hobbies,
+		Background:  data.Background,
+		Preferences: data.Preferences,
+		Avatar:      avatar,
+	}
+	s.configManager.AppendCharacter(charCfg)
+	s.configManager.Save()
+
+	now := time.Now().Format(time.RFC3339)
+	resp := CharacterCreateResponse{
+		PetID:          newID,
+		PetName:        data.PetName,
+		PetPersona:     data.PetPersona,
+		PetPersonaType: data.PetPersonaType,
+		SpeechTone:     data.SpeechTone,
+		Catchphrase:    data.Catchphrase,
+		Hobbies:        data.Hobbies,
+		Background:     data.Background,
+		Preferences:    data.Preferences,
+		Avatar:         avatar,
+		CreatedAt:      now,
+		UpdatedAt:      now,
+	}
+
+	return s.sendResponse(sessionID, req.Action, resp)
+}
+
+func (s *PetService) handleUserProfileGet(sessionID string, req Request) error {
+	if s.userProfileManager == nil {
+		return s.sendError(sessionID, req.Action, "user profile manager not available")
+	}
+
+	profile := s.userProfileManager.LoadProfile()
+
+	resp := map[string]interface{}{
+		"display_name":     profile.DisplayName,
+		"role":             profile.Role,
+		"language":         profile.Language,
+		"chronotype":       profile.Chronotype,
+		"personality_tone": profile.PersonalityTone,
+		"anxiety_level":    profile.AnxietyLevel,
+		"pressure_level":   profile.PressureLevel,
+		"extra":            profile.Extra,
+	}
+
+	return s.sendResponse(sessionID, req.Action, resp)
 }
 
 func (s *PetService) handleCharacterSwitch(sessionID string, req Request) error {
