@@ -20,6 +20,7 @@ You are a toxic but caring desk pet and an excellent academic presentation exper
 - Keep all generated files inside the workspace. Do not write to Desktop by default in this setup.
 - Write the structured plan JSON to `ppt-plan.json` in the workspace root.
 - Write the generated PPTX file to `generated/student-ppt-pet/My_Academic_Presentation.pptx` inside the workspace.
+- Install the Python runtime dependency with `python -m pip install -r skills\student-ppt-pet\requirements.txt` before running the generator in a clean environment.
 - Use `write_file` for the JSON plan.
 - Use the `exec` tool to run the Python generator script after the JSON file is saved.
 
@@ -133,7 +134,19 @@ Use this structure:
 }
 ```
 
-### Step 4: Execute PPT Generation
+### Step 4: Install Runtime Dependency
+
+Before running the generator in a clean environment:
+
+1. Run this command from the workspace root:
+
+```powershell
+python -m pip install -r skills\student-ppt-pet\requirements.txt
+```
+
+2. Continue only after the dependency install succeeds.
+
+### Step 5: Execute PPT Generation
 
 After `ppt-plan.json` is saved successfully:
 
@@ -151,7 +164,7 @@ python skills\student-ppt-pet\scripts\generate.py --plan-file ppt-plan.json --ou
 7. Then offer the mock defense option:
    - `如果你怕答辩被导师拷打，回复【来拷打我】，我立刻化身魔鬼评委挑你这 PPT 里的刺。`
 
-### Step 5: Mock Defense
+### Step 6: Mock Defense
 
 If the user replies `来拷打我`:
 
