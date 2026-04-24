@@ -1,7 +1,7 @@
 # Pet Channel API 接口文档
 
-> 版本：v2.7  
-> 日期：2026-04-23  
+> 版本：v2.8  
+> 日期：2026-04-24  
 > 协议：WebSocket + JSON
 
 ---
@@ -1867,6 +1867,263 @@ if (msg.push_type === 'audio_and_voice') {
 
 ---
 
+### 4.27 skill_list - 列出已安装的 Skills
+
+获取所有已安装的 skills 列表（包括 workspace、global、builtin 三种来源）。
+
+**请求**：
+
+```json
+{
+  "action": "skill_list",
+  "data": {}
+}
+```
+
+**响应**：
+
+```json
+{
+  "status": "ok",
+  "action": "skill_list",
+  "data": {
+    "skills": [
+      {
+        "name": "github-actions",
+        "description": "与 GitHub Actions 集成的 Skill",
+        "path": "/path/to/workspace/skills/github-actions/SKILL.md",
+        "source": "workspace"
+      },
+      {
+        "name": "weather",
+        "description": "查询天气的 Skill",
+        "path": "/path/to/global/skills/weather/SKILL.md",
+        "source": "global"
+      }
+    ]
+  }
+}
+```
+
+**字段说明**：
+
+| 字段 | 类型 | 说明 |
+|------|------|------|
+| skills | array | Skill 列表 |
+| skills[].name | string | Skill 名称 |
+| skills[].description | string | Skill 描述 |
+| skills[].path | string | SKILL.md 文件路径 |
+| skills[].source | string | 来源：`workspace`(工作区) / `global`(全局) / `builtin`(内置) |
+
+**Skill 存储位置**：
+
+| 来源 | 路径 | 说明 |
+|------|------|------|
+| workspace | `<workspace>/skills/` | 工作区级 skills，可写 |
+| global | `~/.picoclaw/skills/` | 全局 skills，可写 |
+| builtin | 环境变量或当前目录 | 内置 skills，只读 |
+
+---
+
+### 4.28 skill_search - 搜索 Skills
+
+从 registry（如 clawhub.ai）搜索可安装的 skills。
+
+**请求**：
+
+```json
+{
+  "action": "skill_search",
+  "data": {
+    "query": "github integration",
+    "limit": 10
+  }
+}
+```
+
+**响应**：
+
+```json
+{
+  "status": "ok",
+  "action": "skill_search",
+  "data": {
+    "results": [
+      {
+        "score": 0.95,
+        "slug": "github-actions",
+        "display_name": "GitHub Actions",
+        "summary": "与 GitHub Actions 集成，用于管理和监控 workflow",
+        "version": "1.2.3",
+        "registry_name": "clawhub"
+      }
+    ]
+  }
+}
+```
+
+**字段说明**：
+
+| 字段 | 类型 | 必填 | 说明 |
+|------|------|------|------|
+| query | string | 是 | 搜索关键词 |
+| limit | int | 否 | 返回条数限制，默认 10 |
+
+**响应字段说明**：
+
+| 字段 | 类型 | 说明 |
+|------|------|------|
+| results | array | 搜索结果列表 |
+| results[].score | float | 相关度评分 0-1 |
+| results[].slug | string | Skill 唯一标识符（用于安装） |
+| results[].display_name | string | 显示名称 |
+| results[].summary | string | Skill 描述摘要 |
+| results[].version | string | 最新版本号 |
+| results[].registry_name | string | 来源 registry 名称 |
+
+---
+
+### 4.29 skill_install - 安装 Skill
+
+从 registry 安装一个 skill 到本地。
+
+**请求**：
+
+```json
+{
+  "action": "skill_install",
+  "data": {
+    "slug": "github-actions",
+    "registry": "clawhub",
+    "version": ""
+  }
+}
+```
+
+**响应**：
+
+```json
+{
+  "status": "ok",
+  "action": "skill_install",
+  "data": {
+    "slug": "github-actions",
+    "version": "1.2.3",
+    "is_malware_blocked": false,
+    "is_suspicious": false,
+    "summary": "与 GitHub Actions 集成"
+  }
+}
+```
+
+**字段说明**：
+
+| 字段 | 类型 | 必填 | 说明 |
+|------|------|------|------|
+| slug | string | 是 | Skill 唯一标识符 |
+| registry | string | 否 | Registry 名称，默认 `clawhub` |
+| version | string | 否 | 指定版本，为空则安装最新版本 |
+
+**响应字段说明**：
+
+| 字段 | 类型 | 说明 |
+|------|------|------|
+| slug | string | 安装的 Skill 标识符 |
+| version | string | 安装的版本号 |
+| is_malware_blocked | bool | 是否被安全检查拦截（恶意软件） |
+| is_suspicious | bool | 是否被标记为可疑 |
+| summary | string | Skill 描述 |
+
+**安装位置**：安装到 `<workspace>/skills/<slug>/`
+
+---
+
+### 4.30 skill_remove - 删除 Skill
+
+删除已安装的 workspace skill。
+
+**请求**：
+
+```json
+{
+  "action": "skill_remove",
+  "data": {
+    "name": "github-actions"
+  }
+}
+```
+
+**响应**：
+
+```json
+{
+  "status": "ok",
+  "action": "skill_remove",
+  "data": {
+    "name": "github-actions"
+  }
+}
+```
+
+**字段说明**：
+
+| 字段 | 类型 | 必填 | 说明 |
+|------|------|------|------|
+| name | string | 是 | 要删除的 Skill 名称 |
+
+**限制**：
+- 只能删除 `workspace` 来源的 skills
+- `global` 和 `builtin` 来源的 skills 不能通过此接口删除
+
+**错误**：`only workspace skills can be deleted` - 尝试删除非 workspace skill
+
+---
+
+### 4.31 skill_get - 获取 Skill 内容
+
+获取指定 skill 的完整内容（SKILL.md）。
+
+**请求**：
+
+```json
+{
+  "action": "skill_get",
+  "data": {
+    "name": "github-actions"
+  }
+}
+```
+
+**响应**：
+
+```json
+{
+  "status": "ok",
+  "action": "skill_get",
+  "data": {
+    "name": "github-actions",
+    "content": "# GitHub Actions Skill\n\nThis skill provides integration with GitHub Actions..."
+  }
+}
+```
+
+**字段说明**：
+
+| 字段 | 类型 | 必填 | 说明 |
+|------|------|------|------|
+| name | string | 是 | Skill 名称 |
+
+**响应字段说明**：
+
+| 字段 | 类型 | 说明 |
+|------|------|------|
+| name | string | Skill 名称 |
+| content | string | SKILL.md 的完整内容（Markdown 格式） |
+
+**错误**：`skill not found` - Skill 不存在
+
+---
+
 ## 五、错误码
 
 ### 5.1 WebSocket 错误 (status: error)
@@ -1895,6 +2152,13 @@ if (msg.push_type === 'audio_and_voice') {
 | `unsupported provider: xxx` | 不支持的供应商 | 供应商类型不是 `minimax` 或 `doubao` |
 | `provider is required` | 供应商必填 | 查询音色时缺少 provider 字段 |
 | `api_key is required` | API Key 必填 | 查询音色时缺少 api_key 字段 |
+| `skills manager not initialized` | Skills 管理器未初始化 | 服务未正确初始化 |
+| `query is required` | 搜索关键词必填 | 搜索 skills 时缺少 query 字段 |
+| `slug is required` | Skill slug 必填 | 安装 skill 时缺少 slug 字段 |
+| `registry .* not found` | Registry 不存在 | 指定了不存在的 registry |
+| `skill .* already exists` | Skill 已存在 | 要安装的 skill 已经存在 |
+| `skill .* not found` | Skill 不存在 | 要删除/获取的 skill 不存在 |
+| `only workspace skills can be deleted` | 只可删除 workspace skill | 尝试删除 global 或 builtin skill |
 
 ### 5.2 错误响应示例
 
@@ -2078,6 +2342,11 @@ async def send_chat(ws, text):
 | voice_model_get_voices | 获取可用音色 | 查询供应商的音色列表 |
 | voice_model_update | 更新语音模型 | 修改模型的配置（API Key、音色等） |
 | voice_model_set_default | 设置默认语音模型 | 热切换到指定模型 |
+| skill_list | 列出 Skills | 获取已安装的 skills 列表 |
+| skill_search | 搜索 Skills | 从 registry 搜索可安装的 skills |
+| skill_install | 安装 Skill | 从 registry 安装 skill 到本地 |
+| skill_remove | 删除 Skill | 删除已安装的 workspace skill |
+| skill_get | 获取 Skill 内容 | 获取 skill 的完整内容（SKILL.md） |
 
 ### 7.2 push_type 快速索引
 
