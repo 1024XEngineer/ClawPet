@@ -38,6 +38,48 @@ interface PetResponse {
   request_id?: string
 }
 
+export interface CharacterProfileData {
+  pet_id: string
+  pet_name: string
+  pet_persona: string
+  pet_persona_type: string
+  avatar?: string
+  created_at?: string
+  updated_at?: string
+}
+
+export interface PetConfigData {
+  emotion_enabled?: boolean
+  reminder_enabled?: boolean
+  proactive_care?: boolean
+  proactive_interval_minutes?: number
+  voice_enabled?: boolean
+  language?: string
+}
+
+export interface EmotionData {
+  pet_id: string
+  emotion: string
+  joy: number
+  anger: number
+  sadness: number
+  disgust: number
+  surprise: number
+  fear: number
+  description: string
+}
+
+export interface UserProfileUpdateData {
+  display_name?: string
+  role?: string
+  language?: string
+  chronotype?: string
+  personality_tone?: string
+  anxiety_level?: number
+  pressure_level?: string
+  extra?: Record<string, unknown>
+}
+
 interface PendingActionRequest {
   action: string
   resolve: (resp: PetResponse) => void
@@ -580,6 +622,7 @@ export class PicoClawWebSocket {
     if (typeof data === "string") {
       try {
         const payload = JSON.parse(data) as Record<string, unknown>
+        this.projectAudioTextChunk(payload)
         if (forcedFinal && payload.is_final === undefined) {
           payload.is_final = true
         }
@@ -587,6 +630,7 @@ export class PicoClawWebSocket {
         return
       } catch {
         const payload: Record<string, unknown> = { text: data }
+        this.projectAudioTextChunk(payload)
         if (forcedFinal) {
           payload.is_final = true
         }
@@ -596,10 +640,33 @@ export class PicoClawWebSocket {
     }
 
     const payload = { ...((data || {}) as Record<string, unknown>) }
+    this.projectAudioTextChunk(payload)
     if (forcedFinal && payload.is_final === undefined) {
       payload.is_final = true
     }
     this.emit({ type: "audio", data: payload })
+  }
+
+  private projectAudioTextChunk(payload: Record<string, unknown>): void {
+    const text =
+      (typeof payload.text === "string" && payload.text) ||
+      (typeof payload.Text === "string" && payload.Text) ||
+      ""
+    if (!text) {
+      return
+    }
+
+    const textPayload: Record<string, unknown> = {
+      type: "text",
+      text,
+    }
+
+    const chatId = payload.chat_id ?? payload.chatId
+    if (chatId !== undefined) {
+      textPayload.chat_id = chatId
+    }
+
+    this.handleAIChatPush(textPayload, false)
   }
 
   private handleEmotionChangePush(data: Record<string, unknown>): void {
@@ -869,6 +936,47 @@ export class PicoClawWebSocket {
 
   async getVoiceModelList(): Promise<PetResponse & { data?: VoiceModelListData }> {
     return this.requestAction<VoiceModelListData>("voice_model_list_get")
+  }
+
+  async getCharacter(): Promise<PetResponse & { data?: CharacterProfileData }> {
+    return this.requestAction<CharacterProfileData>("character_get", {})
+  }
+
+  async updateCharacter(data: {
+    pet_id?: string
+    pet_name?: string
+    pet_persona?: string
+    pet_persona_type?: string
+  }): Promise<PetResponse & { data?: CharacterProfileData }> {
+    return this.requestAction<CharacterProfileData>("character_update", data)
+  }
+
+  async switchCharacter(characterId: string): Promise<PetResponse> {
+    return this.requestAction("character_switch", { character_id: characterId })
+  }
+
+  async getPetConfig(): Promise<PetResponse & { data?: PetConfigData }> {
+    return this.requestAction<PetConfigData>("config_get", {})
+  }
+
+  async updatePetConfig(data: PetConfigData): Promise<PetResponse & { data?: PetConfigData }> {
+    return this.requestAction<PetConfigData>("config_update", data)
+  }
+
+  async getEmotion(): Promise<PetResponse & { data?: EmotionData }> {
+    return this.requestAction<EmotionData>("emotion_get", {})
+  }
+
+  async updateUserProfile(data: UserProfileUpdateData): Promise<PetResponse> {
+    return this.requestAction("user_profile_update", data)
+  }
+
+  async submitOnboardingConfig(data: {
+    pet_name: string
+    pet_persona: string
+    pet_persona_type: string
+  }): Promise<PetResponse> {
+    return this.requestAction("onboarding_config", data)
   }
 
   async getVoiceModel(name: string): Promise<PetResponse & { data?: VoiceModelData }> {

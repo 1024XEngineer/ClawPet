@@ -11,6 +11,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"os"
 	"path/filepath"
 	"regexp"
 	"strings"
@@ -97,6 +98,16 @@ type continuationTarget struct {
 	SessionKey string
 	Channel    string
 	ChatID     string
+}
+
+type pptExecutionState struct {
+	Enabled               bool
+	RequiresExecution     bool
+	PlanPath              string
+	OutputDir             string
+	PlanExists            bool
+	OutputExists          bool
+	GenerateExecSucceeded bool
 }
 
 const (
@@ -1790,6 +1801,7 @@ func (al *AgentLoop) runTurn(ctx context.Context, ts *turnState) (turnResult, er
 	if usedLight && ts.agent.LightProvider != nil {
 		activeProvider = ts.agent.LightProvider
 	}
+	pptState := initPPTExecutionState(ts.agent, ts.opts)
 	pendingMessages := append([]providers.Message(nil), ts.opts.InitialSteeringMessages...)
 	var finalContent string
 
@@ -2303,6 +2315,22 @@ turnLoop:
 			if responseContent == "" && response.ReasoningContent != "" {
 				responseContent = response.ReasoningContent
 			}
+			refreshPPTExecutionState(&pptState)
+			if shouldEnforcePPTGuard(pptState) {
+				pendingMessages = append(pendingMessages, providers.Message{
+					Role:    "user",
+					Content: buildPPTGuardMessage(pptState),
+				})
+				logger.InfoCF("agent", "PPT execution guard: rejecting premature direct answer",
+					map[string]any{
+						"agent_id":          ts.agent.ID,
+						"iteration":         iteration,
+						"plan_exists":       pptState.PlanExists,
+						"generate_exec_ok":  pptState.GenerateExecSucceeded,
+						"ppt_output_exists": pptState.OutputExists,
+					})
+				continue
+			}
 			if steerMsgs := al.dequeueSteeringMessagesForScope(ts.sessionKey); len(steerMsgs) > 0 {
 				logger.InfoCF("agent", "Steering arrived after direct LLM response; continuing turn",
 					map[string]any{
@@ -2606,6 +2634,8 @@ turnLoop:
 				toolResult = tools.ErrorResult("hook returned nil tool result")
 			}
 
+			markPPTToolProgress(&pptState, toolName, toolArgs, toolResult)
+
 			// Send ForUser if not silent and has content.
 			// For ResponseHandled tools, send regardless of SendResponse setting,
 			// since they've already handled the response (e.g., send_tts, send_file).
@@ -2779,6 +2809,24 @@ turnLoop:
 		}
 
 		if allResponsesHandled {
+			refreshPPTExecutionState(&pptState)
+			if shouldEnforcePPTGuard(pptState) {
+				pendingMessages = append(pendingMessages, providers.Message{
+					Role:    "user",
+					Content: buildPPTGuardMessage(pptState),
+				})
+				logger.InfoCF("agent", "PPT execution guard: handled tool output is insufficient",
+					map[string]any{
+						"agent_id":          ts.agent.ID,
+						"iteration":         iteration,
+						"plan_exists":       pptState.PlanExists,
+						"generate_exec_ok":  pptState.GenerateExecSucceeded,
+						"ppt_output_exists": pptState.OutputExists,
+					})
+				finalContent = ""
+				goto turnLoop
+			}
+
 			if len(pendingMessages) > 0 {
 				logger.InfoCF("agent", "Pending steering exists after handled tool delivery; continuing turn before finalizing",
 					map[string]any{
@@ -3182,6 +3230,161 @@ func activeSkillNames(agent *AgentInstance, opts processOptions) []string {
 	}
 
 	return resolved
+}
+
+func initPPTExecutionState(agent *AgentInstance, opts processOptions) pptExecutionState {
+	state := pptExecutionState{}
+	if agent == nil {
+		return state
+	}
+
+	for _, skill := range activeSkillNames(agent, opts) {
+		if strings.EqualFold(strings.TrimSpace(skill), "student-ppt-pet") {
+			state.Enabled = true
+			break
+		}
+	}
+	if !state.Enabled && isLikelyPPTRequest(opts.UserMessage) {
+		state.Enabled = true
+	}
+	if !state.Enabled {
+		return state
+	}
+
+	state.RequiresExecution = shouldEnterPPTExecutionPhase(opts.UserMessage)
+	state.PlanPath = filepath.Join(agent.Workspace, "ppt-plan.json")
+	state.OutputDir = filepath.Join(agent.Workspace, "generated", "student-ppt-pet")
+	refreshPPTExecutionState(&state)
+	return state
+}
+
+func refreshPPTExecutionState(state *pptExecutionState) {
+	if state == nil || !state.Enabled {
+		return
+	}
+	state.PlanExists = pptFileExists(state.PlanPath)
+	state.OutputExists = hasPPTXOutput(state.OutputDir)
+	if state.PlanExists {
+		state.RequiresExecution = true
+	}
+}
+
+func markPPTToolProgress(state *pptExecutionState, toolName string, toolArgs map[string]any, result *tools.ToolResult) {
+	if state == nil || !state.Enabled || result == nil {
+		return
+	}
+	normalizedTool := strings.ToLower(strings.TrimSpace(toolName))
+	if normalizedTool == "write_file" && !result.IsError {
+		pathArg, _ := toolArgs["path"].(string)
+		normalizedPath := filepath.ToSlash(strings.ToLower(strings.TrimSpace(pathArg)))
+		if strings.HasSuffix(normalizedPath, "/ppt-plan.json") || normalizedPath == "ppt-plan.json" {
+			state.RequiresExecution = true
+			state.PlanExists = true
+		}
+	}
+	if normalizedTool != "exec" || result.IsError {
+		return
+	}
+
+	command, _ := toolArgs["command"].(string)
+	if command == "" {
+		return
+	}
+	lower := strings.ToLower(command)
+	if strings.Contains(lower, "generate.py") {
+		state.RequiresExecution = true
+		state.GenerateExecSucceeded = true
+	}
+}
+
+func shouldEnforcePPTGuard(state pptExecutionState) bool {
+	if !state.Enabled || !state.RequiresExecution {
+		return false
+	}
+	return !(state.PlanExists && state.GenerateExecSucceeded && state.OutputExists)
+}
+
+func buildPPTGuardMessage(state pptExecutionState) string {
+	step1 := "missing"
+	step2 := "missing"
+	step3 := "missing"
+	if state.PlanExists {
+		step1 = "done"
+	}
+	if state.GenerateExecSucceeded {
+		step2 = "done"
+	}
+	if state.OutputExists {
+		step3 = "done"
+	}
+
+	return fmt.Sprintf(
+		"[Execution Guard] Continue PPT workflow and do not finalize yet. Current checkpoints: step1 plan(ppt-plan.json)=%s, step2 exec(generate.py)=%s, step3 pptx output=%s. Follow this order strictly: gather requirements -> write/update ppt-plan.json with non-empty slides -> run generate script via exec -> verify .pptx exists under generated/student-ppt-pet -> then provide final reply. Keep persona style only in wording; do not skip execution steps.",
+		step1,
+		step2,
+		step3,
+	)
+}
+
+func isLikelyPPTRequest(text string) bool {
+	lower := strings.ToLower(text)
+	if lower == "" {
+		return false
+	}
+	keywords := []string{"ppt", "powerpoint", "slide", "slides", "幻灯片", "答辩", "汇报", "开题", "课件"}
+	for _, keyword := range keywords {
+		if strings.Contains(lower, keyword) {
+			return true
+		}
+	}
+	return false
+}
+
+func shouldEnterPPTExecutionPhase(text string) bool {
+	lower := strings.ToLower(strings.TrimSpace(text))
+	if lower == "" {
+		return false
+	}
+	triggers := []string{
+		"开始生成", "直接生成", "立刻生成", "现在生成", "确认", "不改", "按这个", "开始做", "做吧", "出ppt",
+		"generate now", "proceed", "go ahead", "confirm", "ship it", "create now",
+	}
+	for _, trigger := range triggers {
+		if strings.Contains(lower, trigger) {
+			return true
+		}
+	}
+	return false
+}
+
+func pptFileExists(path string) bool {
+	if strings.TrimSpace(path) == "" {
+		return false
+	}
+	info, err := os.Stat(path)
+	if err != nil || info == nil {
+		return false
+	}
+	return !info.IsDir() && info.Size() > 0
+}
+
+func hasPPTXOutput(dir string) bool {
+	if strings.TrimSpace(dir) == "" {
+		return false
+	}
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		return false
+	}
+	for _, entry := range entries {
+		if entry.IsDir() {
+			continue
+		}
+		if strings.HasSuffix(strings.ToLower(entry.Name()), ".pptx") {
+			return true
+		}
+	}
+	return false
 }
 
 func (al *AgentLoop) applyExplicitSkillCommand(

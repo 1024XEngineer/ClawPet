@@ -12,6 +12,7 @@ import {
   Settings,
   Shield,
   Sparkles,
+  User,
 } from "lucide-react"
 
 import { Button } from "@/components/ui/button"
@@ -22,7 +23,12 @@ import {
   useGatewayStatus,
   useUpdateConfig,
 } from "@/hooks/use-picoclaw"
-import { configApi, type Config } from "@/lib/api"
+import {
+  configApi,
+  getWebSocketInstance,
+  type CharacterProfileData,
+  type Config,
+} from "@/lib/api"
 import { cn } from "@/lib/utils"
 
 type ConfigTab = "visual" | "raw"
@@ -34,6 +40,26 @@ interface ConfigFormState {
   cronEnabled: boolean
   publicAccess: boolean
   port: number
+}
+
+interface PersonalityFormState {
+  petId: string
+  petName: string
+  petPersona: string
+  petPersonaType: string
+  personalityTone: string
+  language: string
+  emotionEnabled: boolean
+}
+
+const emptyPersonalityForm: PersonalityFormState = {
+  petId: "",
+  petName: "",
+  petPersona: "",
+  petPersonaType: "gentle",
+  personalityTone: "正常",
+  language: "zh-CN",
+  emotionEnabled: true,
 }
 
 const emptyFormState: ConfigFormState = {
@@ -63,6 +89,21 @@ function mapConfigToForm(config?: Config): ConfigFormState {
   }
 }
 
+function mapCharacterToPersonalityForm(
+  character?: CharacterProfileData,
+  config?: { language?: string; emotion_enabled?: boolean },
+): PersonalityFormState {
+  return {
+    petId: character?.pet_id ?? "",
+    petName: character?.pet_name ?? "",
+    petPersona: character?.pet_persona ?? "",
+    petPersonaType: character?.pet_persona_type ?? "gentle",
+    personalityTone: character?.pet_persona ?? "正常",
+    language: config?.language ?? "zh-CN",
+    emotionEnabled: config?.emotion_enabled ?? true,
+  }
+}
+
 function stringifyConfig(config?: Config): string {
   return JSON.stringify(config ?? {}, null, 2)
 }
@@ -82,6 +123,18 @@ export function ConfigPage() {
   const { restart } = useGatewayControl()
 
   const [formData, setFormData] = useState<ConfigFormState>(emptyFormState)
+  const [personalityForm, setPersonalityForm] = useState<PersonalityFormState>(
+    emptyPersonalityForm,
+  )
+  const [personalityBaseline, setPersonalityBaseline] =
+    useState<PersonalityFormState>(emptyPersonalityForm)
+  const [personalityDirty, setPersonalityDirty] = useState(false)
+  const [personalityLoading, setPersonalityLoading] = useState(false)
+  const [personalitySaving, setPersonalitySaving] = useState(false)
+  const [personalityState, setPersonalityState] = useState<{
+    type: "error" | "success"
+    message: string
+  } | null>(null)
 
   useEffect(() => {
     if (!configData?.config || hasChanges) {
@@ -90,6 +143,52 @@ export function ConfigPage() {
     setFormData(mapConfigToForm(configData.config))
     setRawJson(stringifyConfig(configData.config))
   }, [configData, hasChanges])
+
+  useEffect(() => {
+    let cancelled = false
+
+    const loadPersonality = async () => {
+      setPersonalityLoading(true)
+      setPersonalityState(null)
+      try {
+        const ws = getWebSocketInstance()
+        const [characterResp, petConfigResp] = await Promise.all([
+          ws.getCharacter(),
+          ws.getPetConfig(),
+        ])
+
+        if (cancelled) {
+          return
+        }
+
+        const nextForm = mapCharacterToPersonalityForm(
+          characterResp.data,
+          petConfigResp.data,
+        )
+        setPersonalityForm(nextForm)
+        setPersonalityBaseline(nextForm)
+        setPersonalityDirty(false)
+      } catch (loadError) {
+        if (cancelled) {
+          return
+        }
+        setPersonalityState({
+          type: "error",
+          message: `加载桌宠个性失败：${getErrorMessage(loadError)}`,
+        })
+      } finally {
+        if (!cancelled) {
+          setPersonalityLoading(false)
+        }
+      }
+    }
+
+    void loadPersonality()
+
+    return () => {
+      cancelled = true
+    }
+  }, [])
 
   const gatewaySummary = useMemo(() => {
     if (!gatewayStatus) {
@@ -135,6 +234,74 @@ export function ConfigPage() {
     setFormData((prev) => ({ ...prev, [field]: value } as ConfigFormState))
     setHasChanges(true)
     setActionState(null)
+  }
+
+  function handlePersonalityInputChange(
+    field: keyof PersonalityFormState,
+    value: string | boolean,
+  ) {
+    setPersonalityForm((prev) => ({
+      ...prev,
+      [field]: value,
+    }))
+    setPersonalityDirty(true)
+    setPersonalityState(null)
+  }
+
+  async function handleSavePersonality() {
+    setPersonalitySaving(true)
+    setPersonalityState(null)
+
+    try {
+      const ws = getWebSocketInstance()
+
+      const characterPayload: {
+        pet_id?: string
+        pet_name?: string
+        pet_persona?: string
+        pet_persona_type?: string
+      } = {
+        pet_name: personalityForm.petName.trim(),
+        pet_persona: personalityForm.petPersona.trim(),
+        pet_persona_type: personalityForm.petPersonaType,
+      }
+      if (personalityForm.petId.trim()) {
+        characterPayload.pet_id = personalityForm.petId.trim()
+      }
+
+      await ws.updateCharacter(characterPayload)
+
+      await ws.updateUserProfile({
+        personality_tone: personalityForm.personalityTone.trim() || "正常",
+        language: personalityForm.language,
+      })
+
+      await ws.updatePetConfig({
+        emotion_enabled: personalityForm.emotionEnabled,
+        language: personalityForm.language,
+      })
+
+      const refreshedCharacter = await ws.getCharacter()
+      const refreshedConfig = await ws.getPetConfig()
+      const nextForm = mapCharacterToPersonalityForm(
+        refreshedCharacter.data,
+        refreshedConfig.data,
+      )
+      setPersonalityForm(nextForm)
+      setPersonalityBaseline(nextForm)
+      setPersonalityDirty(false)
+      setPersonalityState({
+        type: "success",
+        message: "桌宠个性已更新，新对话会立即生效。",
+      })
+    } catch (saveError) {
+      setPersonalityState({
+        type: "error",
+        message: `保存桌宠个性失败：${getErrorMessage(saveError)}`,
+      })
+    } finally {
+      setPersonalitySaving(false)
+    }
   }
 
   async function handleSave() {
@@ -530,6 +697,200 @@ export function ConfigPage() {
                         )}
                       />
                     </button>
+                  </div>
+                </div>
+              </article>
+
+              <article className="dashboard-enter dashboard-card rounded-[1.8rem] border border-white/75 bg-[linear-gradient(145deg,rgba(255,252,247,0.94),rgba(255,247,242,0.88))] p-5 shadow-[0_20px_42px_-32px_rgba(116,80,42,0.34)]">
+                <div className="flex items-center gap-2">
+                  <User className="h-5 w-5 text-rose-600" />
+                  <h2 className="text-xl font-semibold text-[#4f3725]">
+                    对话个性
+                  </h2>
+                </div>
+                <p className="mt-2 text-sm leading-6 text-[#816451]">
+                  直接调用 character/config/user_profile 接口，控制桌宠名字、语气、性格和情绪表现强度。
+                </p>
+
+                {personalityState && (
+                  <div
+                    className={cn(
+                      "mt-4 rounded-[1rem] border px-3 py-2 text-xs",
+                      personalityState.type === "error"
+                        ? "border-rose-200 bg-rose-50 text-rose-700"
+                        : "border-emerald-200 bg-emerald-50 text-emerald-700",
+                    )}
+                  >
+                    {personalityState.message}
+                  </div>
+                )}
+
+                <div className="mt-4 space-y-3">
+                  <div>
+                    <label className="mb-1.5 block text-sm font-medium text-[#5d4430]">
+                      桌宠昵称
+                    </label>
+                    <input
+                      type="text"
+                      value={personalityForm.petName}
+                      onChange={(event) =>
+                        handlePersonalityInputChange("petName", event.target.value)
+                      }
+                      placeholder="例如：艾莉"
+                      className="w-full rounded-[1.2rem] border border-white/80 bg-white/84 px-4 py-3 text-sm text-[#4b3422] outline-none transition focus:border-amber-200 focus:bg-white"
+                    />
+                  </div>
+
+                  <div>
+                    <label className="mb-1.5 block text-sm font-medium text-[#5d4430]">
+                      人设描述
+                    </label>
+                    <textarea
+                      value={personalityForm.petPersona}
+                      onChange={(event) =>
+                        handlePersonalityInputChange("petPersona", event.target.value)
+                      }
+                      placeholder="例如：直球吐槽但不攻击，先给结论再给行动建议。"
+                      className="h-24 w-full resize-none rounded-[1.2rem] border border-white/80 bg-white/84 px-4 py-3 text-sm text-[#4b3422] outline-none transition focus:border-amber-200 focus:bg-white"
+                    />
+                  </div>
+
+                  <div className="grid gap-3 sm:grid-cols-2">
+                    <div>
+                      <label className="mb-1.5 block text-sm font-medium text-[#5d4430]">
+                        角色类型
+                      </label>
+                      <select
+                        value={personalityForm.petPersonaType}
+                        onChange={(event) =>
+                          handlePersonalityInputChange("petPersonaType", event.target.value)
+                        }
+                        className="w-full rounded-[1.2rem] border border-white/80 bg-white/84 px-4 py-3 text-sm text-[#4b3422] outline-none transition focus:border-amber-200 focus:bg-white"
+                      >
+                        <option value="gentle">gentle（温柔陪伴）</option>
+                        <option value="cool">cool（冷静直接）</option>
+                        <option value="playful">playful（活泼外向）</option>
+                      </select>
+                    </div>
+
+                    <div>
+                      <label className="mb-1.5 block text-sm font-medium text-[#5d4430]">
+                        用户偏好语气
+                      </label>
+                      <select
+                        value={personalityForm.personalityTone}
+                        onChange={(event) =>
+                          handlePersonalityInputChange("personalityTone", event.target.value)
+                        }
+                        className="w-full rounded-[1.2rem] border border-white/80 bg-white/84 px-4 py-3 text-sm text-[#4b3422] outline-none transition focus:border-amber-200 focus:bg-white"
+                      >
+                        <option value="正常">正常</option>
+                        <option value="温柔">温柔</option>
+                        <option value="阴阳怪气">阴阳怪气</option>
+                        <option value="严格教练">严格教练</option>
+                      </select>
+                    </div>
+                  </div>
+
+                  <div className="flex items-center justify-between gap-3 rounded-[1.1rem] border border-white/80 bg-white/82 px-4 py-3">
+                    <div>
+                      <p className="text-sm font-semibold text-[#4f3725]">情绪驱动回复</p>
+                      <p className="mt-1 text-xs text-[#816451]">开启后，情绪状态会更明显地影响回答风格。</p>
+                    </div>
+                    <button
+                      type="button"
+                      aria-pressed={personalityForm.emotionEnabled}
+                      onClick={() =>
+                        handlePersonalityInputChange(
+                          "emotionEnabled",
+                          !personalityForm.emotionEnabled,
+                        )
+                      }
+                      className={cn(
+                        "relative h-7 w-14 rounded-full transition",
+                        personalityForm.emotionEnabled
+                          ? "bg-emerald-500"
+                          : "bg-[#e7ddd3]",
+                      )}
+                      title="情绪驱动回复"
+                    >
+                      <span
+                        className={cn(
+                          "absolute left-1 top-1 h-5 w-5 rounded-full bg-white transition-transform",
+                          personalityForm.emotionEnabled
+                            ? "translate-x-7"
+                            : "translate-x-0",
+                        )}
+                      />
+                    </button>
+                  </div>
+
+                  <div className="flex flex-wrap gap-2">
+                    {[
+                      {
+                        label: "温柔学伴",
+                        tone: "温柔",
+                        type: "gentle",
+                        persona: "先安抚情绪，再给清晰步骤；语言短句，避免压迫感。",
+                      },
+                      {
+                        label: "冷静教练",
+                        tone: "严格教练",
+                        type: "cool",
+                        persona: "先给结论，再给执行清单；指出问题但不人身攻击。",
+                      },
+                      {
+                        label: "毒舌搭子",
+                        tone: "阴阳怪气",
+                        type: "playful",
+                        persona: "允许轻度吐槽和反差幽默，但结论必须专业、可执行。",
+                      },
+                    ].map((preset) => (
+                      <button
+                        key={preset.label}
+                        type="button"
+                        onClick={() => {
+                          setPersonalityForm((prev) => ({
+                            ...prev,
+                            petPersonaType: preset.type,
+                            personalityTone: preset.tone,
+                            petPersona: preset.persona,
+                          }))
+                          setPersonalityDirty(true)
+                          setPersonalityState(null)
+                        }}
+                        className="rounded-full border border-white/80 bg-white/85 px-3 py-1.5 text-xs text-[#6d5846] transition hover:bg-white"
+                      >
+                        {preset.label}
+                      </button>
+                    ))}
+                  </div>
+
+                  <div className="flex items-center justify-end gap-2 pt-1">
+                    <Button
+                      variant="outline"
+                      onClick={() => {
+                        setPersonalityForm(personalityBaseline)
+                        setPersonalityDirty(false)
+                        setPersonalityState(null)
+                      }}
+                      disabled={!personalityDirty || personalityLoading || personalitySaving}
+                      className="h-8 rounded-full border-white/80 bg-white/82 px-3 text-xs text-[#6d5846] hover:bg-white"
+                    >
+                      重置
+                    </Button>
+                    <Button
+                      onClick={handleSavePersonality}
+                      disabled={personalityLoading || personalitySaving || !personalityDirty}
+                      className="h-8 rounded-full border-0 bg-[linear-gradient(135deg,#9a5929_0%,#c87734_48%,#e1a05b_100%)] px-3 text-xs text-amber-50 shadow-[0_18px_26px_-18px_rgba(154,89,41,0.75)] hover:brightness-105"
+                    >
+                      {personalitySaving ? (
+                        <Spinner className="mr-1.5 h-3.5 w-3.5" />
+                      ) : (
+                        <Save className="mr-1.5 h-3.5 w-3.5" />
+                      )}
+                      应用个性
+                    </Button>
                   </div>
                 </div>
               </article>
