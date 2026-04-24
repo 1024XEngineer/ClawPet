@@ -18,6 +18,8 @@ declare global {
       setOnboardingMode?: (enabled: boolean) => void
       setPetClickThrough?: (enabled: boolean) => void
       getBackendBaseUrl?: () => string
+      getApiBaseUrl?: () => string
+      getLauncherToken?: () => string
       minimizeWindow?: () => void
       toggleMaximizeWindow?: () => void
       closeWindow?: () => void

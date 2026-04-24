@@ -59,6 +59,9 @@ export function SkillsPage() {
   const [marketResults, setMarketResults] = useState<SkillSearchResult[]>([])
   const [marketLoading, setMarketLoading] = useState(false)
   const [marketError, setMarketError] = useState<string | null>(null)
+  const [marketHasMore, setMarketHasMore] = useState(false)
+  const [marketNextOffset, setMarketNextOffset] = useState(0)
+  const [installingSlug, setInstallingSlug] = useState<string | null>(null)
   const [importDialogOpen, setImportDialogOpen] = useState(false)
   const [importFile, setImportFile] = useState<File | null>(null)
 
@@ -107,23 +110,30 @@ export function SkillsPage() {
     }
   }
 
-  const handleSearchMarket = async () => {
+  const handleSearchMarket = async (append = false) => {
     const query = marketSearch.trim()
     if (!query) {
       setMarketResults([])
       setMarketError(null)
+      setMarketHasMore(false)
+      setMarketNextOffset(0)
       return
     }
 
     setMarketLoading(true)
     setMarketError(null)
     try {
-      const response = await skillsApi.search(query, 20, 0)
-      setMarketResults(response.results)
+      const response = await skillsApi.search(query, 20, append ? marketNextOffset : 0)
+      setMarketResults((prev) => (append ? [...prev, ...response.results] : response.results))
+      setMarketHasMore(response.has_more)
+      setMarketNextOffset(response.next_offset ?? 0)
     } catch (err) {
       const message = err instanceof Error ? err.message : "技能市场搜索失败"
       setMarketError(message)
-      setMarketResults([])
+      if (!append) {
+        setMarketResults([])
+      }
+      setMarketHasMore(false)
     } finally {
       setMarketLoading(false)
     }
@@ -131,6 +141,7 @@ export function SkillsPage() {
 
   const handleInstallFromMarket = async (result: SkillSearchResult) => {
     try {
+      setInstallingSlug(result.slug)
       const installResponse = await installSkill.trigger({
         slug: result.slug,
         registry: result.registry_name,
@@ -148,6 +159,8 @@ export function SkillsPage() {
       )
     } catch (err) {
       console.error("Install skill failed:", err)
+    } finally {
+      setInstallingSlug(null)
     }
   }
 
@@ -286,6 +299,12 @@ export function SkillsPage() {
               <input
                 value={marketSearch}
                 onChange={(e) => setMarketSearch(e.target.value)}
+                onKeyDown={(event) => {
+                  if (event.key === "Enter") {
+                    event.preventDefault()
+                    void handleSearchMarket()
+                  }
+                }}
                 placeholder="例如：github, playwright, weather..."
                 className="flex-1 px-3 py-2.5 rounded-xl border border-border bg-background text-foreground placeholder:text-muted-foreground outline-none focus:ring-2 focus:ring-orange-400/30"
               />
@@ -347,16 +366,42 @@ export function SkillsPage() {
                           ? ""
                           : "bg-amber-900 hover:bg-amber-800 text-amber-50 border-0"
                       }
-                      disabled={result.installed || installSkill.isMutating}
+                      disabled={
+                        result.installed ||
+                        installSkill.isMutating ||
+                        installingSlug === result.slug
+                      }
                       onClick={() => void handleInstallFromMarket(result)}
                     >
-                      <Plus className="w-4 h-4 mr-1" />
-                      {result.installed ? "已安装" : "安装"}
+                      {installingSlug === result.slug ? (
+                        <Spinner className="w-4 h-4 mr-1" />
+                      ) : (
+                        <Plus className="w-4 h-4 mr-1" />
+                      )}
+                      {result.installed
+                        ? "已安装"
+                        : installingSlug === result.slug
+                          ? "安装中"
+                          : "安装"}
                     </Button>
                   </div>
                 </div>
               ))
             )}
+
+            {marketResults.length > 0 ? (
+              <div className="pt-2">
+                <Button
+                  variant="outline"
+                  className="w-full"
+                  onClick={() => void handleSearchMarket(true)}
+                  disabled={marketLoading || !marketHasMore}
+                >
+                  {marketLoading ? <Spinner className="w-4 h-4 mr-2" /> : null}
+                  {marketHasMore ? "加载更多可下载技能" : "没有更多可下载技能"}
+                </Button>
+              </div>
+            ) : null}
           </div>
         </section>
       </div>

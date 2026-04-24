@@ -59,9 +59,14 @@ export function getApiBaseUrl(): string {
   }
 
   if (typeof window !== 'undefined') {
-    const electronApiBase = window.electronAPI?.getBackendBaseUrl?.()
+    const electronApiBase = window.electronAPI?.getApiBaseUrl?.()
     if (electronApiBase && electronApiBase.trim()) {
       return electronApiBase.trim()
+    }
+
+    const electronBackendBase = window.electronAPI?.getBackendBaseUrl?.()
+    if (electronBackendBase && electronBackendBase.trim()) {
+      return electronBackendBase.trim()
     }
   }
 
@@ -161,6 +166,11 @@ export function resolveLauncherToken(): string {
   }
 
   if (typeof window !== 'undefined') {
+    const electronToken = window.electronAPI?.getLauncherToken?.()
+    if (electronToken && electronToken.trim()) {
+      return electronToken.trim()
+    }
+
     const token = new URLSearchParams(window.location.search).get('token')
     if (token && token.trim()) {
       const clean = token.trim()

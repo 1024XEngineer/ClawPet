@@ -29,6 +29,12 @@ contextBridge.exposeInMainWorld('electronAPI', {
    * @returns {string} 后端 URL（默认 http://127.0.0.1:18790）
    */
   getBackendBaseUrl: () => process.env.GOCLAW_BACKEND_URL || 'http://127.0.0.1:18790',
+
+  /**
+   * 获取前端 API 基地址（Launcher API）
+   * @returns {string} API URL（默认 http://127.0.0.1:18800）
+   */
+  getApiBaseUrl: () => process.env.GOCLAW_API_URL || process.env.GOCLAW_BACKEND_URL || 'http://127.0.0.1:18800',
   
   /**
    * 获取启动器 Token（用于身份验证）

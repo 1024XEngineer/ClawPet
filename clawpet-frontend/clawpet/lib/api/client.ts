@@ -8,6 +8,7 @@ import {
   withLauncherAuthHeader,
 } from './config'
 import { fetchWithAuthRetry } from './auth-bootstrap'
+import { getWebSocketInstance } from './websocket'
 
 // API 请求错误类
 export class ApiError extends Error {
@@ -21,12 +22,12 @@ export class ApiError extends Error {
   }
 }
 
-// 基础请求函数
-async function request<T>(
+async function requestWithBase<T>(
+  baseUrl: string,
   endpoint: string,
   options: RequestInit = {}
 ): Promise<T> {
-  const url = `${getApiBaseUrl()}${endpoint}`
+  const url = `${baseUrl}${endpoint}`
 
   const isFormDataBody =
     typeof FormData !== 'undefined' && options.body instanceof FormData
@@ -77,6 +78,53 @@ async function request<T>(
   }
 
   return data as T
+}
+
+// 基础请求函数
+async function request<T>(
+  endpoint: string,
+  options: RequestInit = {}
+): Promise<T> {
+  return requestWithBase<T>(getApiBaseUrl(), endpoint, options)
+}
+
+function getSkillsRestFallbackBaseUrl(): string {
+  const primary = getApiBaseUrl().trim()
+  if (!primary) {
+    return ''
+  }
+
+  try {
+    const parsed = new URL(primary)
+    const isLocal = parsed.hostname === '127.0.0.1' || parsed.hostname === 'localhost'
+    if (!isLocal || parsed.port !== '18790') {
+      return ''
+    }
+    parsed.port = '18800'
+    return parsed.toString().replace(/\/+$/, '')
+  } catch {
+    return ''
+  }
+}
+
+async function requestSkillsWithRestFallback<T>(
+  endpoint: string,
+  options: RequestInit = {}
+): Promise<T> {
+  try {
+    return await request<T>(endpoint, options)
+  } catch (error) {
+    if (!(error instanceof ApiError) || error.status !== 404) {
+      throw error
+    }
+
+    const fallbackBase = getSkillsRestFallbackBaseUrl()
+    if (!fallbackBase) {
+      throw error
+    }
+
+    return requestWithBase<T>(fallbackBase, endpoint, options)
+  }
 }
 
 async function fetchDirectGatewayHealth(baseUrl?: string): Promise<{ uptime?: string } | null> {
@@ -320,30 +368,193 @@ export interface SkillSearchResponse {
   has_more: boolean
 }
 
-export const skillsApi = {
-  list: () => request<{ skills: Skill[] }>(API_ENDPOINTS.SKILLS.LIST),
+async function requestSkillAction<T extends Record<string, unknown>>(
+  action: string,
+  data?: Record<string, unknown>,
+): Promise<T> {
+  const ws = getWebSocketInstance()
+  const response = await ws.requestAction<T>(action, data, 20000)
+  if (response.status === 'error') {
+    const message =
+      String(response.error || (response.data?.error as string) || `Action failed: ${action}`)
+    throw new ApiError(502, message, response)
+  }
+  return (response.data ?? {}) as T
+}
 
-  search: (query: string, limit = 20, offset = 0) => {
+function normalizeSkillFromWs(raw: {
+  name?: string
+  path?: string
+  description?: string
+  source?: string
+}): Skill {
+  const source =
+    raw.source === 'builtin' || raw.source === 'global' || raw.source === 'workspace'
+      ? raw.source
+      : 'workspace'
+  return {
+    name: raw.name ?? '',
+    path: raw.path ?? '',
+    description: raw.description ?? '',
+    source,
+    origin_kind: source === 'builtin' ? 'builtin' : 'manual',
+  }
+}
+
+async function fallbackSkillListFromWs(): Promise<{ skills: Skill[] }> {
+  const payload = await requestSkillAction<{ skills?: Array<Record<string, unknown>> }>(
+    'skill_list',
+  )
+  const skills = Array.isArray(payload.skills)
+    ? payload.skills.map((item) =>
+        normalizeSkillFromWs(item as { name?: string; path?: string; description?: string; source?: string }),
+      )
+    : []
+  return { skills }
+}
+
+async function fallbackSkillSearchFromWs(
+  query: string,
+  limit: number,
+  offset: number,
+): Promise<SkillSearchResponse> {
+  const [searchPayload, listPayload] = await Promise.all([
+    requestSkillAction<{ results?: Array<Record<string, unknown>> }>('skill_search', {
+      query,
+      limit: Math.max(limit + offset, limit),
+    }),
+    fallbackSkillListFromWs(),
+  ])
+  const installedByName = new Set(listPayload.skills.map((skill) => skill.name))
+  const rawResults = Array.isArray(searchPayload.results) ? searchPayload.results : []
+  const page = rawResults.slice(offset, offset + limit)
+  const results: SkillSearchResult[] = page.map((item) => {
+    const slug = String(item.slug ?? '')
+    const installedName = installedByName.has(slug) ? slug : undefined
+    return {
+      score: Number(item.score ?? 0),
+      slug,
+      display_name: String(item.display_name ?? slug),
+      summary: String(item.summary ?? ''),
+      version: String(item.version ?? ''),
+      registry_name: String(item.registry_name ?? 'clawhub'),
+      installed: Boolean(installedName),
+      installed_name: installedName,
+    }
+  })
+
+  const nextOffset = offset + results.length
+  const hasMore = nextOffset < rawResults.length
+
+  return {
+    results,
+    limit,
+    offset,
+    next_offset: hasMore ? nextOffset : undefined,
+    has_more: hasMore,
+  }
+}
+
+function isUnknownWsSkillActionError(error: unknown): boolean {
+  return (
+    error instanceof ApiError &&
+    error.status === 502 &&
+    /unknown action:\s*skill_/i.test(error.message)
+  )
+}
+
+export const skillsApi = {
+  list: async () => {
+    try {
+      return await requestSkillsWithRestFallback<{ skills: Skill[] }>(API_ENDPOINTS.SKILLS.LIST)
+    } catch (error) {
+      if (error instanceof ApiError && (error.status === 404 || error.status === 401)) {
+        try {
+          return await fallbackSkillListFromWs()
+        } catch (wsError) {
+          if (isUnknownWsSkillActionError(wsError)) {
+            throw new ApiError(
+              501,
+              '当前运行网关不支持 skill_* 接口；请使用 18800 的 /api/skills 或升级网关版本',
+              wsError,
+            )
+          }
+          throw wsError
+        }
+      }
+      throw error
+    }
+  },
+
+  search: async (query: string, limit = 20, offset = 0) => {
     const params = new URLSearchParams({
       q: query,
       limit: String(limit),
       offset: String(offset),
     })
-    return request<SkillSearchResponse>(
-      `${API_ENDPOINTS.SKILLS.SEARCH}?${params.toString()}`
-    )
+    const endpoint = `${API_ENDPOINTS.SKILLS.SEARCH}?${params.toString()}`
+    try {
+      return await requestSkillsWithRestFallback<SkillSearchResponse>(endpoint)
+    } catch (error) {
+      if (error instanceof ApiError && (error.status === 404 || error.status === 401)) {
+        try {
+          return await fallbackSkillSearchFromWs(query, limit, offset)
+        } catch (wsError) {
+          if (isUnknownWsSkillActionError(wsError)) {
+            throw new ApiError(
+              501,
+              '当前运行网关不支持 skill_search；请使用 18800 的 /api/skills/search 或升级网关版本',
+              wsError,
+            )
+          }
+          throw wsError
+        }
+      }
+      throw error
+    }
   },
 
-  install: (input: {
+  install: async (input: {
     slug: string
     registry: string
     version?: string
     force?: boolean
-  }) =>
-    request<{ status: string; skill?: Skill }>(API_ENDPOINTS.SKILLS.INSTALL, {
-      method: 'POST',
-      body: JSON.stringify(input),
-    }),
+  }) => {
+    try {
+      return await requestSkillsWithRestFallback<{ status: string; skill?: Skill }>(
+        API_ENDPOINTS.SKILLS.INSTALL,
+        {
+          method: 'POST',
+          body: JSON.stringify(input),
+        },
+      )
+    } catch (error) {
+      if (!(error instanceof ApiError) || (error.status !== 404 && error.status !== 401)) {
+        throw error
+      }
+      try {
+        await requestSkillAction<Record<string, unknown>>('skill_install', {
+          slug: input.slug,
+          registry: input.registry,
+          version: input.version,
+        })
+        const skills = await fallbackSkillListFromWs()
+        return {
+          status: 'ok',
+          skill: skills.skills.find((skill) => skill.name === input.slug),
+        }
+      } catch (wsError) {
+        if (isUnknownWsSkillActionError(wsError)) {
+          throw new ApiError(
+            501,
+            '当前运行网关不支持 skill_install；请使用 18800 的 /api/skills/install 或升级网关版本',
+            wsError,
+          )
+        }
+        throw wsError
+      }
+    }
+  },
 
   import: (file: File) => {
     const formData = new FormData()
@@ -354,10 +565,33 @@ export const skillsApi = {
     })
   },
 
-  delete: (name: string) =>
-    request<{ status: string }>(API_ENDPOINTS.SKILLS.DELETE(encodeURIComponent(name)), {
-      method: 'DELETE',
-    }),
+  delete: async (name: string) => {
+    try {
+      return await requestSkillsWithRestFallback<{ status: string }>(
+        API_ENDPOINTS.SKILLS.DELETE(encodeURIComponent(name)),
+        {
+          method: 'DELETE',
+        },
+      )
+    } catch (error) {
+      if (!(error instanceof ApiError) || (error.status !== 404 && error.status !== 401)) {
+        throw error
+      }
+      try {
+        await requestSkillAction<Record<string, unknown>>('skill_remove', { name })
+        return { status: 'ok' }
+      } catch (wsError) {
+        if (isUnknownWsSkillActionError(wsError)) {
+          throw new ApiError(
+            501,
+            '当前运行网关不支持 skill_remove；请使用 18800 的 /api/skills/{name} 或升级网关版本',
+            wsError,
+          )
+        }
+        throw wsError
+      }
+    }
+  },
 }
 
 // 工具 API

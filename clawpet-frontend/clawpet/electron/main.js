@@ -161,6 +161,7 @@ onboardingLocked = !(persistedOnboarding && persistedOnboarding.completed === tr
 logToFile(`[ONBOARDING] startup locked=${onboardingLocked}`);
 
 const backendBaseUrl = (process.env.GOCLAW_BACKEND_URL || 'http://127.0.0.1:18790').trim().replace(/\/+$/, '');
+const launcherBaseUrl = (process.env.GOCLAW_LAUNCHER_URL || 'http://127.0.0.1:18800').trim().replace(/\/+$/, '');
 const rendererBaseUrl = (process.env.ELECTRON_RENDERER_URL || 'http://localhost:5173').trim().replace(/\/+$/, '');
 const dashboardBaseUrl = (process.env.GOCLAW_DASHBOARD_URL || 'http://127.0.0.1:3000').trim().replace(/\/+$/, '');
 const launcherToken = (process.env.GOCLAW_LAUNCHER_TOKEN || process.env.PICOCLAW_LAUNCHER_TOKEN || '').trim();
@@ -589,7 +590,7 @@ function buildSettingsWindowUrl({ onboarding = false, rerun = false } = {}) {
 async function resolveInitialSettingsTargetUrl() {
   try {
     const headers = launcherToken ? { Authorization: `Bearer ${launcherToken}` } : {};
-    const response = await fetchWithTimeout('http://127.0.0.1:18800/api/gateway/status', { headers }, 1400);
+    const response = await fetchWithTimeout(`${launcherBaseUrl}/api/gateway/status`, { headers }, 1400);
     if (response.ok) {
       const data = await response.json();
       needsFirstTimeOnboarding = shouldOpenOnboardingFromGatewayStatus(data);

@@ -1,6 +1,7 @@
 "use client"
 
 import { useEffect, useRef, useState, type CSSProperties } from "react"
+import { createPortal } from "react-dom"
 import {
   AlertCircle,
   Clock,
@@ -12,6 +13,8 @@ import {
   Plus,
   Settings,
   Sparkles,
+  Trash2,
+  X,
 } from "lucide-react"
 
 import { type UseChatResult } from "@/hooks/use-chat"
@@ -28,7 +31,7 @@ interface SidebarProps {
   layoutMode?: "full" | "compact" | "ultra"
   chat: Pick<
     UseChatResult,
-    "sessions" | "activeSessionId" | "newChat" | "switchSession"
+    "sessions" | "activeSessionId" | "newChat" | "switchSession" | "deleteSession"
   >
 }
 
@@ -124,8 +127,25 @@ export function Sidebar({
 }: SidebarProps) {
   const [scheduleFileName, setScheduleFileName] = useState("")
   const [scheduleImportHint, setScheduleImportHint] = useState("")
+  const [historyOpen, setHistoryOpen] = useState(false)
+  const [mounted, setMounted] = useState(false)
   const { data: gatewayStatus } = useGatewayStatus()
   const scheduleFileInputRef = useRef<HTMLInputElement | null>(null)
+
+  useEffect(() => {
+    setMounted(true)
+  }, [])
+
+  const openHistory = () => {
+    setActiveNav("聊天")
+    setHistoryOpen(true)
+  }
+
+  const handleSwitchSession = (sessionId: string) => {
+    setActiveNav("聊天")
+    void chat.switchSession(sessionId)
+    setHistoryOpen(false)
+  }
 
   useEffect(() => {
     try {
@@ -155,23 +175,98 @@ export function Sidebar({
   const sessionCount = chat.sessions.length
   const isCompact = layoutMode !== "full"
 
+  const historyOverlay =
+    mounted && historyOpen
+      ? createPortal(
+          <div className="fixed inset-0 z-[1200] bg-black/45 p-4">
+            <div className="mx-auto flex h-full w-full max-w-2xl flex-col rounded-[1.6rem] border border-white/70 bg-[linear-gradient(145deg,rgba(255,252,247,0.96),rgba(255,245,238,0.9))] shadow-[0_24px_56px_-34px_rgba(116,80,42,0.45)]">
+              <div className="flex items-center justify-between border-b border-white/70 px-5 py-4">
+                <div>
+                  <p className="text-[0.72rem] uppercase tracking-[0.22em] text-[#b07b4d]">
+                    记忆舱
+                  </p>
+                  <p className="mt-1 text-base font-semibold text-[#4f3725]">会话历史</p>
+                </div>
+                <button
+                  onClick={() => setHistoryOpen(false)}
+                  className="rounded-full border border-white/75 bg-white/85 p-2 text-[#7f6651] transition hover:bg-white"
+                >
+                  <X className="h-4 w-4" />
+                </button>
+              </div>
+
+              <div className="min-h-0 flex-1 overflow-y-auto px-4 py-4">
+                {chat.sessions.length === 0 ? (
+                  <div className="flex h-full min-h-[12rem] items-center justify-center rounded-[1.2rem] border border-dashed border-amber-200/70 bg-white/72 px-4 text-center text-sm text-[#8a6b50]">
+                    还没有历史对话。
+                  </div>
+                ) : (
+                  <div className="space-y-2">
+                    {chat.sessions.map((session) => (
+                      <div
+                        key={session.id}
+                        className={cn(
+                          "dashboard-card flex items-start gap-3 rounded-[1.1rem] border px-3 py-3 transition",
+                          session.id === chat.activeSessionId
+                            ? "border-amber-200 bg-[linear-gradient(140deg,rgba(255,243,224,0.95),rgba(255,250,244,0.9))]"
+                            : "border-white/75 bg-white/82 hover:border-amber-100 hover:bg-white",
+                        )}
+                      >
+                        <button
+                          onClick={() => handleSwitchSession(session.id)}
+                          className="flex min-w-0 flex-1 items-start gap-3 text-left"
+                        >
+                          <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-gradient-to-br from-white to-amber-50 text-[#9a6c45]">
+                            <Home className="h-4 w-4" />
+                          </div>
+                          <div className="min-w-0 flex-1">
+                            <p className="truncate text-sm font-semibold text-[#4f3725]">
+                              {session.title}
+                            </p>
+                            <p className="mt-1 text-xs text-[#8a6b50]">
+                              {session.messageCount > 0 ? `${session.messageCount} 条消息` : "空白对话"}
+                              {" · "}
+                              {formatRelativeTime(session.updatedAt)}
+                            </p>
+                          </div>
+                        </button>
+
+                        <button
+                          onClick={() => void chat.deleteSession(session.id)}
+                          className="rounded-full border border-white/75 bg-white/85 p-2 text-[#8a6b50] transition hover:border-rose-200 hover:bg-rose-50 hover:text-rose-700"
+                          title="删除会话"
+                        >
+                          <Trash2 className="h-3.5 w-3.5" />
+                        </button>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+            </div>
+          </div>,
+          document.body,
+        )
+      : null
+
   if (layoutMode === "ultra") {
     return (
-      <aside
-        className="w-[5.6rem] shrink-0 border-r border-white/45 bg-[linear-gradient(180deg,rgba(255,250,245,0.9),rgba(255,246,238,0.84))]"
-        style={{ WebkitAppRegion: "no-drag" } as CSSProperties}
-      >
-        <div className="relative flex h-full flex-col overflow-hidden">
-          <div className="pointer-events-none absolute inset-0 bg-[radial-gradient(circle_at_18%_10%,rgba(255,255,255,0.86),transparent_35%),radial-gradient(circle_at_78%_18%,rgba(255,214,170,0.22),transparent_32%)]" />
+      <>
+        <aside
+          className="w-[5.6rem] shrink-0 border-r border-white/45 bg-[linear-gradient(180deg,rgba(255,250,245,0.9),rgba(255,246,238,0.84))]"
+          style={{ WebkitAppRegion: "no-drag" } as CSSProperties}
+        >
+          <div className="relative flex h-full flex-col overflow-hidden">
+            <div className="pointer-events-none absolute inset-0 bg-[radial-gradient(circle_at_18%_10%,rgba(255,255,255,0.86),transparent_35%),radial-gradient(circle_at_78%_18%,rgba(255,214,170,0.22),transparent_32%)]" />
 
-          <div className="relative flex h-full min-h-0 flex-col items-center gap-2 overflow-y-scroll p-2">
-            <button
-              onClick={() => setActiveNav("聊天")}
-              title="桌宠驾驶舱"
-              className="dashboard-enter dashboard-card flex h-12 w-12 items-center justify-center rounded-2xl border border-white/80 bg-[linear-gradient(140deg,rgba(255,255,255,0.94),rgba(255,243,228,0.9))] text-amber-700 shadow-sm"
-            >
-              <Sparkles className="h-5 w-5" />
-            </button>
+            <div className="relative flex h-full min-h-0 flex-col items-center gap-2 overflow-y-scroll p-2">
+              <button
+                onClick={() => setActiveNav("聊天")}
+                title="桌宠驾驶舱"
+                className="dashboard-enter dashboard-card flex h-12 w-12 items-center justify-center rounded-2xl border border-white/80 bg-[linear-gradient(140deg,rgba(255,255,255,0.94),rgba(255,243,228,0.9))] text-amber-700 shadow-sm"
+              >
+                <Sparkles className="h-5 w-5" />
+              </button>
 
             <button
               onClick={() => {
@@ -198,6 +293,14 @@ export function Sidebar({
               className="dashboard-enter dashboard-card flex h-11 w-11 items-center justify-center rounded-2xl border border-white/80 bg-white/85 text-[#6a452a]"
             >
               <FolderUp className="h-4 w-4" />
+            </button>
+
+            <button
+              onClick={openHistory}
+              title="会话历史"
+              className="dashboard-enter dashboard-card flex h-11 w-11 items-center justify-center rounded-2xl border border-white/80 bg-white/85 text-[#6a452a]"
+            >
+              <Clock className="h-4 w-4" />
             </button>
 
             <input
@@ -232,10 +335,12 @@ export function Sidebar({
               )
             })}
 
-            <div className="mt-auto h-1" />
+              <div className="mt-auto h-1" />
+            </div>
           </div>
-        </div>
-      </aside>
+        </aside>
+        {historyOverlay}
+      </>
     )
   }
 
@@ -320,6 +425,23 @@ export function Sidebar({
               课表状态：<span className="font-medium text-[#5d4430]">{importedScheduleLabel}</span>
             </div>
           </section>
+
+          {isCompact && (
+            <section className="dashboard-enter dashboard-card rounded-[1.8rem] border border-white/70 bg-white/64 p-2.5 shadow-[0_16px_36px_-28px_rgba(118,84,49,0.4)] backdrop-blur-xl">
+              <button
+                onClick={openHistory}
+                className="dashboard-card flex w-full items-center justify-between rounded-[1.2rem] border border-white/75 bg-white/82 px-3 py-2.5 text-left"
+              >
+                <span className="inline-flex items-center gap-2 text-sm font-semibold text-[#4f3725]">
+                  <Clock className="h-4 w-4 text-amber-600" />
+                  会话历史
+                </span>
+                <span className="rounded-full border border-white/80 bg-white/85 px-2 py-0.5 text-xs text-[#7f6651]">
+                  {sessionCount} 条
+                </span>
+              </button>
+            </section>
+          )}
 
           <section className={cn("grid grid-cols-2", isCompact ? "gap-2" : "gap-3")}>
             <button
@@ -456,33 +578,45 @@ export function Sidebar({
               ) : (
                 <div className="space-y-2">
                   {chat.sessions.map((session) => (
-                    <button
+                    <div
                       key={session.id}
-                      onClick={() => {
-                        setActiveNav("聊天")
-                        void chat.switchSession(session.id)
-                      }}
                       className={cn(
-                        "dashboard-card flex w-full items-start gap-3 rounded-[1.2rem] border px-3 py-3 text-left transition",
+                        "dashboard-card flex items-start gap-3 rounded-[1.2rem] border px-3 py-3 transition",
                         session.id === chat.activeSessionId
                           ? "border-amber-200 bg-[linear-gradient(140deg,rgba(255,243,224,0.95),rgba(255,250,244,0.9))] shadow-[0_16px_28px_-24px_rgba(217,119,6,0.28)]"
                           : "border-white/75 bg-white/82 hover:border-amber-100 hover:bg-white hover:shadow-[0_14px_24px_-24px_rgba(125,84,35,0.22)]",
                       )}
                     >
-                      <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-2xl bg-gradient-to-br from-white to-amber-50 text-[#9a6c45] shadow-sm">
-                        <Home className="h-4 w-4" />
-                      </div>
-                      <div className="min-w-0 flex-1">
-                        <p className="truncate text-base font-semibold text-[#4f3725]">
-                          {session.title}
-                        </p>
-                        <p className="mt-1 text-xs text-[#8a6b50]">
-                          {session.messageCount > 0 ? `${session.messageCount} 条消息` : "空白对话"}
-                          {" · "}
-                          {formatRelativeTime(session.updatedAt)}
-                        </p>
-                      </div>
-                    </button>
+                      <button
+                        onClick={() => {
+                          setActiveNav("聊天")
+                          void chat.switchSession(session.id)
+                        }}
+                        className="flex min-w-0 flex-1 items-start gap-3 text-left"
+                      >
+                        <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-2xl bg-gradient-to-br from-white to-amber-50 text-[#9a6c45] shadow-sm">
+                          <Home className="h-4 w-4" />
+                        </div>
+                        <div className="min-w-0 flex-1">
+                          <p className="truncate text-base font-semibold text-[#4f3725]">
+                            {session.title}
+                          </p>
+                          <p className="mt-1 text-xs text-[#8a6b50]">
+                            {session.messageCount > 0 ? `${session.messageCount} 条消息` : "空白对话"}
+                            {" · "}
+                            {formatRelativeTime(session.updatedAt)}
+                          </p>
+                        </div>
+                      </button>
+
+                      <button
+                        onClick={() => void chat.deleteSession(session.id)}
+                        className="rounded-full border border-white/75 bg-white/85 p-2 text-[#8a6b50] transition hover:border-rose-200 hover:bg-rose-50 hover:text-rose-700"
+                        title="删除会话"
+                      >
+                        <Trash2 className="h-3.5 w-3.5" />
+                      </button>
+                    </div>
                   ))}
                 </div>
               )}
@@ -508,6 +642,8 @@ export function Sidebar({
           )}
         </div>
       </div>
+
+      {historyOverlay}
     </aside>
   )
 }

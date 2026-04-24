@@ -41,6 +41,7 @@ export interface UseChatResult {
   sendMessage: (content: string) => void
   newChat: () => Promise<void>
   switchSession: (sessionId: string) => Promise<void>
+  deleteSession: (sessionId: string) => Promise<void>
   loadSessionHistory: (sessionId: string) => Promise<void>
   reconnect: () => void
   clearError: () => void
@@ -786,6 +787,48 @@ export function useChat(options: UseChatOptions = {}): UseChatResult {
     [connectWithBootstrap, loadSessionHistory, resetAudioQueue, sessionsState],
   )
 
+  const deleteSession = useCallback(
+    async (sessionId: string) => {
+      if (!sessionId) {
+        return
+      }
+
+      const remaining = sessionsState.filter((session) => session.id !== sessionId)
+
+      if (remaining.length === sessionsState.length) {
+        return
+      }
+
+      let nextActiveId = activeSessionIdRef.current
+      if (sessionId === activeSessionIdRef.current) {
+        nextActiveId = remaining[0]?.id ?? wsRef.current.startNewSession()
+      }
+
+      const nextSessions =
+        remaining.length > 0
+          ? remaining
+          : [createSessionState(nextActiveId)]
+
+      setSessionsState(nextSessions)
+      setActiveSessionId(nextActiveId)
+      saveSessionsToStorage(nextSessions, nextActiveId)
+
+      if (sessionId === activeSessionIdRef.current) {
+        wsRef.current.useSession(nextActiveId)
+        if (currentAudioRef.current) {
+          currentAudioRef.current.pause()
+        }
+        resetAudioQueue()
+        lastPlayedAudioRef.current = { value: "", at: 0 }
+        lastAssistantTextRef.current = ""
+        setIsTyping(false)
+        setError(null)
+        await connectWithBootstrap()
+      }
+    },
+    [connectWithBootstrap, resetAudioQueue, sessionsState],
+  )
+
   const reconnect = useCallback(() => {
     setError(null)
     setIsTyping(false)
@@ -842,6 +885,7 @@ export function useChat(options: UseChatOptions = {}): UseChatResult {
     sendMessage,
     newChat,
     switchSession,
+    deleteSession,
     loadSessionHistory,
     reconnect,
     clearError,

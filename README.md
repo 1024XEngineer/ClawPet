@@ -19,6 +19,16 @@
 powershell -ExecutionPolicy Bypass -File .\scripts\run-goclaw-dev.ps1 -Restart -PetclawMode dev
 ```
 
+首次在新机器启动时：
+
+- 如果仓库内不存在 `picoclaw.exe` / `picoclaw-web.exe`，脚本会自动回退到 `go run` 启动后端和 launcher。
+- 因此请确保系统已安装 `Go` 与 `Node.js`（并且 `go` / `npm` 可在命令行直接执行）。
+- 如需自定义端口或二进制路径，可附加参数，例如：
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\scripts\run-goclaw-dev.ps1 -Restart -PetclawMode dev -GatewayPort 18791 -LauncherPort 18801 -FrontendPort 3001 -GatewayBin ".\build\picoclaw.exe" -LauncherBin ".\build\picoclaw-web.exe"
+```
+
 启动行为：
 
 1. 清理旧进程和旧端口（含 `5173` / `18800`）。
