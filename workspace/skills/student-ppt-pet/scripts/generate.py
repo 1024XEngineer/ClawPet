@@ -2,13 +2,22 @@ import argparse
 import json
 from pathlib import Path
 
-from pptx import Presentation
-from pptx.chart.data import ChartData
-from pptx.dml.color import RGBColor
-from pptx.enum.chart import XL_CHART_TYPE, XL_LABEL_POSITION
-from pptx.enum.shapes import MSO_AUTO_SHAPE_TYPE
-from pptx.enum.text import MSO_ANCHOR, PP_ALIGN
-from pptx.util import Inches, Pt
+try:
+    from pptx import Presentation
+    from pptx.chart.data import ChartData
+    from pptx.dml.color import RGBColor
+    from pptx.enum.chart import XL_CHART_TYPE, XL_LABEL_POSITION
+    from pptx.enum.shapes import MSO_AUTO_SHAPE_TYPE
+    from pptx.enum.text import MSO_ANCHOR, PP_ALIGN
+    from pptx.util import Inches, Pt
+except ModuleNotFoundError as exc:
+    if exc.name == "pptx":
+        raise SystemExit(
+            "Missing dependency 'python-pptx'. "
+            "Install it with: python -m pip install -r "
+            "skills\\student-ppt-pet\\requirements.txt"
+        ) from exc
+    raise
 
 
 SLIDE_W = Inches(13.333)
