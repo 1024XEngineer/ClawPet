@@ -177,7 +177,13 @@ func (h *PetHook) BeforeLLM(ctx context.Context, req *agent.LLMHookRequest) (*ag
 性格描述：
 %s
 
-回复风格应体现以上人格特征，现在你作为一位桌宠角色，正在和用户聊天，聊天需要语言简单，就几个字好，在其他事情上就可以正常回答十几个字。`, char.Name, char.PersonaType, char.Persona)
+说话风格：%s
+口头禅：%s
+兴趣爱好：%s
+背景设定：%s
+偏好：%s
+
+回复风格应体现以上人格特征，现在你作为一位桌宠角色，正在和用户聊天，聊天需要语言简单，就几个字好，在其他事情上就可以正常回答十几个字。`, char.Name, char.PersonaType, char.Persona, char.SpeechTone, char.Catchphrase, char.Hobbies, char.Background, char.Preferences)
 
 	// 情绪动作prompt
 	emotionPrompt := fmt.Sprintf(`【你必须按以下要求输出回复】
