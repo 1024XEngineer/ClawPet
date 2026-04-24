@@ -8,7 +8,10 @@ import {
   type ChatMessage,
   type WSEvent,
 } from "@/lib/api"
-import { getSessionHistory } from "@/lib/api/sessions"
+import {
+  deleteSession as deleteSessionOnServer,
+  getSessionHistory,
+} from "@/lib/api/sessions"
 
 const SESSIONS_STORAGE_KEY = "petclaw_sessions"
 const ACTIVE_SESSION_KEY = "petclaw_active_session"
@@ -821,6 +824,12 @@ export function useChat(options: UseChatOptions = {}): UseChatResult {
       const remaining = sessionsState.filter((session) => session.id !== sessionId)
 
       if (remaining.length === sessionsState.length) {
+        return
+      }
+
+      const deleted = await deleteSessionOnServer(sessionId)
+      if (!deleted) {
+        setError("删除会话失败，请稍后重试")
         return
       }
 
