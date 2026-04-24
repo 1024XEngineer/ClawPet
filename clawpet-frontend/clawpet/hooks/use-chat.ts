@@ -8,16 +8,10 @@ import {
   type ChatMessage,
   type WSEvent,
 } from "@/lib/api"
-import {
-  deleteSession as deleteSessionOnServer,
-  getSessionHistory,
-} from "@/lib/api/sessions"
+import { getSessionHistory } from "@/lib/api/sessions"
 
 const SESSIONS_STORAGE_KEY = "petclaw_sessions"
 const ACTIVE_SESSION_KEY = "petclaw_active_session"
-
-const PPT_SKILL_NAME = "student-ppt-pet"
-const PPT_TRIGGER_RE = /(\bppt\b|PPT|幻灯片|答辩|汇报|开题|课件)/i
 
 export interface UseChatOptions {
   onMessage?: (message: ChatMessage) => void
@@ -184,23 +178,6 @@ function mergeMessage(
     return next
   }
   return [...messages, message]
-}
-
-function buildOutgoingMessage(raw: string): string {
-  const text = raw.trim()
-  if (!text) {
-    return text
-  }
-
-  if (text.startsWith("/")) {
-    return text
-  }
-
-  if (!PPT_TRIGGER_RE.test(text)) {
-    return text
-  }
-
-  return `/use ${PPT_SKILL_NAME} ${text}`
 }
 
 function decodeBase64Chunk(value: string): Uint8Array | null {
@@ -725,11 +702,6 @@ export function useChat(options: UseChatOptions = {}): UseChatResult {
         return
       }
 
-      const outbound = buildOutgoingMessage(content)
-      if (!outbound) {
-        return
-      }
-
       if (!wsRef.current.isConnected) {
         setError("当前连接不可用，请先重连后再发送")
         return
@@ -749,7 +721,7 @@ export function useChat(options: UseChatOptions = {}): UseChatResult {
       setIsTyping(true)
       setError(null)
 
-      wsRef.current.send(outbound)
+      wsRef.current.send(content.trim())
     },
     [updateSessionMessages],
   )
@@ -824,12 +796,6 @@ export function useChat(options: UseChatOptions = {}): UseChatResult {
       const remaining = sessionsState.filter((session) => session.id !== sessionId)
 
       if (remaining.length === sessionsState.length) {
-        return
-      }
-
-      const deleted = await deleteSessionOnServer(sessionId)
-      if (!deleted) {
-        setError("删除会话失败，请稍后重试")
         return
       }
 
