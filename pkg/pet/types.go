@@ -51,6 +51,8 @@ const (
 	ActionSkillInstall         = "skill_install"           // 安装 skill
 	ActionSkillRemove          = "skill_remove"            // 删除 skill
 	ActionSkillGet             = "skill_get"               // 获取 skill 内容
+	ActionCharacterCreate      = "character_create"        // 创建角色
+	ActionUserProfileGet       = "user_profile_get"        // 获取用户画像
 )
 
 // =============================================================================
@@ -150,11 +152,29 @@ type CharacterUpdateRequest struct {
 	PetName        string `json:"pet_name"`         // 桌宠名称
 	PetPersona     string `json:"pet_persona"`      // 性格描述
 	PetPersonaType string `json:"pet_persona_type"` // 性格类型
+	SpeechTone     string `json:"speech_tone"`      // 说话风格
+	Catchphrase    string `json:"catchphrase"`      // 口头禅
+	Hobbies        string `json:"hobbies"`          // 兴趣爱好
+	Background     string `json:"background"`       // 背景设定
+	Preferences    string `json:"preferences"`      // 偏好
 }
 
 // CharacterSwitchRequest 角色切换请求数据
 type CharacterSwitchRequest struct {
 	CharacterID string `json:"character_id"` // 目标角色ID
+}
+
+// CharacterCreateRequest 创建角色请求数据
+type CharacterCreateRequest struct {
+	PetName        string `json:"pet_name"`         // 桌宠名称
+	PetPersona     string `json:"pet_persona"`      // 性格描述
+	PetPersonaType string `json:"pet_persona_type"` // 性格类型
+	SpeechTone     string `json:"speech_tone"`      // 说话风格
+	Catchphrase    string `json:"catchphrase"`      // 口头禅
+	Hobbies        string `json:"hobbies"`          // 兴趣爱好
+	Background     string `json:"background"`       // 背景设定
+	Preferences    string `json:"preferences"`      // 偏好
+	Avatar         string `json:"avatar"`           // 头像/模型ID
 }
 
 // ConfigUpdateRequest 配置更新请求数据
@@ -335,11 +355,32 @@ type OnboardingConfigResponse struct {
 
 // CharacterConfig 角色配置
 type CharacterConfig struct {
+	PetID          string `json:"pet_id"`                // 桌宠ID
+	PetName        string `json:"pet_name"`              // 桌宠名称
+	PetPersona     string `json:"pet_persona"`           // 性格描述
+	PetPersonaType string `json:"pet_persona_type"`      // 性格类型
+	SpeechTone     string `json:"speech_tone,omitempty"` // 说话风格
+	Catchphrase    string `json:"catchphrase,omitempty"` // 口头禅
+	Hobbies        string `json:"hobbies,omitempty"`     // 兴趣爱好
+	Background     string `json:"background,omitempty"`  // 背景设定
+	Preferences    string `json:"preferences,omitempty"` // 偏好
+	Avatar         string `json:"avatar,omitempty"`      // 头像/模型ID
+	CreatedAt      string `json:"created_at"`            // 创建时间
+	UpdatedAt      string `json:"updated_at"`            // 更新时间
+}
+
+// CharacterCreateResponse 创建角色响应数据
+type CharacterCreateResponse struct {
 	PetID          string `json:"pet_id"`           // 桌宠ID
 	PetName        string `json:"pet_name"`         // 桌宠名称
 	PetPersona     string `json:"pet_persona"`      // 性格描述
 	PetPersonaType string `json:"pet_persona_type"` // 性格类型
-	Avatar         string `json:"avatar,omitempty"` // 头像/模型ID
+	SpeechTone     string `json:"speech_tone"`      // 说话风格
+	Catchphrase    string `json:"catchphrase"`      // 口头禅
+	Hobbies        string `json:"hobbies"`          // 兴趣爱好
+	Background     string `json:"background"`       // 背景设定
+	Preferences    string `json:"preferences"`      // 偏好
+	Avatar         string `json:"avatar"`           // 头像/模型ID
 	CreatedAt      string `json:"created_at"`       // 创建时间
 	UpdatedAt      string `json:"updated_at"`       // 更新时间
 }
