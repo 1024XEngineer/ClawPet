@@ -636,7 +636,7 @@ if (msg.push_type === 'text_and_audio') {
 
 ### 4.4 character_get - 获取角色配置
 
-获取当前桌宠的角色配置信息。
+获取桌宠的角色配置信息，支持获取当前角色或指定角色。
 
 **请求**：
 
@@ -644,6 +644,17 @@ if (msg.push_type === 'text_and_audio') {
 {
   "action": "character_get",
   "data": {}
+}
+```
+
+或获取指定角色：
+
+```json
+{
+  "action": "character_get",
+  "data": {
+    "pet_id": "pet_002"
+  }
 }
 ```
 
@@ -658,7 +669,12 @@ if (msg.push_type === 'text_and_audio') {
     "pet_name": "艾莉",
     "pet_persona": "温柔体贴，善于关心他人",
     "pet_persona_type": "gentle",
-    "avatar": "default",
+    "speech_tone": "温柔",
+    "catchphrase": "主人～",
+    "hobbies": "陪伴、倾听、撒娇",
+    "background": "一只可爱的小猫桌宠",
+    "preferences": "喜欢被抚摸、喜欢温暖的地方",
+    "avatar": "cute_cat",
     "created_at": "2024-04-01T00:00:00Z",
     "updated_at": "2024-04-08T12:00:00Z"
   }
@@ -673,15 +689,20 @@ if (msg.push_type === 'text_and_audio') {
 | pet_name | string | 桌宠名称 |
 | pet_persona | string | 性格描述 |
 | pet_persona_type | string | 性格类型 |
+| speech_tone | string | 说话风格 |
+| catchphrase | string | 口头禅 |
+| hobbies | string | 兴趣爱好 |
+| background | string | 背景设定 |
+| preferences | string | 偏好 |
 | avatar | string | 头像/模型ID |
 | created_at | string | 创建时间（ISO 8601） |
 | updated_at | string | 更新时间（ISO 8601） |
 
 ---
 
-### 4.4 character_update - 更新角色配置
+### 4.5 character_update - 更新角色配置
 
-修改桌宠的角色配置，修改后新对话立即生效。
+修改当前激活桌宠的角色配置，修改后新对话立即生效。
 
 **请求**：
 
@@ -692,7 +713,12 @@ if (msg.push_type === 'text_and_audio') {
     "pet_id": "pet_001",
     "pet_name": "星璃",
     "pet_persona": "活泼可爱，精力充沛",
-    "pet_persona_type": "playful"
+    "pet_persona_type": "playful",
+    "speech_tone": "俏皮",
+    "catchphrase": "主人主人～",
+    "hobbies": "唱歌、跳舞",
+    "background": "来自喵星的公主",
+    "preferences": "喜欢毛线球和猫薄荷"
   }
 }
 ```
@@ -708,12 +734,31 @@ if (msg.push_type === 'text_and_audio') {
     "pet_name": "星璃",
     "pet_persona": "活泼可爱，精力充沛",
     "pet_persona_type": "playful",
-    "avatar": "default",
+    "speech_tone": "俏皮",
+    "catchphrase": "主人主人～",
+    "hobbies": "唱歌、跳舞",
+    "background": "来自喵星的公主",
+    "preferences": "喜欢毛线球和猫薄荷",
+    "avatar": "cute_cat",
     "created_at": "2024-04-01T00:00:00Z",
     "updated_at": "2024-04-08T12:30:00Z"
   }
 }
 ```
+
+**字段说明**：
+
+| 字段 | 类型 | 必填 | 说明 |
+|------|------|------|------|
+| pet_id | string | 是 | 桌宠ID |
+| pet_name | string | 否 | 桌宠名称 |
+| pet_persona | string | 否 | 性格描述 |
+| pet_persona_type | string | 否 | 性格类型 |
+| speech_tone | string | 否 | 说话风格 |
+| catchphrase | string | 否 | 口头禅 |
+| hobbies | string | 否 | 兴趣爱好 |
+| background | string | 否 | 背景设定 |
+| preferences | string | 否 | 偏好 |
 
 **注意**：修改后新的对话会立即使用新配置。
 
@@ -756,7 +801,124 @@ if (msg.push_type === 'text_and_audio') {
 
 ---
 
-### 4.6 config_get - 获取应用配置
+### 4.6 character_create - 创建新角色
+
+创建一个新的桌宠角色。创建后不会自动切换到新角色，保持在当前角色。
+
+**请求**：
+
+```json
+{
+  "action": "character_create",
+  "data": {
+    "pet_name": "星璃",
+    "pet_persona": "活泼可爱，精力充沛",
+    "pet_persona_type": "playful",
+    "speech_tone": "俏皮",
+    "catchphrase": "主人主人～",
+    "hobbies": "唱歌、跳舞",
+    "background": "来自喵星的公主",
+    "preferences": "喜欢毛线球和猫薄荷",
+    "avatar": "cute_cat"
+  }
+}
+```
+
+**响应**：
+
+```json
+{
+  "status": "ok",
+  "action": "character_create",
+  "data": {
+    "pet_id": "pet_002",
+    "pet_name": "星璃",
+    "pet_persona": "活泼可爱，精力充沛",
+    "pet_persona_type": "playful",
+    "speech_tone": "俏皮",
+    "catchphrase": "主人主人～",
+    "hobbies": "唱歌、跳舞",
+    "background": "来自喵星的公主",
+    "preferences": "喜欢毛线球和猫薄荷",
+    "avatar": "cute_cat",
+    "created_at": "2024-04-23T10:00:00Z",
+    "updated_at": "2024-04-23T10:00:00Z"
+  }
+}
+```
+
+**字段说明**：
+
+| 字段 | 类型 | 必填 | 说明 |
+|------|------|------|------|
+| pet_name | string | 是 | 桌宠名称 |
+| pet_persona | string | 否 | 性格描述 |
+| pet_persona_type | string | 否 | 性格类型 |
+| speech_tone | string | 否 | 说话风格 |
+| catchphrase | string | 否 | 口头禅 |
+| hobbies | string | 否 | 兴趣爱好 |
+| background | string | 否 | 背景设定 |
+| preferences | string | 否 | 偏好 |
+| avatar | string | 否 | 头像/模型ID，默认 "cute_cat" |
+
+**说明**：
+- 创建成功后返回新角色的完整信息
+- 不会自动切换到新角色
+- 性格类型可自定义（如 gentle/playful/cool/wise 或任何自定义值）
+
+---
+
+### 4.7 user_profile_get - 获取用户画像
+
+获取当前用户的画像信息。
+
+**请求**：
+
+```json
+{
+  "action": "user_profile_get",
+  "data": {}
+}
+```
+
+**响应**：
+
+```json
+{
+  "status": "ok",
+  "action": "user_profile_get",
+  "data": {
+    "display_name": "小明",
+    "role": "计算机专业",
+    "language": "zh-CN",
+    "chronotype": "night",
+    "personality_tone": "阴阳怪气",
+    "anxiety_level": 65,
+    "pressure_level": "high",
+    "extra": {
+      "focus_windows": ["20:00-23:00"],
+      "selected_breakers": ["考试", "作业"]
+    }
+  }
+}
+```
+
+**字段说明**：
+
+| 字段 | 类型 | 说明 |
+|------|------|------|
+| display_name | string | 显示名称 |
+| role | string | 角色/职业 |
+| language | string | 语言偏好 |
+| chronotype | string | 昼夜偏好 |
+| personality_tone | string | 人格语调 |
+| anxiety_level | int | 焦虑等级（0-100） |
+| pressure_level | string | 压力等级 |
+| extra | object | 额外信息 |
+
+---
+
+### 4.8 config_get - 获取应用配置
 
 获取应用功能开关和设置。
 
@@ -2318,8 +2480,10 @@ async def send_chat(ws, text):
 | audio_done | 音频播放完毕 | 通知后端当前音频片段已播放完毕 |
 | onboarding_config | 提交初始化配置 | 首次启动时提交配置 |
 | user_profile_update | 更新用户画像 | 提交用户信息（昵称、角色、作息等），用于 LLM 上下文 |
-| character_get | 获取角色配置 | 查看当前角色 |
+| user_profile_get | 获取用户画像 | 获取当前用户画像信息 |
+| character_get | 获取角色配置 | 查看当前角色或指定角色 |
 | character_update | 更新角色配置 | 修改角色设置 |
+| character_create | 创建新角色 | 创建新的桌宠角色 |
 | character_switch | 切换角色 | 切换当前激活的角色 |
 | config_get | 获取应用配置 | 查看应用设置 |
 | config_update | 更新应用配置 | 修改应用设置 |
