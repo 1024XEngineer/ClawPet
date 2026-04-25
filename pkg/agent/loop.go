@@ -2083,7 +2083,11 @@ turnLoop:
 						if err != nil {
 							streamer.Cancel(providerCtx)
 						} else {
-							if finalizeErr := streamer.Finalize(providerCtx, resp.Content); finalizeErr != nil {
+							finalContent := resp.Content
+							if finalContent == "" && resp.ReasoningContent != "" {
+								finalContent = resp.ReasoningContent
+							}
+							if finalizeErr := streamer.Finalize(providerCtx, finalContent); finalizeErr != nil {
 								logger.WarnCF("agent", "Streamer.Finalize failed", map[string]any{
 									"error": finalizeErr.Error(),
 								})

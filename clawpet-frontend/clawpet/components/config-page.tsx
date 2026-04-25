@@ -28,6 +28,7 @@ import {
   getWebSocketInstance,
   type CharacterProfileData,
   type Config,
+  type UserProfileData,
 } from "@/lib/api"
 import { cn } from "@/lib/utils"
 
@@ -91,6 +92,7 @@ function mapConfigToForm(config?: Config): ConfigFormState {
 
 function mapCharacterToPersonalityForm(
   character?: CharacterProfileData,
+  profile?: UserProfileData,
   config?: { language?: string; emotion_enabled?: boolean },
 ): PersonalityFormState {
   return {
@@ -98,7 +100,7 @@ function mapCharacterToPersonalityForm(
     petName: character?.pet_name ?? "",
     petPersona: character?.pet_persona ?? "",
     petPersonaType: character?.pet_persona_type ?? "gentle",
-    personalityTone: character?.pet_persona ?? "正常",
+    personalityTone: profile?.personality_tone ?? "正常",
     language: config?.language ?? "zh-CN",
     emotionEnabled: config?.emotion_enabled ?? true,
   }
@@ -152,8 +154,9 @@ export function ConfigPage() {
       setPersonalityState(null)
       try {
         const ws = getWebSocketInstance()
-        const [characterResp, petConfigResp] = await Promise.all([
+        const [characterResp, userProfileResp, petConfigResp] = await Promise.all([
           ws.getCharacter(),
+          ws.getUserProfile(),
           ws.getPetConfig(),
         ])
 
@@ -163,6 +166,7 @@ export function ConfigPage() {
 
         const nextForm = mapCharacterToPersonalityForm(
           characterResp.data,
+          userProfileResp.data,
           petConfigResp.data,
         )
         setPersonalityForm(nextForm)
@@ -281,10 +285,14 @@ export function ConfigPage() {
         language: personalityForm.language,
       })
 
-      const refreshedCharacter = await ws.getCharacter()
-      const refreshedConfig = await ws.getPetConfig()
+      const [refreshedCharacter, refreshedProfile, refreshedConfig] = await Promise.all([
+        ws.getCharacter(),
+        ws.getUserProfile(),
+        ws.getPetConfig(),
+      ])
       const nextForm = mapCharacterToPersonalityForm(
         refreshedCharacter.data,
+        refreshedProfile.data,
         refreshedConfig.data,
       )
       setPersonalityForm(nextForm)
