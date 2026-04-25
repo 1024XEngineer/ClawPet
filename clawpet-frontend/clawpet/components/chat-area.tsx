@@ -215,10 +215,6 @@ export function ChatArea({ chat, layoutMode = "full" }: ChatAreaProps) {
                    驾驶舱模式
                  </span>
 
-                 {!isUltra && <span className="inline-flex items-center gap-2 rounded-full border border-white/75 bg-white/82 px-3 py-1.5 text-sm text-[#70563f]">
-                   <FileText className="h-4 w-4 text-violet-600" />
-                   {sessions.length > 0 ? `记忆 ${sessions.length} 段` : "尚未开始"}
-                 </span>}
               </div>
 
                <div className={cn("flex items-center gap-2 rounded-full border border-white/75 bg-white/82", isUltra ? "p-0.5" : "p-1")}>
@@ -552,7 +548,7 @@ export function ChatArea({ chat, layoutMode = "full" }: ChatAreaProps) {
                   召唤台
                 </p>
                 {!isUltra && <p className={cn("mt-1 text-[#7f5f48]", isCompact ? "text-sm" : "text-base")}>
-                  一句话就能召唤桌宠开始拆解、整理、起草或提醒。
+                  一句话召唤桌宠，马上开始。
                 </p>}
               </div>
               {!isUltra && <div className="flex flex-wrap items-center gap-2">

@@ -876,6 +876,13 @@ func (s *PetService) AppConfig() *petconfig.AppConfig {
 	return s.configManager.GetApp()
 }
 
+func (s *PetService) WorkspacePath() string {
+	if s == nil {
+		return ""
+	}
+	return s.config.WorkspacePath
+}
+
 // handleMemorySearch 处理记忆搜索请求
 // 支持按关键词、类型、最低权重过滤，按权重排序
 func (s *PetService) handleMemorySearch(sessionID string, req Request) error {
