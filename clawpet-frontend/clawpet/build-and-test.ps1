@@ -2,8 +2,10 @@
 # 功能：编译后端 + 打包 Electron + 自动复制后端二进制
 
 $ErrorActionPreference = "Stop"
-$ProjectRoot = Split-Path -Parent $PSScriptRoot
-$ClawpetDir = Join-Path $ProjectRoot "clawpet-frontend\clawpet"
+# $PSScriptRoot = ...\GoClawPet\clawpet-frontend\clawpet
+# $ProjectRoot   = ...\GoClawPet (repo root, where go.mod and cmd/ live)
+$ProjectRoot = Split-Path -Parent (Split-Path -Parent $PSScriptRoot)
+$ClawpetDir = $PSScriptRoot
 $DistDir = Join-Path $ProjectRoot "dist"
 
 Write-Host "========================================" -ForegroundColor Cyan

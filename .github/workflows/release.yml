@@ -168,7 +168,7 @@ jobs:
 
           BASE="${APP_NAME}_${{ matrix.file_os }}_${{ matrix.file_arch }}"
           BIN="${APP_NAME}"
-          LAUNCHER_BIN="${APP_NAME}-launcher"
+          LAUNCHER_BIN="${APP_NAME}-web"
 
           if [[ "${{ matrix.goos }}" == "windows" ]]; then
             # Create startup script
@@ -208,15 +208,15 @@ jobs:
             # Copy NSIS installer (e.g., ClawPet Setup 0.1.0.exe)
             INSTALLER=$(ls -1 *Setup*.exe 2>/dev/null | head -1)
             if [ -n "$INSTALLER" ]; then
-              cp -f "$INSTALLER" "../../${APP_NAME}_Setup_${{ matrix.file_os }}_${{ matrix.file_arch }}.exe"
-              echo "âœ… NSIS installer: $INSTALLER"
+              REPO_DIST="../../../dist"; mkdir -p "${REPO_DIST}"; cp -f "$INSTALLER" "${REPO_DIST}/${APP_NAME}_Setup_${{ matrix.file_os }}_${{ matrix.file_arch }}.exe"
+              echo "âœ?NSIS installer: $INSTALLER"
             fi
             
             # Copy portable executable (e.g., ClawPet 0.1.0.exe)
             PORTABLE=$(ls -1 "${APP_NAME}"*.exe 2>/dev/null | grep -v Setup | head -1)
             if [ -n "$PORTABLE" ]; then
-              cp -f "$PORTABLE" "../../${APP_NAME}_Portable_${{ matrix.file_os }}_${{ matrix.file_arch }}.exe"
-              echo "âœ… Portable executable: $PORTABLE"
+              cp -f "$PORTABLE" "${REPO_DIST}/${APP_NAME}_Portable_${{ matrix.file_os }}_${{ matrix.file_arch }}.exe"
+              echo "âœ?Portable executable: $PORTABLE"
             fi
             
             # Copy win-unpacked directory for debugging
@@ -228,8 +228,8 @@ jobs:
               
               # Package win-unpacked as zip
               cd clawpet-frontend/clawpet/dist
-              zip -r "../../../${APP_NAME}_win-unpacked_${{ matrix.file_os }}_${{ matrix.file_arch }}.zip" win-unpacked/
-              echo "âœ… Win-unpacked debug package created"
+              zip -r "../../dist/${APP_NAME}_win-unpacked_${{ matrix.file_os }}_${{ matrix.file_arch }}.zip" win-unpacked/
+              echo "âœ?Win-unpacked debug package created"
             fi
           else
             # Linux/macOS package
@@ -250,6 +250,7 @@ jobs:
           path: |
             dist/*.tar.gz
             dist/*.zip
+            dist/*.exe
           if-no-files-found: error
 
   release:
