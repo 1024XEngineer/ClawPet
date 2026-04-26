@@ -361,11 +361,11 @@ function EditModelDialog({ model, onClose, onSaved }: EditModelDialogProps) {
       const ws = getWebSocketInstance()
       await ws.updateModel({
         model_name: model.model_name,
-        api_base: formData.api_base || undefined,
+        api_base: formData.api_base,
         api_key: formData.api_key || undefined,
-        proxy: formData.proxy || undefined,
+        proxy: formData.proxy,
         rpm: formData.rpm || undefined,
-        thinking_level: formData.thinking_level || undefined,
+        thinking_level: formData.thinking_level,
       })
       onSaved()
     } catch (e) {
