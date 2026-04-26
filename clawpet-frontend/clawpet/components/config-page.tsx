@@ -29,7 +29,6 @@ import {
   type CharacterProfileData,
   type Config,
 } from "@/lib/api"
-import { openOnboardingPopup } from "@/lib/onboarding"
 import { cn } from "@/lib/utils"
 import { ModelsPanel } from "./models-panel"
 
@@ -137,7 +136,6 @@ export function ConfigPage() {
     type: "error" | "success"
     message: string
   } | null>(null)
-  const [showModelsPanel, setShowModelsPanel] = useState(false)
 
   useEffect(() => {
     if (!configData?.config || hasChanges) {

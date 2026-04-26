@@ -928,7 +928,6 @@ export function useChat(options: UseChatOptions = {}): UseChatResult {
         resetAudioQueue()
         lastPlayedAudioRef.current = { value: "", at: 0 }
         lastAssistantTextRef.current = ""
-        lastBubbleTextRef.current = { text: "", at: 0 }
         setIsTyping(false)
         setError(null)
         await connectWithBootstrap()
