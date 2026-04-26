@@ -1,7 +1,7 @@
 # Pet Channel API 接口文档
 
-> 版本：v2.8  
-> 日期：2026-04-24  
+> 版本：v2.9  
+> 日期：2026-04-26  
 > 协议：WebSocket + JSON
 
 ---
@@ -11,7 +11,7 @@
 ### 1.1 WebSocket 连接地址
 
 ```
-ws://{host}:{port}/ws?session={sessionId}
+ws://{host}:{port}/ws?session={sessionId}&session_id={sessionId}
 ```
 
 **参数说明**：
@@ -20,14 +20,31 @@ ws://{host}:{port}/ws?session={sessionId}
 |------|------|------|------|
 | host | string | 是 | 服务器地址，默认 `0.0.0.0` |
 | port | int | 是 | 服务器端口，默认 `8080` |
-| sessionId | string | 否 | 会话ID，默认为 `default` |
+| sessionId | string | 是 | 主会话ID，用于流式传输路由 |
 
 **连接示例**：
 ```javascript
-const ws = new WebSocket('ws://localhost:8080/ws?session=user_001');
+const ws = new WebSocket('ws://localhost:8080/ws?session=user_001&session_id=user_001');
 ```
 
-**重要**：连接建立后，服务器会主动推送 `init_status`，告知前端是否需要初始化配置。
+**重要说明**：
+
+- `session` 参数：**主会话ID**，用于流式传输时路由到正确的 WebSocket 连接
+- 服务器根据 `session` 匹配连接，确保响应发送到正确的客户端
+- 连接建立后，服务器会主动推送 `init_status`，告知前端是否需要初始化配置
+
+**session 与 session_key 的区别**：
+
+| 字段 | 来源 | 用途 |
+|------|------|------|
+| `session`（URL 参数） | WebSocket 连接时传入 | 流式传输路由，匹配 WebSocket 连接 |
+| `session_key`（chat 请求中） | 消息中传入 | 会话隔离，picoclaw 据此生成 sessionKey |
+
+**示例**：
+- 用户A 连接：`session=user_001`
+- 用户B 连接：`session=user_002`
+- 用户A 发送消息：`session_key=session-xxx` → 流式响应发送到 `session=user_001` 的连接
+- 用户B 发送消息：`session_key=session-yyy` → 流式响应发送到 `session=user_002` 的连接
 
 ---
 
@@ -460,8 +477,6 @@ if (msg.push_type === 'text_and_audio') {
 
 ### 4.2 chat - 发送聊天消息
 
-### 4.1 chat - 发送聊天消息
-
 发送用户消息给 AI，获得 AI 回复（流式推送）。
 
 **请求**：
@@ -471,7 +486,7 @@ if (msg.push_type === 'text_and_audio') {
   "action": "chat",
   "data": {
     "text": "今天心情不错",
-    "session_key": "pet:default:user_001"
+    "session_key": "session-1712345678-abc123"
   },
   "request_id": "req_001"
 }
@@ -484,12 +499,32 @@ if (msg.push_type === 'text_and_audio') {
   "status": "ok",
   "action": "chat",
   "data": {
-    "session_key": "pet:default:user_001"
+    "session_key": "session-1712345678-abc123"
   }
 }
 ```
 
 **推送**：AI 回复通过 `ai_chat` 推送，详见 3.2
+
+**session_key 字段说明**：
+
+| 字段 | 类型 | 必填 | 说明 |
+|------|------|------|------|
+| text | string | 是 | 用户输入的文本内容 |
+| session_key | string | 是 | 会话标识符，用于会话隔离。picoclaw 会据此生成内部 sessionKey，格式为 `agent:main:pet:{character_id}:{session_key}` |
+
+**session_key 与流式传输的关系**：
+
+- `session_key` 用于会话隔离，不影响流式传输路由
+- 流式传输使用 WebSocket 连接时的 `session`（URL 参数）来路由响应
+- 每个 WebSocket 连接对应一个 `session`，但可以有多个 `session_key`（不同会话）
+
+**示例**：
+```
+WebSocket 连接: session=user_001
+发送消息: session_key=session-xxx → 响应路由到 session=user_001 的连接
+切换会话: session_key=session-yyy → 仍然是 session=user_001 的连接收到响应
+```
 
 **字段说明**：
 
@@ -1153,6 +1188,7 @@ if (msg.push_type === 'text_and_audio') {
   "action": "conversation_list",
   "data": {
     "character_id": "pet_001",
+    "session_id": "session-1712345678-abc123",
     "limit": 50,
     "offset": 0
   }
@@ -1169,6 +1205,7 @@ if (msg.push_type === 'text_and_audio') {
     "conversations": [
       {
         "id": 1,
+        "session_id": "session-1712345678-abc123",
         "role": "user",
         "content": "你好呀",
         "timestamp": "2024-01-15T10:30:00Z",
@@ -1176,7 +1213,8 @@ if (msg.push_type === 'text_and_audio') {
       },
       {
         "id": 2,
-        "role": "pet",
+        "session_id": "session-1712345678-abc123",
+        "role": "assistant",
         "content": "你好！今天心情怎么样？",
         "timestamp": "2024-01-15T10:30:05Z",
         "compressed": false
@@ -1193,6 +1231,7 @@ if (msg.push_type === 'text_and_audio') {
 | 字段 | 类型 | 必填 | 说明 |
 |------|------|------|------|
 | character_id | string | 是 | 角色ID |
+| session_id | string | 否 | 会话ID，不传则获取该角色的所有会话 |
 | limit | int | 否 | 返回条数限制，默认 50 |
 | offset | int | 否 | 翻页偏移，默认 0 |
 

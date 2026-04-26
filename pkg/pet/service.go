@@ -512,9 +512,19 @@ func (s *PetService) handleChat(sessionID string, req Request) error {
 		return s.sendError(sessionID, req.Action, "invalid chat data")
 	}
 
+	char := s.charManager.GetCurrent()
+	if char == nil {
+		return s.sendError(sessionID, req.Action, "no active character")
+	}
+
 	inbound := bus.InboundMessage{
-		Channel:  "pet",
-		ChatID:   sessionID,
+		Channel:    "pet",
+		ChatID:     sessionID,
+		SessionKey: chatReq.SessionKey,
+		Peer: bus.Peer{
+			Kind: char.ID,
+			ID:   chatReq.SessionKey,
+		},
 		Content:  chatReq.Text,
 		Metadata: map[string]string{"type": "chat", "conn_id": req.RequestID},
 	}
@@ -991,14 +1001,14 @@ func (s *PetService) handleConversationList(sessionID string, req Request) error
 	}
 
 	// 获取所有对话用于统计总数
-	allConversations, err := s.conversationStore.GetAll(listReq.CharacterID, 10000)
+	allConversations, err := s.conversationStore.GetAll(listReq.CharacterID, listReq.SessionID, 10000)
 	if err != nil {
 		return s.sendError(sessionID, req.Action, fmt.Sprintf("failed to get conversations: %v", err))
 	}
 	total := len(allConversations)
 
 	// 分页获取
-	pageConversations, err := s.conversationStore.GetAll(listReq.CharacterID, limit+offset)
+	pageConversations, err := s.conversationStore.GetAll(listReq.CharacterID, listReq.SessionID, limit+offset)
 	if err != nil {
 		return s.sendError(sessionID, req.Action, fmt.Sprintf("failed to get conversations: %v", err))
 	}
@@ -1018,6 +1028,7 @@ func (s *PetService) handleConversationList(sessionID string, req Request) error
 	for _, c := range pageConversations {
 		conversationItems = append(conversationItems, ConversationItem{
 			ID:         c.ID,
+			SessionID:  c.SessionID,
 			Role:       c.Role,
 			Content:    c.Content,
 			Timestamp:  c.Timestamp.Format("2006-01-02T15:04:05Z"),

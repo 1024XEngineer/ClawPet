@@ -20,6 +20,7 @@ type ConversationStore struct {
 	threshold int                 // 触发压缩的消息数阈值
 	callback  OnThresholdCallback // 达到阈值时的回调
 	mu        sync.RWMutex        // 读写锁
+	migrated  bool                // 是否已完成数据库迁移
 }
 
 // NewConversationStore 创建对话存储实例
@@ -65,6 +66,7 @@ func NewConversationStore(workspacePath string, threshold int, callback OnThresh
 // conversations 表字段说明：
 //   - id: 自增主键
 //   - character_id: 角色ID
+//   - session_id: 会话ID
 //   - role: 对话角色 (user/pet)
 //   - content: 对话内容
 //   - compressed: 是否已压缩 (0/1)
@@ -75,6 +77,7 @@ func (s *ConversationStore) initSchema() error {
 	CREATE TABLE IF NOT EXISTS conversations (
 		id INTEGER PRIMARY KEY AUTOINCREMENT,
 		character_id TEXT NOT NULL,
+		session_id TEXT NOT NULL DEFAULT '',
 		role TEXT NOT NULL,
 		content TEXT NOT NULL,
 		compressed INTEGER DEFAULT 0,
@@ -83,39 +86,74 @@ func (s *ConversationStore) initSchema() error {
 	);
 	CREATE INDEX IF NOT EXISTS idx_character_conversations ON conversations(character_id);
 	CREATE INDEX IF NOT EXISTS idx_compressed ON conversations(character_id, compressed);
+	CREATE INDEX IF NOT EXISTS idx_character_session ON conversations(character_id, session_id);
 	`
-	_, err := s.db.Exec(schema)
-	return err
+	if _, err := s.db.Exec(schema); err != nil {
+		return err
+	}
+
+	return nil
+}
+
+// migrateAddSessionIDIfNeeded 添加 session_id 列到已存在的表（如果需要）
+// 应该在持有锁的情况下调用
+func (s *ConversationStore) migrateAddSessionIDIfNeeded() error {
+	// 检查 session_id 列是否存在
+	var count int
+	err := s.db.QueryRow("SELECT COUNT(*) FROM pragma_table_info('conversations') WHERE name='session_id'").Scan(&count)
+	if err != nil {
+		return fmt.Errorf("failed to check session_id column: %w", err)
+	}
+
+	// 如果列不存在，添加它
+	if count == 0 {
+		logger.Info("compression: migrating database to add session_id column")
+		if _, err := s.db.Exec("ALTER TABLE conversations ADD COLUMN session_id TEXT NOT NULL DEFAULT ''"); err != nil {
+			return fmt.Errorf("failed to add session_id column: %w", err)
+		}
+		logger.Info("compression: session_id column added successfully")
+	}
+
+	return nil
 }
 
 // Add 添加新对话
 // characterID: 角色ID
+// sessionID: 会话ID
 // role: 对话角色 (user/pet)
 // content: 对话内容
 // 添加成功后异步检查是否达到压缩阈值
-func (s *ConversationStore) Add(characterID, role, content string) error {
+func (s *ConversationStore) Add(characterID, sessionID, role, content string) error {
+	// 首次写入前检查并迁移数据库结构（在锁外执行，只执行一次）
+	if !s.migrated {
+		if err := s.migrateAddSessionIDIfNeeded(); err != nil {
+			logger.Warnf("compression: failed to migrate session_id column: %v", err)
+		}
+		s.migrated = true
+	}
+
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
 	now := time.Now().Unix()
 	_, err := s.db.Exec(
-		"INSERT INTO conversations (character_id, role, content, created_at) VALUES (?, ?, ?, ?)",
-		characterID, role, content, now,
+		"INSERT INTO conversations (character_id, session_id, role, content, created_at) VALUES (?, ?, ?, ?, ?)",
+		characterID, sessionID, role, content, now,
 	)
 	if err != nil {
 		return fmt.Errorf("failed to insert conversation: %w", err)
 	}
 
 	// 异步检查是否达到压缩阈值
-	go s.checkThreshold(characterID)
+	go s.checkThreshold(characterID, sessionID)
 	return nil
 }
 
 // checkThreshold 检查是否达到压缩阈值
 // 如果未压缩对话数达到阈值，触发回调
-func (s *ConversationStore) checkThreshold(characterID string) {
+func (s *ConversationStore) checkThreshold(characterID, sessionID string) {
 	s.mu.RLock()
-	count, err := s.getUncompressedCountLocked(characterID)
+	count, err := s.getUncompressedCountLocked(characterID, sessionID)
 	s.mu.RUnlock()
 	if err != nil {
 		logger.Warnf("compression: failed to get uncompressed count: %v", err)
@@ -124,7 +162,7 @@ func (s *ConversationStore) checkThreshold(characterID string) {
 
 	// 达到阈值时触发回调
 	if s.callback != nil && count >= s.threshold {
-		entries, err := s.GetUncompressed(characterID)
+		entries, err := s.GetUncompressed(characterID, sessionID)
 		if err != nil {
 			logger.Warnf("compression: failed to get uncompressed entries: %v", err)
 			return
@@ -135,26 +173,44 @@ func (s *ConversationStore) checkThreshold(characterID string) {
 
 // getUncompressedCountLocked 获取未压缩对话数量（内部锁定版本）
 // caller must hold at least a read lock
-func (s *ConversationStore) getUncompressedCountLocked(characterID string) (int, error) {
+func (s *ConversationStore) getUncompressedCountLocked(characterID, sessionID string) (int, error) {
 	var count int
-	err := s.db.QueryRow(
-		"SELECT COUNT(*) FROM conversations WHERE character_id = ? AND compressed = 0 AND deleted_at IS NULL",
-		characterID,
-	).Scan(&count)
+	var err error
+	if sessionID == "" {
+		err = s.db.QueryRow(
+			"SELECT COUNT(*) FROM conversations WHERE character_id = ? AND compressed = 0 AND deleted_at IS NULL",
+			characterID,
+		).Scan(&count)
+	} else {
+		err = s.db.QueryRow(
+			"SELECT COUNT(*) FROM conversations WHERE character_id = ? AND session_id = ? AND compressed = 0 AND deleted_at IS NULL",
+			characterID, sessionID,
+		).Scan(&count)
+	}
 	return count, err
 }
 
 // GetUncompressed 获取未压缩的对话列表
 // characterID: 角色ID
+// sessionID: 会话ID（可选，为空则获取该角色的所有会话）
 // 返回按时间正序排列的未压缩对话
-func (s *ConversationStore) GetUncompressed(characterID string) ([]*ConversationEntry, error) {
+func (s *ConversationStore) GetUncompressed(characterID, sessionID string) ([]*ConversationEntry, error) {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 
-	rows, err := s.db.Query(
-		"SELECT id, role, content, created_at FROM conversations WHERE character_id = ? AND compressed = 0 AND deleted_at IS NULL ORDER BY created_at ASC",
-		characterID,
-	)
+	var rows *sql.Rows
+	var err error
+	if sessionID == "" {
+		rows, err = s.db.Query(
+			"SELECT id, role, content, created_at FROM conversations WHERE character_id = ? AND compressed = 0 AND deleted_at IS NULL ORDER BY created_at ASC",
+			characterID,
+		)
+	} else {
+		rows, err = s.db.Query(
+			"SELECT id, role, content, created_at FROM conversations WHERE character_id = ? AND session_id = ? AND compressed = 0 AND deleted_at IS NULL ORDER BY created_at ASC",
+			characterID, sessionID,
+		)
+	}
 	if err != nil {
 		return nil, err
 	}
@@ -175,16 +231,26 @@ func (s *ConversationStore) GetUncompressed(characterID string) ([]*Conversation
 
 // GetAll 获取所有对话（包括已压缩的）
 // characterID: 角色ID
+// sessionID: 会话ID（可选，为空则获取该角色的所有会话）
 // limit: 返回条数限制
 // 返回按时间倒序排列的对话
-func (s *ConversationStore) GetAll(characterID string, limit int) ([]*ConversationEntry, error) {
+func (s *ConversationStore) GetAll(characterID, sessionID string, limit int) ([]*ConversationEntry, error) {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 
-	rows, err := s.db.Query(
-		"SELECT id, role, content, created_at FROM conversations WHERE character_id = ? AND deleted_at IS NULL ORDER BY created_at DESC LIMIT ?",
-		characterID, limit,
-	)
+	var rows *sql.Rows
+	var err error
+	if sessionID == "" {
+		rows, err = s.db.Query(
+			"SELECT id, role, content, created_at FROM conversations WHERE character_id = ? AND deleted_at IS NULL ORDER BY created_at DESC LIMIT ?",
+			characterID, limit,
+		)
+	} else {
+		rows, err = s.db.Query(
+			"SELECT id, role, content, created_at FROM conversations WHERE character_id = ? AND session_id = ? AND deleted_at IS NULL ORDER BY created_at DESC LIMIT ?",
+			characterID, sessionID, limit,
+		)
+	}
 	if err != nil {
 		return nil, err
 	}
@@ -254,10 +320,11 @@ func (s *ConversationStore) SetCallback(callback OnThresholdCallback) {
 
 // Count 获取未压缩对话数量
 // characterID: 角色ID
-func (s *ConversationStore) Count(characterID string) (int, error) {
+// sessionID: 会话ID（可选，为空则获取该角色的所有会话数量）
+func (s *ConversationStore) Count(characterID, sessionID string) (int, error) {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
-	return s.getUncompressedCountLocked(characterID)
+	return s.getUncompressedCountLocked(characterID, sessionID)
 }
 
 // Threshold 获取当前阈值

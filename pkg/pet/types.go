@@ -220,15 +220,17 @@ type MemorySearchResponse struct {
 
 // ConversationListRequest 对话列表请求
 type ConversationListRequest struct {
-	CharacterID string `json:"character_id"`     // 角色ID，必填
-	Limit       int    `json:"limit,omitempty"`  // 返回条数限制
-	Offset      int    `json:"offset,omitempty"` // 翻页偏移
+	CharacterID string `json:"character_id"`         // 角色ID，必填
+	SessionID   string `json:"session_id,omitempty"` // 会话ID，可选
+	Limit       int    `json:"limit,omitempty"`      // 返回条数限制
+	Offset      int    `json:"offset,omitempty"`     // 翻页偏移
 }
 
 // ConversationItem 对话条目（用于响应）
 type ConversationItem struct {
 	ID         int64  `json:"id"`         // 对话ID
-	Role       string `json:"role"`       // 角色：user/pet
+	SessionID  string `json:"session_id"` // 会话ID
+	Role       string `json:"role"`       // 角色：user/assistant
 	Content    string `json:"content"`    // 对话内容
 	Timestamp  string `json:"timestamp"`  // 对话时间
 	Compressed bool   `json:"compressed"` // 是否已压缩

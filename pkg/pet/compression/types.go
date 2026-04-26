@@ -6,7 +6,8 @@ import "time"
 // 存储单条对话记录，用于后续压缩生成记忆
 type ConversationEntry struct {
 	ID        int64     // 对话唯一ID，对应数据库主键
-	Role      string    // 角色：user(用户) / pet(宠物)
+	SessionID string    // 会话ID
+	Role      string    // 角色：user(用户) / assistant(宠物)
 	Content   string    // 对话内容
 	Timestamp time.Time // 对话时间
 }

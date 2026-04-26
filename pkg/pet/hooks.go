@@ -372,17 +372,25 @@ func (h *PetHook) AfterLLM(ctx context.Context, resp *agent.LLMHookResponse) (*a
 		}
 	}
 
+	sessionKey := resp.Meta.SessionKey // "agent:main:pet:pet_003:test-1"
+	// 解析出 session_key
+	parts := strings.Split(sessionKey, ":")
+	if len(parts) < 2 {
+		logger.WarnCF("pet", "PetHook: 无效的会话键格式", nil)
+		return resp, agent.HookDecision{Action: agent.HookActionContinue}, nil
+	}
+	sessionID := parts[len(parts)-1] // "test-1"
 	// 7. 记录对话到会话存储（用于后续压缩）
-	if h.conversationStore != nil {
+	if h.conversationStore != nil && sessionID != "" {
 		char := h.charManager.GetCurrent()
 		if char != nil {
 			if h.lastUserMessage != "" {
-				if err := h.conversationStore.Add(char.ID, "user", h.lastUserMessage); err != nil {
+				if err := h.conversationStore.Add(char.ID, sessionID, "user", h.lastUserMessage); err != nil {
 					logger.Warnf("pet: failed to add user message to conversation store: %v", err)
 				}
 			}
 			if parseText != "" {
-				if err := h.conversationStore.Add(char.ID, "pet", parseText); err != nil {
+				if err := h.conversationStore.Add(char.ID, sessionID, "assistant", parseText); err != nil {
 					logger.Warnf("pet: failed to add pet message to conversation store: %v", err)
 				}
 			}
