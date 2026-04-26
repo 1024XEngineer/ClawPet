@@ -114,7 +114,7 @@ jobs:
           mkdir -p dist
 
           BIN="${APP_NAME}"
-          LAUNCHER_BIN="${APP_NAME}-launcher"
+          LAUNCHER_BIN="${APP_NAME}-web"
           if [[ "${{ matrix.goos }}" == "windows" ]]; then
             BIN="${BIN}.exe"
             LAUNCHER_BIN="${LAUNCHER_BIN}.exe"
@@ -143,16 +143,6 @@ jobs:
                 -ldflags "-s -w" \
                 -o "dist/${LAUNCHER_BIN}" \
                 "${LAUNCHER_ENTRY}"
-          fi
-
-          if [[ "${{ matrix.goos }}" == "windows" ]]; then
-            GOOS=${{ matrix.goos }} GOARCH=${{ matrix.goarch }} GOARM="${GOARM}" CGO_ENABLED=0 \
-              go build \
-                -trimpath \
-                -tags "${BUILD_TAGS}" \
-                -ldflags "-s -w -X github.com/sipeed/picoclaw/pkg/config.Version=${VERSION} -X github.com/sipeed/picoclaw/pkg/config.GitCommit=${SHORT_SHA} -X github.com/sipeed/picoclaw/pkg/config.BuildTime=${BUILD_TIME}" \
-                -o "dist/${APP_NAME}-launcher.exe" \
-                ./web/backend
           fi
 
       - name: Build ClawPet Electron App (Windows)
@@ -201,13 +191,13 @@ jobs:
               > "${BIN}-gateway.bat"
 
             # Standard package
-            zip "${BASE}.zip" "${BIN}.exe" "${LAUNCHER_BIN}.exe" "${BIN}-gateway.bat"
+            zip "${BASE}.zip" "${BIN}.exe" "${LAUNCHER_BIN}" "${BIN}-gateway.bat"
 
-            # Copy Go binaries to Electron extraResources
+            # Copy Go binaries to Electron project
             cp -f "${BIN}.exe" ../clawpet-frontend/clawpet/picoclaw.exe
-            cp -f "${LAUNCHER_BIN}.exe" ../clawpet-frontend/clawpet/picoclaw-web.exe
+            cp -f "${LAUNCHER_BIN}" ../clawpet-frontend/clawpet/picoclaw-web.exe
             
-            # Build Electron installer with electron-builder
+            # Build Electron app with electron-builder
             cd ../clawpet-frontend/clawpet
             npx electron-builder --win --publish never
             
@@ -215,18 +205,31 @@ jobs:
             cd dist
             ls -la
             
-            # Copy NSIS installer
-            INSTALLER=$(ls -1 *Setup*.exe | head -1)
+            # Copy NSIS installer (e.g., ClawPet Setup 0.1.0.exe)
+            INSTALLER=$(ls -1 *Setup*.exe 2>/dev/null | head -1)
             if [ -n "$INSTALLER" ]; then
               cp -f "$INSTALLER" "../../${APP_NAME}_Setup_${{ matrix.file_os }}_${{ matrix.file_arch }}.exe"
               echo "✅ NSIS installer: $INSTALLER"
             fi
             
-            # Copy portable executable
-            PORTABLE=$(ls -1 *Portable*.exe | head -1)
+            # Copy portable executable (e.g., ClawPet 0.1.0.exe)
+            PORTABLE=$(ls -1 "${APP_NAME}"*.exe 2>/dev/null | grep -v Setup | head -1)
             if [ -n "$PORTABLE" ]; then
               cp -f "$PORTABLE" "../../${APP_NAME}_Portable_${{ matrix.file_os }}_${{ matrix.file_arch }}.exe"
               echo "✅ Portable executable: $PORTABLE"
+            fi
+            
+            # Copy win-unpacked directory for debugging
+            cd ../..
+            if [ -d "clawpet-frontend/clawpet/dist/win-unpacked" ]; then
+              # Ensure backend binaries are in win-unpacked
+              cp -f "dist/${BIN}.exe" clawpet-frontend/clawpet/dist/win-unpacked/
+              cp -f "dist/${LAUNCHER_BIN}" clawpet-frontend/clawpet/dist/win-unpacked/
+              
+              # Package win-unpacked as zip
+              cd clawpet-frontend/clawpet/dist
+              zip -r "../../../${APP_NAME}_win-unpacked_${{ matrix.file_os }}_${{ matrix.file_arch }}.zip" win-unpacked/
+              echo "✅ Win-unpacked debug package created"
             fi
           else
             # Linux/macOS package
