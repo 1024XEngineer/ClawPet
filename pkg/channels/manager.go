@@ -179,11 +179,6 @@ func (m *Manager) preSend(ctx context.Context, name string, msg bus.OutboundMess
 
 	// 3. If a stream already finalized this message, delete the placeholder and skip send
 	if _, loaded := m.streamActive.LoadAndDelete(key); loaded {
-		logger.DebugCF("channels", "preSend: stream already finalized, skipping normal send", map[string]any{
-			"channel":     name,
-			"chat_id":     msg.ChatID,
-			"content_len": len(msg.Content),
-		})
 		if v, loaded := m.placeholders.LoadAndDelete(key); loaded {
 			if entry, ok := v.(placeholderEntry); ok && entry.id != "" {
 				// Prefer deleting the placeholder (cleaner UX than editing to same content)
@@ -790,12 +785,6 @@ func (m *Manager) sendWithRetry(
 	for attempt := 0; attempt <= maxRetries; attempt++ {
 		msgIDs, lastErr = w.ch.Send(ctx, msg)
 		if lastErr == nil {
-			logger.DebugCF("channels", "sendWithRetry: message delivered", map[string]any{
-				"channel":     name,
-				"chat_id":     msg.ChatID,
-				"content_len": len(msg.Content),
-				"attempt":     attempt,
-			})
 			return msgIDs, true
 		}
 
