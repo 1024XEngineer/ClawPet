@@ -8,6 +8,7 @@ import {
 
 interface ModelsPanelProps {
   onClose: () => void
+  onDefaultModelChange?: (modelName: string) => void
 }
 
 export function ModelsPanel({ onClose }: ModelsPanelProps) {
@@ -47,6 +48,7 @@ export function ModelsPanel({ onClose }: ModelsPanelProps) {
       const ws = getWebSocketInstance()
       await ws.setDefaultModel(model.model_name)
       await fetchModels()
+      onDefaultModelChange?.(model.model_name)
     } catch (e) {
       setError(e instanceof Error ? e.message : "Failed to set default model")
     }

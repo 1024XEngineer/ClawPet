@@ -138,7 +138,6 @@ export function ConfigPage() {
     type: "error" | "success"
     message: string
   } | null>(null)
-  const [showModelsPanel, setShowModelsPanel] = useState(false)
 
   useEffect(() => {
     if (!configData?.config || hasChanges) {
@@ -306,6 +305,11 @@ export function ConfigPage() {
     } finally {
       setPersonalitySaving(false)
     }
+  }
+
+  const handleDefaultModelChange = (modelName: string) => {
+    setFormData((prev) => ({ ...prev, defaultModel: modelName }))
+    setHasChanges(true)
   }
 
   async function handleSave() {
@@ -960,7 +964,7 @@ export function ConfigPage() {
       </div>
 
       {showModelsPanel && (
-        <ModelsPanel onClose={() => setShowModelsPanel(false)} />
+        <ModelsPanel onClose={() => setShowModelsPanel(false)} onDefaultModelChange={handleDefaultModelChange} />
       )}
     </section>
   )

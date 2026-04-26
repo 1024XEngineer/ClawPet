@@ -15,6 +15,8 @@ import {
 
 const SESSIONS_STORAGE_KEY = "petclaw_sessions"
 const ACTIVE_SESSION_KEY = "petclaw_active_session"
+const PPT_SKILL_NAME = "student-ppt-pet"
+const PPT_TRIGGER_RE = /(\bppt\b|PPT|幻灯片|答辩|汇报|开题|课件)/i
 
 export interface UseChatOptions {
   onMessage?: (message: ChatMessage) => void
@@ -184,7 +186,14 @@ function mergeMessage(
 }
 
 function buildOutgoingMessage(raw: string): string {
-  return raw.trim()
+  const text = raw.trim()
+  if (text.startsWith("/")) {
+    return text
+  }
+  if (!PPT_TRIGGER_RE.test(text)) {
+    return text
+  }
+  return `/use ${PPT_SKILL_NAME} ${text}`
 }
 
 function decodeBase64Chunk(value: string): Uint8Array | null {
