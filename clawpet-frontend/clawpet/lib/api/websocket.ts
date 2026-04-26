@@ -1007,6 +1007,26 @@ export class PicoClawWebSocket {
   }): Promise<PetResponse & { data?: VoiceModelVoicesData }> {
     return this.requestAction<VoiceModelVoicesData>("voice_model_get_voices", data)
   }
+
+  async getModelList(): Promise<PetResponse & { data?: ModelListData }> {
+    return this.requestAction<ModelListData>("model_list_get")
+  }
+
+  async addModel(data: AddModelRequest): Promise<PetResponse> {
+    return this.requestAction("model_add", data)
+  }
+
+  async updateModel(data: UpdateModelRequest): Promise<PetResponse> {
+    return this.requestAction("model_update", data)
+  }
+
+  async deleteModel(modelName: string): Promise<PetResponse> {
+    return this.requestAction("model_delete", { model_name: modelName })
+  }
+
+  async setDefaultModel(modelName: string): Promise<PetResponse> {
+    return this.requestAction("model_set_default", { model_name: modelName })
+  }
 }
 
 export interface VoiceModelData {
@@ -1039,6 +1059,64 @@ export interface VoiceModelVoice {
   Description: string
   Language: string
   Emotion: string
+}
+
+export interface ModelInfo {
+  index: number
+  model_name: string
+  model: string
+  api_base?: string
+  api_key: string
+  proxy?: string
+  auth_method?: string
+  connect_mode?: string
+  workspace?: string
+  rpm?: number
+  max_tokens_field?: string
+  request_timeout?: number
+  thinking_level?: string
+  extra_body?: Record<string, unknown>
+  enabled: boolean
+  is_default: boolean
+  is_virtual: boolean
+}
+
+export interface ModelListData {
+  models: ModelInfo[]
+  total: number
+  default_model: string
+}
+
+export interface AddModelRequest {
+  model_name: string
+  model: string
+  api_key?: string
+  api_base?: string
+  proxy?: string
+  auth_method?: string
+  connect_mode?: string
+  workspace?: string
+  rpm?: number
+  max_tokens_field?: string
+  request_timeout?: number
+  thinking_level?: string
+  extra_body?: Record<string, unknown>
+}
+
+export interface UpdateModelRequest {
+  model_name: string
+  new_model?: string
+  api_key?: string
+  api_base?: string
+  proxy?: string
+  auth_method?: string
+  connect_mode?: string
+  workspace?: string
+  rpm?: number
+  max_tokens_field?: string
+  request_timeout?: number
+  thinking_level?: string
+  extra_body?: Record<string, unknown>
 }
 
 let wsInstance: PicoClawWebSocket | null = null
