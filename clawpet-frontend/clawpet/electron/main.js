@@ -18,6 +18,7 @@ const { app, BrowserWindow, ipcMain, screen } = require('electron');
 const path = require('path');
 const os = require('os');
 const fs = require('fs');
+const { spawn } = require('child_process');
 
 // 全局窗口引用
 let petWindow = null;              // 桌宠窗口
@@ -33,6 +34,10 @@ let petHovering = false;
 let onboardingLocked = false;
 let lastBubbleFingerprint = '';
 let lastBubbleAt = 0;
+
+// 后端进程引用
+let gatewayProcess = null;         // Gateway 进程
+let launcherProcess = null;        // Launcher 进程
 
 // 桌宠窗口尺寸（宽度280px，高度380px）
 const PET_WIDTH = 280;
@@ -167,7 +172,7 @@ const dashboardBaseUrl = (process.env.GOCLAW_DASHBOARD_URL || 'http://127.0.0.1:
 const launcherToken = (process.env.GOCLAW_LAUNCHER_TOKEN || process.env.PICOCLAW_LAUNCHER_TOKEN || '').trim();
 const configuredRendererPath = (process.env.GOCLAW_PET_RENDERER_PATH || '/desktop-pet').trim();
 const shouldOpenDevTools = process.env.ELECTRON_OPEN_DEVTOOLS === '1';  // 是否打开开发者工具
-const startupMode = process.env.GOCLAW_SHOW_STARTUP === '1';  // 是否显示启动进度窗口
+const startupMode = process.env.GOCLAW_SHOW_STARTUP !== '0';  // 默认显示启动进度窗口（除非明确设置为0）
 const openPanelOnReady = process.env.GOCLAW_OPEN_PANEL_ON_READY !== '0';  // 就绪后是否打开面板
 let needsFirstTimeOnboarding = false;  // 是否需要首次引导
 
@@ -1097,7 +1102,10 @@ ipcMain.handle('startup-state', async () => startupState);
  * 应用就绪后的初始化
  * 根据配置决定显示启动窗口还是直接创建桌宠窗口
  */
-app.whenReady().then(() => {
+app.whenReady().then(async () => {
+  // 自动启动后端服务
+  await startBackendServices();
+  
   if (startupMode) {
     logToFile('[STARTUP] startup progress page enabled');
     startStartupFlow();
@@ -1131,4 +1139,201 @@ app.on('before-quit', () => {
     startupPollTimer = null;
   }
   clearPetRendererRetryTimer();
+  
+  // 停止后端服务
+  stopBackendServices();
 });
+
+/**
+ * 启动后端服务（Gateway + Launcher）
+ */
+async function startBackendServices() {
+  const exeDir = path.dirname(process.execPath);
+  
+  // 检查是否内嵌了后端二进制
+  const gatewayExe = path.join(exeDir, 'picoclaw.exe');
+  const launcherExe = path.join(exeDir, 'picoclaw-web.exe');
+  
+  const hasGateway = fs.existsSync(gatewayExe);
+  const hasLauncher = fs.existsSync(launcherExe);
+  
+  if (!hasGateway && !hasLauncher) {
+    logToFile('[BACKEND] No embedded backend binaries found, assuming external services');
+    return;
+  }
+  
+  logToFile('[BACKEND] Starting embedded backend services...');
+  
+  // 启动 Launcher (18800)
+  if (hasLauncher) {
+    try {
+      await startLauncher(launcherExe, exeDir);
+    } catch (error) {
+      logToFile(`[BACKEND] Failed to start launcher: ${error.message}`);
+    }
+  }
+  
+  // 启动 Gateway (18790)
+  if (hasGateway) {
+    try {
+      await startGateway(gatewayExe, exeDir);
+    } catch (error) {
+      logToFile(`[BACKEND] Failed to start gateway: ${error.message}`);
+    }
+  }
+  
+  logToFile('[BACKEND] Backend services startup initiated');
+}
+
+/**
+ * 启动 Launcher 服务
+ */
+function startLauncher(exePath, workDir) {
+  return new Promise((resolve, reject) => {
+    const configDir = path.join(os.homedir(), '.goclaw-runtime');
+    if (!fs.existsSync(configDir)) {
+      fs.mkdirSync(configDir, { recursive: true });
+    }
+    
+    const configPath = path.join(configDir, 'config.json');
+    
+    launcherProcess = spawn(exePath, [
+      '-port', '18800',
+      '-no-browser',
+      configPath
+    ], {
+      cwd: workDir,
+      detached: true,
+      stdio: ['ignore', 'pipe', 'pipe'],
+      env: {
+        ...process.env,
+        PICOCLAW_LAUNCHER_TOKEN: 'goclaw-local-token',
+        PICOCLAW_HOME: configDir,
+        PICOCLAW_CONFIG: configPath
+      }
+    });
+    
+    launcherProcess.stdout.on('data', (data) => {
+      logToFile(`[LAUNCHER] ${data.toString().trim()}`);
+    });
+    
+    launcherProcess.stderr.on('data', (data) => {
+      logToFile(`[LAUNCHER ERROR] ${data.toString().trim()}`);
+    });
+    
+    launcherProcess.on('error', (error) => {
+      logToFile(`[LAUNCHER] Process error: ${error.message}`);
+      reject(error);
+    });
+    
+    launcherProcess.on('exit', (code) => {
+      logToFile(`[LAUNCHER] Process exited with code ${code}`);
+      launcherProcess = null;
+    });
+    
+    // 等待 Launcher 启动
+    const checkLauncher = async () => {
+      for (let i = 0; i < 30; i++) {
+        await new Promise(r => setTimeout(r, 500));
+        try {
+          const ready = await isHttpReady('http://127.0.0.1:18800/api/auth/status');
+          if (ready) {
+            logToFile('[LAUNCHER] Service ready');
+            resolve();
+            return;
+          }
+        } catch {}
+      }
+      reject(new Error('Launcher startup timeout'));
+    };
+    
+    checkLauncher();
+  });
+}
+
+/**
+ * 启动 Gateway 服务
+ */
+function startGateway(exePath, workDir) {
+  return new Promise((resolve, reject) => {
+    const configDir = path.join(os.homedir(), '.goclaw-runtime');
+    const configPath = path.join(configDir, 'config.json');
+    
+    gatewayProcess = spawn(exePath, [
+      'gateway',
+      '-E'
+    ], {
+      cwd: workDir,
+      detached: true,
+      stdio: ['ignore', 'pipe', 'pipe'],
+      env: {
+        ...process.env,
+        PICOCLAW_HOME: configDir,
+        PICOCLAW_CONFIG: configPath
+      }
+    });
+    
+    gatewayProcess.stdout.on('data', (data) => {
+      logToFile(`[GATEWAY] ${data.toString().trim()}`);
+    });
+    
+    gatewayProcess.stderr.on('data', (data) => {
+      logToFile(`[GATEWAY ERROR] ${data.toString().trim()}`);
+    });
+    
+    gatewayProcess.on('error', (error) => {
+      logToFile(`[GATEWAY] Process error: ${error.message}`);
+      reject(error);
+    });
+    
+    gatewayProcess.on('exit', (code) => {
+      logToFile(`[GATEWAY] Process exited with code ${code}`);
+      gatewayProcess = null;
+    });
+    
+    // 等待 Gateway 启动
+    const checkGateway = async () => {
+      for (let i = 0; i < 30; i++) {
+        await new Promise(r => setTimeout(r, 500));
+        try {
+          const ready = await isHttpReady('http://127.0.0.1:18790/health');
+          if (ready) {
+            logToFile('[GATEWAY] Service ready');
+            resolve();
+            return;
+          }
+        } catch {}
+      }
+      reject(new Error('Gateway startup timeout'));
+    };
+    
+    checkGateway();
+  });
+}
+
+/**
+ * 停止后端服务
+ */
+function stopBackendServices() {
+  logToFile('[BACKEND] Stopping backend services...');
+  
+  if (launcherProcess) {
+    try {
+      launcherProcess.kill();
+      logToFile('[LAUNCHER] Process killed');
+    } catch (error) {
+      logToFile(`[LAUNCHER] Kill failed: ${error.message}`);
+    }
+    launcherProcess = null;
+  }
+  
+  if (gatewayProcess) {
+    try {
+      gatewayProcess.kill();
+      logToFile('[GATEWAY] Process killed');
+    } catch (error) {
+      logToFile(`[GATEWAY] Kill failed: ${error.message}`);
+    }
+    gatewayProcess = null;
+  }
+}

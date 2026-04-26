@@ -155,14 +155,20 @@ jobs:
                 ./web/backend
           fi
 
-      - name: Build ClawPet Frontend (Windows)
+      - name: Build ClawPet Electron App (Windows)
         if: matrix.goos == 'windows'
         shell: bash
         run: |
           set -euo pipefail
           cd clawpet-frontend/clawpet
+          
+          # Install dependencies
           pnpm install --no-frozen-lockfile
+          
+          # Build Next.js
           pnpm build
+          
+          echo "Frontend build complete"
 
       - name: Package
         shell: bash
@@ -197,81 +203,31 @@ jobs:
             # Standard package
             zip "${BASE}.zip" "${BIN}.exe" "${LAUNCHER_BIN}.exe" "${BIN}-gateway.bat"
 
-            # AllInOne package - complete desktop app
-            ALL_BASE="${APP_NAME}_AllInOne_${{ matrix.file_os }}_${{ matrix.file_arch }}"
-            mkdir -p allinone/scripts
+            # Copy Go binaries to Electron extraResources
+            cp -f "${BIN}.exe" ../clawpet-frontend/clawpet/picoclaw.exe
+            cp -f "${LAUNCHER_BIN}.exe" ../clawpet-frontend/clawpet/picoclaw-web.exe
             
-            # Binaries
-            cp -f "${BIN}.exe" allinone/picoclaw.exe
-            cp -f "${LAUNCHER_BIN}.exe" allinone/picoclaw-web.exe
-            cp -f "${BIN}-gateway.bat" allinone/GoClaw-Gateway.bat
+            # Build Electron installer with electron-builder
+            cd ../clawpet-frontend/clawpet
+            npx electron-builder --win --publish never
             
-            # Startup scripts
-            cp -f ../GoClaw-OneClickStart.bat allinone/GoClaw-OneClickStart.bat
-            cp -f ../GoClaw-OneClickStart.ps1 allinone/GoClaw-OneClickStart.ps1
-            cp -f ../scripts/run-goclaw-dev.ps1 allinone/scripts/run-goclaw-dev.ps1
+            # Copy built installers to release directory
+            cd dist
+            ls -la
             
-            # Frontend (built)
-            cp -r ../clawpet-frontend allinone/clawpet-frontend
-            
-            # Config
-            mkdir -p allinone/.goclaw-runtime
-            if [ -f ../.goclaw-runtime/config.json ]; then
-              cp -f ../.goclaw-runtime/config.json allinone/.goclaw-runtime/config.json
-            fi
-            mkdir -p allinone/config
-            if [ -f ../config/config.example.json ]; then
-              cp -f ../config/config.example.json allinone/config/config.example.json
+            # Copy NSIS installer
+            INSTALLER=$(ls -1 *Setup*.exe | head -1)
+            if [ -n "$INSTALLER" ]; then
+              cp -f "$INSTALLER" "../../${APP_NAME}_Setup_${{ matrix.file_os }}_${{ matrix.file_arch }}.exe"
+              echo "✅ NSIS installer: $INSTALLER"
             fi
             
-            # Docs
-            cp -f ../README.md allinone/README.md
-            cp -f ../API.md allinone/API.md
-            if [ -f ../GoClaw-OneClickStart.md ]; then
-              cp -f ../GoClaw-OneClickStart.md allinone/GoClaw-OneClickStart.md
+            # Copy portable executable
+            PORTABLE=$(ls -1 *Portable*.exe | head -1)
+            if [ -n "$PORTABLE" ]; then
+              cp -f "$PORTABLE" "../../${APP_NAME}_Portable_${{ matrix.file_os }}_${{ matrix.file_arch }}.exe"
+              echo "✅ Portable executable: $PORTABLE"
             fi
-            
-            # Create README for release package
-            cat > allinone/使用说明.md << 'EOF'
-# ClawPet 桌面版 - 使用说明
-
-## 快速启动
-双击运行 `GoClaw-OneClickStart.bat` 即可自动启动所有服务。
-
-## 组件说明
-- **picoclaw.exe**: Gateway 服务 (端口 18790) - AI 核心
-- **picoclaw-web.exe**: Launcher 服务 (端口 18800) - Web 管理界面
-- **clawpet-frontend**: Electron 桌面客户端 (端口 3000)
-
-## 端口说明
-- 18790: Gateway WebSocket (AI 聊天)
-- 18800: Launcher REST API (配置管理)
-- 3000: 前端界面 (Next.js + Electron)
-
-## 首次使用
-1. 双击 GoClaw-OneClickStart.bat
-2. 等待浏览器自动打开 http://localhost:3000/onboarding
-3. 完成初始化向导配置
-4. 开始使用！
-
-## 依赖要求
-- Windows 10/11
-- PowerShell 5.1+
-- 无需安装 Node.js/Go (已内置构建产物)
-
-## 常见问题
-Q: 启动失败怎么办？
-A: 检查端口 18790/18800/3000 是否被占用，关闭其他程序后重试。
-
-Q: 如何更新？
-A: 下载最新版本覆盖解压即可，配置文件会保留。
-EOF
-            
-            # Pack AllInOne
-            (
-              cd allinone
-              zip -r "../${ALL_BASE}.zip" .
-            )
           else
             # Linux/macOS package
             printf '%s\n' \

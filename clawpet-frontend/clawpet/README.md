@@ -1,55 +1,66 @@
-# PetClaw 前端（统一包）
+# ClawPet Desktop App
 
-`clawpet` 是统一前端包，包含：
+ClawPet 桌面宠物应用 - 单 EXE 启动，无黑窗口
 
-- Next.js 主面板（`/`）
-- 桌宠渲染页（`/desktop-pet`）
-- Electron 桌宠壳层（`./electron/main.js`）
-- Electron 启动页（`./electron/startup.html`）
+## 🚀 快速开始
 
-默认行为：
-
-- 桌宠窗口会显示在主屏幕工作区右下角
-- 启动时优先显示启动页（避免弹出多个命令行窗口）
-
-## 固定端口
-
-- 前端：`http://127.0.0.1:3000`
-- 后端：`http://127.0.0.1:18790`
-
-## 推荐启动（仓库根目录）
+### 打包应用
 
 ```powershell
-powershell -ExecutionPolicy Bypass -File .\scripts\run-goclaw-dev.ps1 -Restart -PetclawMode dev
+# 一键打包（编译后端 + 打包 Electron）
+.\build-and-test.ps1
 ```
 
-## 仅启动当前前端
+### 测试应用
 
 ```powershell
-Set-Location .\clawpet-frontend\clawpet
-$env:NEXT_PUBLIC_PICOCLAW_API_URL='http://127.0.0.1:18790'
-$env:NEXT_PUBLIC_PICOCLAW_WS_URL='ws://127.0.0.1:18790'
-$env:NEXT_PUBLIC_PICOCLAW_DIRECT_GATEWAY_URL='http://127.0.0.1:18790'
-$env:NEXT_PUBLIC_PICOCLAW_USE_CREDENTIALS='false'
-npm run dev -- --hostname 127.0.0.1 --port 3000 --webpack
+# 快速启动（推荐用于调试）
+.\run-packaged.ps1
+
+# 或交互式选择版本
+.\test-app.ps1
 ```
 
-## 仅启动桌宠窗口
+## 📦 生成的文件
+
+打包后在 `dist` 目录生成：
+
+- **win-unpacked/** - 解压版（包含所有组件）
+  - `ClawPet.exe` - 主程序
+  - `picoclaw.exe` - Gateway 服务
+  - `picoclaw-web.exe` - Launcher 服务
+- **ClawPet 0.1.0.exe** - 便携版
+- **ClawPet Setup 0.1.0.exe** - 安装版
+
+## ⚠️ 重要说明
+
+**必须运行打包后的 exe，不能使用开发模式！**
+
+- ❌ `npm run dev` - 不包含后端服务
+- ✅ `.\run-packaged.ps1` - 完整功能
+
+## 📖 详细文档
+
+- [打包指南](./BUILD_GUIDE.md) - 完整的打包流程和故障排除
+- [项目说明](../../项目说明文档.md) - 架构和代码说明
+
+## 🔧 开发
 
 ```powershell
-Set-Location .\clawpet-frontend\clawpet
-$env:GOCLAW_BACKEND_URL='http://127.0.0.1:18790'
-$env:GOCLAW_DASHBOARD_URL='http://127.0.0.1:3000'
-$env:GOCLAW_PET_RENDERER_PATH='/desktop-pet'
-$env:GOCLAW_SHOW_STARTUP='1'
-npm run desktop
+# 仅前端开发（不包含后端）
+npm run dev
+
+# 完整测试（必须打包）
+.\build-and-test.ps1
+.\run-packaged.ps1
 ```
 
-## 快速排查
+## 📊 架构
 
-```powershell
-curl.exe -i http://127.0.0.1:3000
-curl.exe -i http://127.0.0.1:3000/desktop-pet
-curl.exe -i http://127.0.0.1:18790/health
-curl.exe -i http://127.0.0.1:18790/pet/token
+用户只需双击 **1 个 exe**，自动启动所有服务：
+
 ```
+ClawPet.exe → picoclaw.exe (18790) + picoclaw-web.exe (18800)
+```
+
+无黑窗口，用户无感知。
