@@ -3245,17 +3245,18 @@ func initPPTExecutionState(agent *AgentInstance, opts processOptions) pptExecuti
 	for _, skill := range activeSkillNames(agent, opts) {
 		if strings.EqualFold(strings.TrimSpace(skill), "student-ppt-pet") {
 			state.Enabled = true
+			state.RequiresExecution = true
 			break
 		}
 	}
-	if !state.Enabled && isLikelyPPTRequest(opts.UserMessage) {
+	if !state.Enabled && shouldEnterPPTExecutionPhase(opts.UserMessage) {
 		state.Enabled = true
+		state.RequiresExecution = true
 	}
 	if !state.Enabled {
 		return state
 	}
 
-	state.RequiresExecution = shouldEnterPPTExecutionPhase(opts.UserMessage)
 	state.PlanPath = filepath.Join(agent.Workspace, "ppt-plan.json")
 	state.OutputDir = filepath.Join(agent.Workspace, "generated", "student-ppt-pet")
 	refreshPPTExecutionState(&state)
@@ -3328,20 +3329,6 @@ func buildPPTGuardMessage(state pptExecutionState) string {
 		step2,
 		step3,
 	)
-}
-
-func isLikelyPPTRequest(text string) bool {
-	lower := strings.ToLower(text)
-	if lower == "" {
-		return false
-	}
-	keywords := []string{"ppt", "powerpoint", "slide", "slides", "幻灯片", "答辩", "汇报", "开题", "课件"}
-	for _, keyword := range keywords {
-		if strings.Contains(lower, keyword) {
-			return true
-		}
-	}
-	return false
 }
 
 func shouldEnterPPTExecutionPhase(text string) bool {

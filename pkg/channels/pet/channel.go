@@ -8,8 +8,6 @@ import (
 	"fmt"
 	"net/http"
 	"net/url"
-	"os"
-	"path/filepath"
 	"regexp"
 	"strings"
 	"sync"
@@ -1197,14 +1195,6 @@ func (s *petStreamer) sendAudioSegmentAsync(seg *voice.AudioSegment, isFinal boo
 	}
 
 	// Base64编码音频
-	if err := s.dumpAudioSegmentToDisk(seg); err != nil {
-		logger.WarnCF("pet", "failed to dump audio segment", map[string]any{
-			"seq":   seg.Seq,
-			"error": err.Error(),
-		})
-	}
-
-	// Base64编码音频
 	encoded := base64.StdEncoding.EncodeToString(seg.AudioData)
 
 	// 获取当前情绪
@@ -1244,35 +1234,6 @@ func (s *petStreamer) sendAudioSegmentAsync(seg *voice.AudioSegment, isFinal boo
 		s.waitTimer.Reset(defaultAudioWaitTimeout)
 	}
 	s.waitMu.Unlock()
-}
-
-func (s *petStreamer) dumpAudioSegmentToDisk(seg *voice.AudioSegment) error {
-	if s == nil || s.channel == nil || s.channel.service == nil || seg == nil || len(seg.AudioData) == 0 {
-		return nil
-	}
-	workspace := strings.TrimSpace(s.channel.service.WorkspacePath())
-	if workspace == "" {
-		return nil
-	}
-	dumpDir := filepath.Join(workspace, "generated", "pet-audio")
-	if err := os.MkdirAll(dumpDir, 0o755); err != nil {
-		return err
-	}
-	name := fmt.Sprintf("%s_seq_%d.mp3", sanitizeFilePart(s.sessionID), seg.Seq)
-	return os.WriteFile(filepath.Join(dumpDir, name), seg.AudioData, 0o644)
-}
-
-func sanitizeFilePart(s string) string {
-	s = strings.TrimSpace(s)
-	if s == "" {
-		return "session"
-	}
-	replacer := strings.NewReplacer("\\", "_", "/", "_", ":", "_", "*", "_", "?", "_", "\"", "_", "<", "_", ">", "_", "|", "_")
-	s = replacer.Replace(s)
-	if len(s) > 60 {
-		s = s[:60]
-	}
-	return s
 }
 
 // HandleAudioDone 处理前端音频播放完毕的通知
