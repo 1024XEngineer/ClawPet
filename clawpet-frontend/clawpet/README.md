@@ -29,8 +29,8 @@ ClawPet 桌面宠物应用 - 单 EXE 启动，无黑窗口
   - `ClawPet.exe` - 主程序
   - `picoclaw.exe` - Gateway 服务
   - `picoclaw-web.exe` - Launcher 服务
-- **ClawPet 0.1.0.exe** - 便携版
-- **ClawPet Setup 0.1.0.exe** - 安装版
+- **ClawPet \*.exe** - 便携版（如 `ClawPet 0.1.0.exe`）
+- **ClawPet Setup \*.exe** - 安装版（如 `ClawPet Setup 0.1.0.exe`）
 
 ## ⚠️ 重要说明
 

@@ -11,8 +11,13 @@ Write-Host ""
 
 # Check if package exists
 $WinUnpacked = Join-Path $ClawpetDir "dist\win-unpacked\ClawPet.exe"
-$Portable = Join-Path $ClawpetDir "dist\ClawPet 0.1.0.exe"
-$Installer = Join-Path $ClawpetDir "dist\ClawPet Setup 0.1.0.exe"
+
+# Dynamically find portable and installer (version-agnostic)
+$Portable = Get-ChildItem -Path (Join-Path $ClawpetDir "dist") -Filter "ClawPet *.exe" | Where-Object { $_.Name -notlike "*Setup*" } | Select-Object -First 1
+$Installer = Get-ChildItem -Path (Join-Path $ClawpetDir "dist") -Filter "ClawPet Setup*.exe" | Select-Object -First 1
+
+$PortablePath = if ($Portable) { $Portable.FullName } else { $null }
+$InstallerPath = if ($Installer) { $Installer.FullName } else { $null }
 
 if (-not (Test-Path $WinUnpacked)) {
     Write-Host "ERROR: Package not found!" -ForegroundColor Red
@@ -27,11 +32,11 @@ if (-not (Test-Path $WinUnpacked)) {
 Write-Host "Select test method:" -ForegroundColor Yellow
 Write-Host ""
 Write-Host "  1. win-unpacked (recommended, for debugging)" -ForegroundColor White
-if (Test-Path $Portable) {
-    Write-Host "  2. Portable version (single file)" -ForegroundColor White
+if ($PortablePath) {
+    Write-Host "  2. Portable version ($($Portable.Name))" -ForegroundColor White
 }
-if (Test-Path $Installer) {
-    Write-Host "  3. Installer version" -ForegroundColor White
+if ($InstallerPath) {
+    Write-Host "  3. Installer version ($($Installer.Name))" -ForegroundColor White
 }
 Write-Host "  0. Cancel" -ForegroundColor White
 Write-Host ""
@@ -47,23 +52,23 @@ switch ($choice) {
         Start-Process $WinUnpacked
     }
     "2" {
-        if (Test-Path $Portable) {
+        if ($PortablePath) {
             Write-Host ""
             Write-Host "Launching portable version..." -ForegroundColor Green
-            Write-Host "   Path: $Portable" -ForegroundColor Gray
+            Write-Host "   Path: $PortablePath" -ForegroundColor Gray
             Write-Host ""
-            Start-Process $Portable
+            Start-Process $PortablePath
         } else {
             Write-Host "ERROR: Portable version not found" -ForegroundColor Red
         }
     }
     "3" {
-        if (Test-Path $Installer) {
+        if ($InstallerPath) {
             Write-Host ""
             Write-Host "Launching installer version..." -ForegroundColor Green
-            Write-Host "   Path: $Installer" -ForegroundColor Gray
+            Write-Host "   Path: $InstallerPath" -ForegroundColor Gray
             Write-Host ""
-            Start-Process $Installer
+            Start-Process $InstallerPath
         } else {
             Write-Host "ERROR: Installer version not found" -ForegroundColor Red
         }

@@ -83,8 +83,8 @@ dist/
 │   ├── picoclaw-web.exe      # Launcher 服务 (21 MB)
 │   └── ...                   # Electron 运行时文件
 │
-├── ClawPet 0.1.0.exe         # 便携版 (213 MB)
-└── ClawPet Setup 0.1.0.exe   # 安装版 (213 MB)
+├── ClawPet *.exe             # 便携版 (213 MB)，如 ClawPet 0.1.0.exe
+└── ClawPet Setup *.exe       # 安装版 (213 MB)，如 ClawPet Setup 0.1.0.exe
 ```
 
 ### 文件说明
@@ -94,8 +94,8 @@ dist/
 | `ClawPet.exe` | ~168 MB | Electron 主程序 |
 | `picoclaw.exe` | ~44 MB | Gateway 后端服务（端口 18790） |
 | `picoclaw-web.exe` | ~21 MB | Launcher 后端服务（端口 18800） |
-| `ClawPet 0.1.0.exe` | ~213 MB | 便携版，无需安装 |
-| `ClawPet Setup 0.1.0.exe` | ~213 MB | NSIS 安装包 |
+| `ClawPet *.exe` | ~213 MB | 便携版，无需安装（如 `ClawPet 0.1.0.exe`） |
+| `ClawPet Setup *.exe` | ~213 MB | NSIS 安装包（如 `ClawPet Setup 0.1.0.exe`） |
 
 ## 🧪 测试打包结果
 
@@ -123,11 +123,11 @@ cd clawpet-frontend\clawpet
 # 方式1：运行 win-unpacked（方便调试）
 & "clawpet-frontend\clawpet\dist\win-unpacked\ClawPet.exe"
 
-# 方式2：运行便携版
-& "clawpet-frontend\clawpet\dist\ClawPet 0.1.0.exe"
+# 方式2：运行便携版（版本号随发布变化）
+& "clawpet-frontend\clawpet\dist\ClawPet *.exe"
 
-# 方式3：运行安装版
-& "clawpet-frontend\clawpet\dist\ClawPet Setup 0.1.0.exe"
+# 方式3：运行安装版（版本号随发布变化）
+& "clawpet-frontend\clawpet\dist\ClawPet Setup *.exe"
 ```
 
 ## ✅ 验证清单

@@ -197,9 +197,15 @@ jobs:
             cp -f "${BIN}.exe" ../clawpet-frontend/clawpet/picoclaw.exe
             cp -f "${LAUNCHER_BIN}" ../clawpet-frontend/clawpet/picoclaw-web.exe
             
-            # Build Electron app with electron-builder
+            # Build Electron app with electron-builder (pass architecture from matrix)
             cd ../clawpet-frontend/clawpet
-            npx electron-builder --win --publish never
+            if [[ "${{ matrix.file_arch }}" == "x86_64" ]]; then
+              npx electron-builder --win --x64 --publish never
+            elif [[ "${{ matrix.file_arch }}" == "arm64" ]]; then
+              npx electron-builder --win --arm64 --publish never
+            else
+              npx electron-builder --win --publish never
+            fi
             
             # Copy built installers to release directory
             cd dist
@@ -209,14 +215,14 @@ jobs:
             INSTALLER=$(ls -1 *Setup*.exe 2>/dev/null | head -1)
             if [ -n "$INSTALLER" ]; then
               REPO_DIST="../../../dist"; mkdir -p "${REPO_DIST}"; cp -f "$INSTALLER" "${REPO_DIST}/${APP_NAME}_Setup_${{ matrix.file_os }}_${{ matrix.file_arch }}.exe"
-              echo "‚ú?NSIS installer: $INSTALLER"
+              echo "ÈâÅ?NSIS installer: $INSTALLER"
             fi
             
             # Copy portable executable (e.g., ClawPet 0.1.0.exe)
             PORTABLE=$(ls -1 "${APP_NAME}"*.exe 2>/dev/null | grep -v Setup | head -1)
             if [ -n "$PORTABLE" ]; then
               cp -f "$PORTABLE" "${REPO_DIST}/${APP_NAME}_Portable_${{ matrix.file_os }}_${{ matrix.file_arch }}.exe"
-              echo "‚ú?Portable executable: $PORTABLE"
+              echo "ÈâÅ?Portable executable: $PORTABLE"
             fi
             
             # Copy win-unpacked directory for debugging
@@ -229,7 +235,7 @@ jobs:
               # Package win-unpacked as zip
               cd clawpet-frontend/clawpet/dist
               zip -r "../../dist/${APP_NAME}_win-unpacked_${{ matrix.file_os }}_${{ matrix.file_arch }}.zip" win-unpacked/
-              echo "‚ú?Win-unpacked debug package created"
+              echo "ÈâÅ?Win-unpacked debug package created"
             fi
           else
             # Linux/macOS package
