@@ -113,41 +113,41 @@ func (m *Manager) Update(req *UpdateModelRequest) error {
 
 	mc := cfg.ModelList[idx]
 
-	if req.NewModel != "" {
-		mc.Model = req.NewModel
+	if req.NewModel != nil {
+		mc.Model = *req.NewModel
 	}
-	if req.APIBase != "" {
-		mc.APIBase = req.APIBase
+	if req.APIBase != nil {
+		mc.APIBase = *req.APIBase
 	}
-	if req.Proxy != "" {
-		mc.Proxy = req.Proxy
+	if req.Proxy != nil {
+		mc.Proxy = *req.Proxy
 	}
-	if req.AuthMethod != "" {
-		mc.AuthMethod = req.AuthMethod
+	if req.AuthMethod != nil {
+		mc.AuthMethod = *req.AuthMethod
 	}
-	if req.ConnectMode != "" {
-		mc.ConnectMode = req.ConnectMode
+	if req.ConnectMode != nil {
+		mc.ConnectMode = *req.ConnectMode
 	}
-	if req.Workspace != "" {
-		mc.Workspace = req.Workspace
+	if req.Workspace != nil {
+		mc.Workspace = *req.Workspace
 	}
-	if req.RPM > 0 {
-		mc.RPM = req.RPM
+	if req.RPM != nil {
+		mc.RPM = *req.RPM
 	}
-	if req.MaxTokensField != "" {
-		mc.MaxTokensField = req.MaxTokensField
+	if req.MaxTokensField != nil {
+		mc.MaxTokensField = *req.MaxTokensField
 	}
-	if req.RequestTimeout > 0 {
-		mc.RequestTimeout = req.RequestTimeout
+	if req.RequestTimeout != nil {
+		mc.RequestTimeout = *req.RequestTimeout
 	}
-	if req.ThinkingLevel != "" {
-		mc.ThinkingLevel = req.ThinkingLevel
+	if req.ThinkingLevel != nil {
+		mc.ThinkingLevel = *req.ThinkingLevel
 	}
-	if req.APIKey != "" {
-		mc.SetAPIKey(req.APIKey)
+	if req.APIKey != nil {
+		mc.SetAPIKey(*req.APIKey)
 	}
 	if req.ExtraBody != nil {
-		mc.ExtraBody = req.ExtraBody
+		mc.ExtraBody = *req.ExtraBody
 	}
 
 	return config.SaveConfig(m.configPath, cfg)

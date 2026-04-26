@@ -114,6 +114,7 @@ export function ConfigPage() {
   const [activeTab, setActiveTab] = useState<ConfigTab>("visual")
   const [rawJson, setRawJson] = useState("")
   const [hasChanges, setHasChanges] = useState(false)
+  const [showModelsPanel, setShowModelsPanel] = useState(false)
   const [actionState, setActionState] = useState<{
     type: "error" | "success"
     message: string

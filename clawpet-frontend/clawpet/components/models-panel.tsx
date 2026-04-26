@@ -1,5 +1,10 @@
-import { useState, useEffect, useCallback } from "react"
-import { getWebSocketInstance, ModelInfo, ModelListData } from "../lib/api/websocket"
+import { useCallback, useEffect, useState, type ChangeEvent, type FormEvent } from "react"
+import {
+  getWebSocketInstance,
+  type ModelInfo,
+  type ModelListData,
+  type UpdateModelRequest,
+} from "../lib/api/websocket"
 
 interface ModelsPanelProps {
   onClose: () => void
@@ -208,7 +213,7 @@ function AddModelDialog({ onClose, onSaved, existingNames }: AddModelDialogProps
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState<string | null>(null)
 
-  const handleSubmit = async (e: React.FormEvent) => {
+  const handleSubmit = async (e: FormEvent) => {
     e.preventDefault()
     if (!formData.model_name || !formData.model) {
       setError("模型名称和模型标识不能为空")
@@ -303,6 +308,18 @@ function AddModelDialog({ onClose, onSaved, existingNames }: AddModelDialogProps
             />
           </div>
           <div>
+            <label className="block text-sm font-medium mb-1">Thinking Level</label>
+            <input
+              type="text"
+              value={formData.thinking_level}
+              onChange={(e) =>
+                setFormData({ ...formData, thinking_level: e.target.value })
+              }
+              placeholder="如：high"
+              className="w-full rounded border bg-background px-3 py-2 text-sm"
+            />
+          </div>
+          <div>
             <label className="block text-sm font-medium mb-1">RPM (每分钟请求数)</label>
             <input
               type="number"
@@ -341,32 +358,67 @@ interface EditModelDialogProps {
   onSaved: () => void
 }
 
+interface EditModelFormState {
+  api_base: string
+  api_key: string
+  proxy: string
+  rpm: string
+  thinking_level: string
+}
+
+function buildModelUpdatePayload(
+  modelName: string,
+  formData: EditModelFormState,
+): UpdateModelRequest {
+  const payload: UpdateModelRequest = {
+    model_name: modelName,
+    api_base: formData.api_base,
+    proxy: formData.proxy,
+    thinking_level: formData.thinking_level,
+  }
+
+  const trimmedAPIKey = formData.api_key.trim()
+  if (trimmedAPIKey !== "") {
+    payload.api_key = trimmedAPIKey
+  }
+
+  const trimmedRPM = formData.rpm.trim()
+  if (trimmedRPM !== "") {
+    const rpm = Number.parseInt(trimmedRPM, 10)
+    if (!Number.isNaN(rpm)) {
+      payload.rpm = rpm
+    }
+  }
+
+  return payload
+}
+
 function EditModelDialog({ model, onClose, onSaved }: EditModelDialogProps) {
-  const [formData, setFormData] = useState({
+  const [formData, setFormData] = useState<EditModelFormState>({
     api_base: model.api_base || "",
     api_key: "",
     proxy: model.proxy || "",
-    rpm: model.rpm || 12,
+    rpm: model.rpm ? String(model.rpm) : "",
     thinking_level: model.thinking_level || "",
   })
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState<string | null>(null)
 
-  const handleSubmit = async (e: React.FormEvent) => {
+  const handleRPMChange = (event: ChangeEvent<HTMLInputElement>) => {
+    const nextValue = event.target.value
+    if (nextValue === "" || /^\d+$/.test(nextValue)) {
+      setFormData({ ...formData, rpm: nextValue })
+    }
+  }
+
+  const handleSubmit = async (e: FormEvent) => {
     e.preventDefault()
 
     setSaving(true)
     setError(null)
     try {
       const ws = getWebSocketInstance()
-      await ws.updateModel({
-        model_name: model.model_name,
-        api_base: formData.api_base || undefined,
-        api_key: formData.api_key || undefined,
-        proxy: formData.proxy || undefined,
-        rpm: formData.rpm || undefined,
-        thinking_level: formData.thinking_level || undefined,
-      })
+      await ws.updateModel(buildModelUpdatePayload(model.model_name, formData))
       onSaved()
     } catch (e) {
       setError(e instanceof Error ? e.message : "更新失败")
@@ -422,12 +474,24 @@ function EditModelDialog({ model, onClose, onSaved }: EditModelDialogProps) {
             />
           </div>
           <div>
+            <label className="block text-sm font-medium mb-1">Thinking Level</label>
+            <input
+              type="text"
+              value={formData.thinking_level}
+              onChange={(e) =>
+                setFormData({ ...formData, thinking_level: e.target.value })
+              }
+              placeholder="如：high"
+              className="w-full rounded border bg-background px-3 py-2 text-sm"
+            />
+          </div>
+          <div>
             <label className="block text-sm font-medium mb-1">RPM (每分钟请求数)</label>
             <input
               type="number"
               value={formData.rpm}
-              onChange={(e) => setFormData({ ...formData, rpm: parseInt(e.target.value) || 12 })}
-              min={1}
+              onChange={handleRPMChange}
+              min={0}
               max={10000}
               className="w-full rounded border bg-background px-3 py-2 text-sm"
             />

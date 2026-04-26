@@ -1107,15 +1107,15 @@ export interface UpdateModelRequest {
   model_name: string
   new_model?: string
   api_key?: string
-  api_base?: string
-  proxy?: string
+  api_base?: string | null
+  proxy?: string | null
   auth_method?: string
   connect_mode?: string
   workspace?: string
   rpm?: number
   max_tokens_field?: string
   request_timeout?: number
-  thinking_level?: string
+  thinking_level?: string | null
   extra_body?: Record<string, unknown>
 }
 
