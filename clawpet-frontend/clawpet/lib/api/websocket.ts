@@ -12,6 +12,7 @@ const CHAT_ACTION = "chat"
 const PUSH_TYPE_AI_CHAT = "ai_chat"
 const PUSH_TYPE_AUDIO = "audio"
 const PUSH_TYPE_AUDIO_AND_VOICE = "audio_and_voice"
+const PUSH_TYPE_TEXT_AND_AUDIO = "text_and_audio"
 const PUSH_TYPE_EMOTION_CHANGE = "emotion_change"
 const PUSH_TYPE_ACTION_TRIGGER = "action_trigger"
 
@@ -447,6 +448,7 @@ export class PicoClawWebSocket {
         break
       case PUSH_TYPE_AUDIO:
       case PUSH_TYPE_AUDIO_AND_VOICE:
+      case PUSH_TYPE_TEXT_AND_AUDIO:
         this.handleAudioPush(data, Boolean(push.is_final))
         break
       case PUSH_TYPE_EMOTION_CHANGE:

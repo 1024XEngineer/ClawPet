@@ -57,6 +57,7 @@ interface AudioPushData {
   type?: string
   text?: string
   audio?: string
+  audio_mime?: string
   duration?: number
   seq?: number
   error?: string
@@ -68,7 +69,13 @@ interface AudioSegmentItem {
   seq: number
   text: string
   audioBase64: string
+  audioMime?: string
   durationMs: number
+}
+
+interface ResolvedAudioChunkPayload {
+  audioBase64: string
+  audioMime?: string
 }
 
 const EMPTY_SESSION_TITLE = "新对话"
@@ -271,6 +278,48 @@ function inferAudioMimeType(bytes: Uint8Array | null): string {
   return "audio/mpeg"
 }
 
+function normalizeAudioMimeType(mime?: string): string | undefined {
+  if (!mime) {
+    return undefined
+  }
+  const normalized = mime.trim().toLowerCase()
+  if (!normalized) {
+    return undefined
+  }
+  switch (normalized) {
+    case "audio/mp3":
+    case "audio/mpeg3":
+      return "audio/mpeg"
+    case "audio/mpeg":
+    case "audio/wav":
+    case "audio/x-wav":
+    case "audio/ogg":
+    case "audio/flac":
+      return normalized === "audio/x-wav" ? "audio/wav" : normalized
+    default:
+      return undefined
+  }
+}
+
+function parseDataAudioURL(value: string): { format: string; data: string } | null {
+  if (!value.startsWith("data:audio/")) {
+    return null
+  }
+  const payload = value.slice("data:audio/".length)
+  const commaIndex = payload.indexOf(",")
+  if (commaIndex < 0) {
+    return null
+  }
+  const meta = payload.slice(0, commaIndex).trim()
+  const data = payload.slice(commaIndex + 1).trim()
+  const semicolonIndex = meta.indexOf(";")
+  const format = (semicolonIndex >= 0 ? meta.slice(0, semicolonIndex) : meta).trim()
+  if (!format || !data) {
+    return null
+  }
+  return { format, data }
+}
+
 function isLikelyBase64Audio(value: string): boolean {
   const normalized = value.replace(/^data:audio\/[^;]+;base64,/, "").replace(/\s+/g, "")
   if (normalized.length < 64) {
@@ -282,17 +331,47 @@ function isLikelyBase64Audio(value: string): boolean {
   return /^[A-Za-z0-9+/=]+$/.test(normalized)
 }
 
-function resolveAudioChunkPayload(data: AudioPushData): string {
+function resolveAudioChunkPayload(data: AudioPushData): ResolvedAudioChunkPayload | null {
+  const explicitMime = normalizeAudioMimeType(data.audio_mime)
+
   if (typeof data.audio === "string" && data.audio.trim()) {
-    return data.audio
+    const audioValue = data.audio.trim()
+    const parsed = parseDataAudioURL(audioValue)
+    if (parsed) {
+      return {
+        audioBase64: parsed.data,
+        audioMime: explicitMime || normalizeAudioMimeType(`audio/${parsed.format}`),
+      }
+    }
+    return {
+      audioBase64: audioValue,
+      audioMime: explicitMime,
+    }
   }
-  if (data.type === "audio" && typeof data.text === "string") {
-    return data.text
+
+  if (data.type === "audio" && typeof data.text === "string" && data.text.trim()) {
+    const textValue = data.text.trim()
+    const parsed = parseDataAudioURL(textValue)
+    if (parsed) {
+      return {
+        audioBase64: parsed.data,
+        audioMime: explicitMime || normalizeAudioMimeType(`audio/${parsed.format}`),
+      }
+    }
+    return {
+      audioBase64: textValue,
+      audioMime: explicitMime,
+    }
   }
+
   if (typeof data.text === "string" && isLikelyBase64Audio(data.text)) {
-    return data.text
+    return {
+      audioBase64: data.text,
+      audioMime: explicitMime,
+    }
   }
-  return ""
+
+  return null
 }
 
 export function useChat(options: UseChatOptions = {}): UseChatResult {
@@ -451,6 +530,8 @@ export function useChat(options: UseChatOptions = {}): UseChatResult {
     (
       audioBase64: string,
       bubbleText?: string | null,
+      audioMimeHint?: string,
+      seq?: number,
       durationMs?: number,
       onSettled?: () => void,
     ) => {
@@ -479,47 +560,118 @@ export function useChat(options: UseChatOptions = {}): UseChatResult {
       }
 
       const decoded = decodeBase64Chunk(audioBase64)
-      const mimeType = inferAudioMimeType(decoded)
-      let audioUrl = `data:${mimeType};base64,${audioBase64}`
+      const mimeType = normalizeAudioMimeType(audioMimeHint) || inferAudioMimeType(decoded)
+      if (!decoded || decoded.length === 0) {
+        console.error("[petclaw] audio decode failed", {
+          seq,
+          mimeType,
+          base64Length: audioBase64.length,
+          audioPrefix: audioBase64.slice(0, 64),
+        })
+        onSettled?.()
+        return
+      }
+      const byteHead = Array.from(decoded.slice(0, 12)).map((v) =>
+        v.toString(16).padStart(2, "0"),
+      )
+      const rawCandidates = Array.from(
+        new Set(
+          [
+            normalizeAudioMimeType(audioMimeHint),
+            mimeType,
+            "audio/mpeg",
+            "audio/ogg",
+            "audio/wav",
+          ].filter((v): v is string => Boolean(v)),
+        ),
+      )
+      const probeAudio = document.createElement("audio")
+      const supportedCandidates = rawCandidates.filter(
+        (candidate) => probeAudio.canPlayType(candidate) !== "",
+      )
+      const mimeCandidates =
+        supportedCandidates.length > 0 ? supportedCandidates : rawCandidates
 
       if (currentAudioUrlRef.current) {
         URL.revokeObjectURL(currentAudioUrlRef.current)
         currentAudioUrlRef.current = null
       }
-
-      if (decoded && decoded.length > 0) {
-        const blob = new Blob([decoded], { type: mimeType })
-        audioUrl = URL.createObjectURL(blob)
-        currentAudioUrlRef.current = audioUrl
-      }
-
       if (currentAudioRef.current) {
         currentAudioRef.current.pause()
       }
-      currentAudioRef.current = new Audio(audioUrl)
-      currentAudioRef.current.onended = () => {
-        if (currentAudioUrlRef.current) {
-          URL.revokeObjectURL(currentAudioUrlRef.current)
-          currentAudioUrlRef.current = null
+
+      let settled = false
+      const settleOnce = () => {
+        if (!settled) {
+          settled = true
+          onSettled?.()
         }
-        onSettled?.()
       }
-      currentAudioRef.current.onerror = (errorEvent) => {
-        console.warn("[petclaw] audio element error", {
-          errorEvent,
-          mimeType,
-          base64Length: audioBase64.length,
+
+      const tryPlayWithMime = (index: number) => {
+        if (index >= mimeCandidates.length) {
+          console.error("[petclaw] exhausted audio mime candidates", {
+            seq,
+            mimeHint: audioMimeHint,
+            inferredMime: mimeType,
+            mimeCandidates,
+            base64Length: audioBase64.length,
+            byteHead,
+          })
+          settleOnce()
+          return
+        }
+
+        const attemptMime = mimeCandidates[index]
+        const blob = new Blob([decoded], { type: attemptMime })
+        const audioUrl = URL.createObjectURL(blob)
+        currentAudioUrlRef.current = audioUrl
+        const audio = new Audio(audioUrl)
+        currentAudioRef.current = audio
+
+        audio.onended = () => {
+          if (currentAudioUrlRef.current) {
+            URL.revokeObjectURL(currentAudioUrlRef.current)
+            currentAudioUrlRef.current = null
+          }
+          settleOnce()
+        }
+
+        audio.onerror = (errorEvent) => {
+          const mediaError = audio.error
+          console.warn("[petclaw] audio element error", {
+            errorEvent,
+            seq,
+            attemptMime,
+            base64Length: audioBase64.length,
+            mediaErrorCode: mediaError?.code,
+            mediaErrorMessage: mediaError?.message,
+            byteHead,
+          })
+          if (currentAudioUrlRef.current) {
+            URL.revokeObjectURL(currentAudioUrlRef.current)
+            currentAudioUrlRef.current = null
+          }
+          tryPlayWithMime(index + 1)
+        }
+
+        void audio.play().catch((playbackError) => {
+          console.warn("[petclaw] failed to play audio", {
+            playbackError,
+            seq,
+            attemptMime,
+            base64Length: audioBase64.length,
+            byteHead,
+          })
+          if (currentAudioUrlRef.current) {
+            URL.revokeObjectURL(currentAudioUrlRef.current)
+            currentAudioUrlRef.current = null
+          }
+          tryPlayWithMime(index + 1)
         })
-        onSettled?.()
       }
-      void currentAudioRef.current.play().catch((playbackError) => {
-        console.warn("[petclaw] failed to play audio", {
-          playbackError,
-          mimeType,
-          base64Length: audioBase64.length,
-        })
-        onSettled?.()
-      })
+
+      tryPlayWithMime(0)
     },
     [clearAudioAdvanceTimer, showBubble],
   )
@@ -565,6 +717,8 @@ export function useChat(options: UseChatOptions = {}): UseChatResult {
     playAudioBase64(
       nextSegment.audioBase64,
       nextSegment.text || null,
+      nextSegment.audioMime,
+      nextSegment.seq,
       nextSegment.durationMs,
       () => {
         audioIsPlayingRef.current = false
@@ -707,8 +861,17 @@ export function useChat(options: UseChatOptions = {}): UseChatResult {
               chatId: incomingChatId,
               seq,
               text: typeof data.text === "string" ? data.text : "",
-              audioBase64: audioChunkPayload,
+              audioBase64: audioChunkPayload.audioBase64,
+              audioMime: audioChunkPayload.audioMime,
               durationMs,
+            })
+          } else {
+            console.warn("[petclaw] audio payload unresolved", {
+              seq,
+              type: data.type,
+              hasAudio: Boolean(typeof data.audio === "string" && data.audio.trim()),
+              hasText: Boolean(typeof data.text === "string" && data.text.trim()),
+              audioMime: data.audio_mime,
             })
           }
 
