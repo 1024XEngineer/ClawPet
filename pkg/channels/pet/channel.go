@@ -49,6 +49,25 @@ func parsePureText(raw string) string {
 	return sb.String()
 }
 
+func inferAudioMimeFromBytes(raw []byte) string {
+	if len(raw) >= 3 && raw[0] == 0x49 && raw[1] == 0x44 && raw[2] == 0x33 {
+		return "audio/mpeg"
+	}
+	if len(raw) >= 2 && raw[0] == 0xFF && (raw[1]&0xE0) == 0xE0 {
+		return "audio/mpeg"
+	}
+	if len(raw) >= 4 && raw[0] == 0x52 && raw[1] == 0x49 && raw[2] == 0x46 && raw[3] == 0x46 {
+		return "audio/wav"
+	}
+	if len(raw) >= 4 && raw[0] == 0x4F && raw[1] == 0x67 && raw[2] == 0x67 && raw[3] == 0x53 {
+		return "audio/ogg"
+	}
+	if len(raw) >= 4 && raw[0] == 0x66 && raw[1] == 0x4C && raw[2] == 0x61 && raw[3] == 0x43 {
+		return "audio/flac"
+	}
+	return ""
+}
+
 func isLocalhostOrigin(origin string) bool {
 	u, err := url.Parse(origin)
 	if err != nil || u.Host == "" {
@@ -1182,20 +1201,47 @@ func (s *petStreamer) sendAudioSegmentAsync(seg *voice.AudioSegment, isFinal boo
 			"error": seg.Error,
 		})
 		data := map[string]any{
-			"seq":      seg.Seq,
-			"text":     seg.Text,
-			"audio":    "",
-			"duration": 0,
-			"is_final": isFinal,
-			"error":    seg.Error,
-			"emotion":  "",
+			"seq":        seg.Seq,
+			"text":       seg.Text,
+			"audio":      "",
+			"audio_mime": "audio/mpeg",
+			"duration":   0,
+			"is_final":   isFinal,
+			"error":      seg.Error,
+			"emotion":    "",
 		}
 		_ = s.channel.sendVoicePush(s.sessionID, "audio_and_voice", data)
 		return
 	}
 
 	// Base64编码音频
+	if len(seg.AudioData) == 0 {
+		logger.WarnCF("pet", "sendAudioSegmentAsync: empty audio payload", map[string]any{
+			"seq":  seg.Seq,
+			"text": seg.Text,
+		})
+		data := map[string]any{
+			"seq":        seg.Seq,
+			"text":       seg.Text,
+			"audio":      "",
+			"audio_mime": "audio/mpeg",
+			"duration":   0,
+			"is_final":   isFinal,
+			"error":      "empty audio payload",
+			"emotion":    "",
+		}
+		_ = s.channel.sendVoicePush(s.sessionID, "audio_and_voice", data)
+		return
+	}
 	encoded := base64.StdEncoding.EncodeToString(seg.AudioData)
+	mimeType := inferAudioMimeFromBytes(seg.AudioData)
+	if mimeType == "" {
+		logger.WarnCF("pet", "sendAudioSegmentAsync: unknown audio signature", map[string]any{
+			"seq":         seg.Seq,
+			"audio_bytes": len(seg.AudioData),
+		})
+		mimeType = "audio/mpeg"
+	}
 
 	// 获取当前情绪
 	emotion := ""
@@ -1204,12 +1250,13 @@ func (s *petStreamer) sendAudioSegmentAsync(seg *voice.AudioSegment, isFinal boo
 	}
 
 	data := map[string]any{
-		"seq":      seg.Seq,
-		"text":     seg.Text,
-		"audio":    encoded,
-		"duration": seg.Duration,
-		"is_final": isFinal,
-		"emotion":  emotion,
+		"seq":        seg.Seq,
+		"text":       seg.Text,
+		"audio":      encoded,
+		"audio_mime": mimeType,
+		"duration":   seg.Duration,
+		"is_final":   isFinal,
+		"emotion":    emotion,
 	}
 
 	logger.DebugCF("pet", "sendAudioSegmentAsync", map[string]any{

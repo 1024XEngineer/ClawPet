@@ -208,3 +208,44 @@ contextBridge.exposeInMainWorld('electronAPI', {
    */
   getStartupState: () => ipcRenderer.invoke('startup-state')
 });
+
+function serializeForMainLog(value) {
+  if (value instanceof Error) {
+    return {
+      name: value.name,
+      message: value.message,
+      stack: value.stack,
+    };
+  }
+
+  if (typeof value === 'object' && value !== null) {
+    try {
+      return JSON.parse(JSON.stringify(value));
+    } catch {
+      return String(value);
+    }
+  }
+
+  return value;
+}
+
+const forwardedConsoleLevels = ['log', 'info', 'warn', 'error'];
+for (const level of forwardedConsoleLevels) {
+  const original = console[level];
+  if (typeof original !== 'function') {
+    continue;
+  }
+
+  console[level] = (...args) => {
+    try {
+      ipcRenderer.send('renderer-log', {
+        level,
+        args: args.map(serializeForMainLog),
+      });
+    } catch {
+      // Ignore forwarding failures and keep console behavior unchanged.
+    }
+
+    original.apply(console, args);
+  };
+}
