@@ -16,6 +16,9 @@ env:
   APP_NAME: clawpet
   BUILD_TAGS: goolm,stdjson
   BUILD_ENTRY: ./cmd/picoclaw
+  LAUNCHER_ENTRY: ./web/backend
+  NODE_VERSION: "22"
+  PNPM_VERSION: "9"
 
 jobs:
   build:
@@ -85,12 +88,17 @@ jobs:
         with:
           node-version: "22"
 
+      - name: Setup pnpm
+        if: matrix.goos == 'windows'
+        uses: pnpm/action-setup@v4
+        with:
+          version: ${{ env.PNPM_VERSION }}
+
       - name: Build launcher embedded frontend (Windows)
         if: matrix.goos == 'windows'
         shell: bash
         run: |
           set -euo pipefail
-          corepack enable
           cd web/frontend
           pnpm install --no-frozen-lockfile
           pnpm build:backend
@@ -106,8 +114,10 @@ jobs:
           mkdir -p dist
 
           BIN="${APP_NAME}"
+          LAUNCHER_BIN="${APP_NAME}-launcher"
           if [[ "${{ matrix.goos }}" == "windows" ]]; then
             BIN="${BIN}.exe"
+            LAUNCHER_BIN="${LAUNCHER_BIN}.exe"
           fi
 
           VERSION="${GITHUB_REF_NAME}"
@@ -115,6 +125,7 @@ jobs:
           BUILD_TIME="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
           GOARM="${{ matrix.goarm || '' }}"
 
+          # Build Gateway (picoclaw)
           GOOS=${{ matrix.goos }} GOARCH=${{ matrix.goarch }} GOARM="${GOARM}" CGO_ENABLED=0 \
             go build \
               -trimpath \
@@ -122,6 +133,17 @@ jobs:
               -ldflags "-s -w -X github.com/sipeed/picoclaw/pkg/config.Version=${VERSION} -X github.com/sipeed/picoclaw/pkg/config.GitCommit=${SHORT_SHA} -X github.com/sipeed/picoclaw/pkg/config.BuildTime=${BUILD_TIME}" \
               -o "dist/${BIN}" \
               "${BUILD_ENTRY}"
+
+          # Build Launcher (picoclaw-web)
+          if [[ "${{ matrix.goos }}" == "windows" ]]; then
+            GOOS=${{ matrix.goos }} GOARCH=${{ matrix.goarch }} GOARM="${GOARM}" CGO_ENABLED=0 \
+              go build \
+                -trimpath \
+                -tags "${BUILD_TAGS}" \
+                -ldflags "-s -w" \
+                -o "dist/${LAUNCHER_BIN}" \
+                "${LAUNCHER_ENTRY}"
+          fi
 
           if [[ "${{ matrix.goos }}" == "windows" ]]; then
             GOOS=${{ matrix.goos }} GOARCH=${{ matrix.goarch }} GOARM="${GOARM}" CGO_ENABLED=0 \
@@ -133,6 +155,15 @@ jobs:
                 ./web/backend
           fi
 
+      - name: Build ClawPet Frontend (Windows)
+        if: matrix.goos == 'windows'
+        shell: bash
+        run: |
+          set -euo pipefail
+          cd clawpet-frontend/clawpet
+          pnpm install --no-frozen-lockfile
+          pnpm build
+
       - name: Package
         shell: bash
         run: |
@@ -141,13 +172,15 @@ jobs:
 
           BASE="${APP_NAME}_${{ matrix.file_os }}_${{ matrix.file_arch }}"
           BIN="${APP_NAME}"
+          LAUNCHER_BIN="${APP_NAME}-launcher"
 
           if [[ "${{ matrix.goos }}" == "windows" ]]; then
+            # Create startup script
             printf '%s\n' \
               '@echo off' \
               'setlocal' \
               'set "SELF_DIR=%~dp0"' \
-              '"%SELF_DIR%clawpet.exe" gateway %*' \
+              '"%SELF_DIR%clawpet-gateway.bat" %*' \
               'set "EXIT_CODE=%ERRORLEVEL%"' \
               '' \
               'if "%CLAWPET_NO_PAUSE%"=="1" (' \
@@ -160,24 +193,87 @@ jobs:
               'pause >nul' \
               'exit /b %EXIT_CODE%' \
               > "${BIN}-gateway.bat"
-            zip "${BASE}.zip" "${BIN}.exe" "${BIN}-launcher.exe" "${BIN}-gateway.bat"
 
+            # Standard package
+            zip "${BASE}.zip" "${BIN}.exe" "${LAUNCHER_BIN}.exe" "${BIN}-gateway.bat"
+
+            # AllInOne package - complete desktop app
             ALL_BASE="${APP_NAME}_AllInOne_${{ matrix.file_os }}_${{ matrix.file_arch }}"
             mkdir -p allinone/scripts
-            cp -f "${BIN}.exe" allinone/clawpet.exe
+            
+            # Binaries
             cp -f "${BIN}.exe" allinone/picoclaw.exe
-            cp -f "${BIN}-launcher.exe" allinone/clawpet-launcher.exe
-            cp -f "${BIN}-launcher.exe" allinone/picoclaw-launcher.exe
-            cp -f "${BIN}-gateway.bat" allinone/clawpet-gateway.bat
+            cp -f "${LAUNCHER_BIN}.exe" allinone/picoclaw-web.exe
+            cp -f "${BIN}-gateway.bat" allinone/GoClaw-Gateway.bat
+            
+            # Startup scripts
             cp -f ../GoClaw-OneClickStart.bat allinone/GoClaw-OneClickStart.bat
             cp -f ../GoClaw-OneClickStart.ps1 allinone/GoClaw-OneClickStart.ps1
             cp -f ../scripts/run-goclaw-dev.ps1 allinone/scripts/run-goclaw-dev.ps1
-            cp -r ../clawpet allinone/clawpet
+            
+            # Frontend (built)
+            cp -r ../clawpet-frontend allinone/clawpet-frontend
+            
+            # Config
+            mkdir -p allinone/.goclaw-runtime
+            if [ -f ../.goclaw-runtime/config.json ]; then
+              cp -f ../.goclaw-runtime/config.json allinone/.goclaw-runtime/config.json
+            fi
+            mkdir -p allinone/config
+            if [ -f ../config/config.example.json ]; then
+              cp -f ../config/config.example.json allinone/config/config.example.json
+            fi
+            
+            # Docs
+            cp -f ../README.md allinone/README.md
+            cp -f ../API.md allinone/API.md
+            if [ -f ../GoClaw-OneClickStart.md ]; then
+              cp -f ../GoClaw-OneClickStart.md allinone/GoClaw-OneClickStart.md
+            fi
+            
+            # Create README for release package
+            cat > allinone/使用说明.md << 'EOF'
+# ClawPet 桌面版 - 使用说明
+
+## 快速启动
+双击运行 `GoClaw-OneClickStart.bat` 即可自动启动所有服务。
+
+## 组件说明
+- **picoclaw.exe**: Gateway 服务 (端口 18790) - AI 核心
+- **picoclaw-web.exe**: Launcher 服务 (端口 18800) - Web 管理界面
+- **clawpet-frontend**: Electron 桌面客户端 (端口 3000)
+
+## 端口说明
+- 18790: Gateway WebSocket (AI 聊天)
+- 18800: Launcher REST API (配置管理)
+- 3000: 前端界面 (Next.js + Electron)
+
+## 首次使用
+1. 双击 GoClaw-OneClickStart.bat
+2. 等待浏览器自动打开 http://localhost:3000/onboarding
+3. 完成初始化向导配置
+4. 开始使用！
+
+## 依赖要求
+- Windows 10/11
+- PowerShell 5.1+
+- 无需安装 Node.js/Go (已内置构建产物)
+
+## 常见问题
+Q: 启动失败怎么办？
+A: 检查端口 18790/18800/3000 是否被占用，关闭其他程序后重试。
+
+Q: 如何更新？
+A: 下载最新版本覆盖解压即可，配置文件会保留。
+EOF
+            
+            # Pack AllInOne
             (
               cd allinone
               zip -r "../${ALL_BASE}.zip" .
             )
           else
+            # Linux/macOS package
             printf '%s\n' \
               '#!/usr/bin/env sh' \
               'set -eu' \
