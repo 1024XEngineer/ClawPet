@@ -108,7 +108,6 @@ type pptExecutionState struct {
 	PlanExists            bool
 	OutputExists          bool
 	GenerateExecSucceeded bool
-	OutputIsStale         bool
 }
 
 const (
@@ -3246,17 +3245,18 @@ func initPPTExecutionState(agent *AgentInstance, opts processOptions) pptExecuti
 	for _, skill := range activeSkillNames(agent, opts) {
 		if strings.EqualFold(strings.TrimSpace(skill), "student-ppt-pet") {
 			state.Enabled = true
+			state.RequiresExecution = true
 			break
 		}
 	}
-	if !state.Enabled && isLikelyPPTRequest(opts.UserMessage) {
+	if !state.Enabled && shouldEnterPPTExecutionPhase(opts.UserMessage) {
 		state.Enabled = true
+		state.RequiresExecution = true
 	}
 	if !state.Enabled {
 		return state
 	}
 
-	state.RequiresExecution = true
 	state.PlanPath = filepath.Join(agent.Workspace, "ppt-plan.json")
 	state.OutputDir = filepath.Join(agent.Workspace, "generated", "student-ppt-pet")
 	refreshPPTExecutionState(&state)
@@ -3271,18 +3271,6 @@ func refreshPPTExecutionState(state *pptExecutionState) {
 	state.OutputExists = hasPPTXOutput(state.OutputDir)
 	if state.PlanExists {
 		state.RequiresExecution = true
-	}
-	if state.OutputExists && state.PlanExists {
-		if pptxInfo, ok := newestPPTXInfo(state.OutputDir); ok {
-			if planInfo, err := os.Stat(state.PlanPath); err == nil {
-				if pptxInfo.ModTime().After(planInfo.ModTime()) {
-					state.GenerateExecSucceeded = true
-					state.OutputIsStale = false
-				} else {
-					state.OutputIsStale = true
-				}
-			}
-		}
 	}
 }
 
@@ -3325,7 +3313,6 @@ func buildPPTGuardMessage(state pptExecutionState) string {
 	step1 := "missing"
 	step2 := "missing"
 	step3 := "missing"
-	step3Note := ""
 	if state.PlanExists {
 		step1 = "done"
 	}
@@ -3334,32 +3321,14 @@ func buildPPTGuardMessage(state pptExecutionState) string {
 	}
 	if state.OutputExists {
 		step3 = "done"
-		if state.OutputIsStale {
-			step3Note = " (stale - regenerate needed)"
-		}
 	}
 
 	return fmt.Sprintf(
-		"[Execution Guard] Continue PPT workflow and do not finalize yet. Current checkpoints: step1 plan(ppt-plan.json)=%s, step2 exec(generate.py)=%s, step3 pptx output=%s%s. Follow this order strictly: gather requirements -> write/update ppt-plan.json with non-empty slides -> run generate script via exec -> verify .pptx exists under generated/student-ppt-pet -> then provide final reply. Keep persona style only in wording; do not skip execution steps.",
+		"[Execution Guard] Continue PPT workflow and do not finalize yet. Current checkpoints: step1 plan(ppt-plan.json)=%s, step2 exec(generate.py)=%s, step3 pptx output=%s. Follow this order strictly: gather requirements -> write/update ppt-plan.json with non-empty slides -> run generate script via exec -> verify .pptx exists under generated/student-ppt-pet -> then provide final reply. Keep persona style only in wording; do not skip execution steps.",
 		step1,
 		step2,
 		step3,
-		step3Note,
 	)
-}
-
-func isLikelyPPTRequest(text string) bool {
-	lower := strings.ToLower(text)
-	if lower == "" {
-		return false
-	}
-	keywords := []string{"ppt", "powerpoint", "slide", "slides", "幻灯片", "答辩", "汇报", "开题", "课件"}
-	for _, keyword := range keywords {
-		if strings.Contains(lower, keyword) {
-			return true
-		}
-	}
-	return false
 }
 
 func shouldEnterPPTExecutionPhase(text string) bool {
@@ -3407,36 +3376,6 @@ func hasPPTXOutput(dir string) bool {
 		}
 	}
 	return false
-}
-
-func newestPPTXInfo(dir string) (os.FileInfo, bool) {
-	if strings.TrimSpace(dir) == "" {
-		return nil, false
-	}
-	entries, err := os.ReadDir(dir)
-	if err != nil {
-		return nil, false
-	}
-	var newest os.FileInfo
-	for _, entry := range entries {
-		if entry.IsDir() {
-			continue
-		}
-		if !strings.HasSuffix(strings.ToLower(entry.Name()), ".pptx") {
-			continue
-		}
-		info, err := entry.Info()
-		if err != nil {
-			continue
-		}
-		if newest == nil || info.ModTime().After(newest.ModTime()) {
-			newest = info
-		}
-	}
-	if newest == nil {
-		return nil, false
-	}
-	return newest, true
 }
 
 func (al *AgentLoop) applyExplicitSkillCommand(
