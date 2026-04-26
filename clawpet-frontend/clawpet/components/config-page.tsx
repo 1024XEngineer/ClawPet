@@ -28,9 +28,10 @@ import {
   getWebSocketInstance,
   type CharacterProfileData,
   type Config,
-  type UserProfileData,
 } from "@/lib/api"
+import { openOnboardingPopup } from "@/lib/onboarding"
 import { cn } from "@/lib/utils"
+import { ModelsPanel } from "./models-panel"
 
 type ConfigTab = "visual" | "raw"
 
@@ -92,7 +93,6 @@ function mapConfigToForm(config?: Config): ConfigFormState {
 
 function mapCharacterToPersonalityForm(
   character?: CharacterProfileData,
-  profile?: UserProfileData,
   config?: { language?: string; emotion_enabled?: boolean },
 ): PersonalityFormState {
   return {
@@ -100,7 +100,7 @@ function mapCharacterToPersonalityForm(
     petName: character?.pet_name ?? "",
     petPersona: character?.pet_persona ?? "",
     petPersonaType: character?.pet_persona_type ?? "gentle",
-    personalityTone: profile?.personality_tone ?? "正常",
+    personalityTone: character?.pet_persona ?? "正常",
     language: config?.language ?? "zh-CN",
     emotionEnabled: config?.emotion_enabled ?? true,
   }
@@ -137,6 +137,7 @@ export function ConfigPage() {
     type: "error" | "success"
     message: string
   } | null>(null)
+  const [showModelsPanel, setShowModelsPanel] = useState(false)
 
   useEffect(() => {
     if (!configData?.config || hasChanges) {
@@ -154,9 +155,8 @@ export function ConfigPage() {
       setPersonalityState(null)
       try {
         const ws = getWebSocketInstance()
-        const [characterResp, userProfileResp, petConfigResp] = await Promise.all([
+        const [characterResp, petConfigResp] = await Promise.all([
           ws.getCharacter(),
-          ws.getUserProfile(),
           ws.getPetConfig(),
         ])
 
@@ -166,7 +166,6 @@ export function ConfigPage() {
 
         const nextForm = mapCharacterToPersonalityForm(
           characterResp.data,
-          userProfileResp.data,
           petConfigResp.data,
         )
         setPersonalityForm(nextForm)
@@ -285,14 +284,10 @@ export function ConfigPage() {
         language: personalityForm.language,
       })
 
-      const [refreshedCharacter, refreshedProfile, refreshedConfig] = await Promise.all([
-        ws.getCharacter(),
-        ws.getUserProfile(),
-        ws.getPetConfig(),
-      ])
+      const refreshedCharacter = await ws.getCharacter()
+      const refreshedConfig = await ws.getPetConfig()
       const nextForm = mapCharacterToPersonalityForm(
         refreshedCharacter.data,
-        refreshedProfile.data,
         refreshedConfig.data,
       )
       setPersonalityForm(nextForm)
@@ -497,6 +492,12 @@ export function ConfigPage() {
                 {gatewaySummary.label}
               </div>
               <Button
+                onClick={openOnboardingPopup}
+                className="rounded-full border-0 bg-red-500 text-white hover:bg-red-600"
+              >
+                重新初始化
+              </Button>
+              <Button
                 variant="outline"
                 onClick={handleRestart}
                 disabled={restarting}
@@ -553,15 +554,24 @@ export function ConfigPage() {
                     <label className="mb-1.5 block text-sm font-medium text-[#5d4430]">
                       默认模型
                     </label>
-                    <input
-                      type="text"
-                      value={formData.defaultModel}
-                      onChange={(event) =>
-                        handleInputChange("defaultModel", event.target.value)
-                      }
-                      placeholder="例如：gpt-4o 或 claude-sonnet"
-                      className="w-full rounded-[1.2rem] border border-white/80 bg-white/84 px-4 py-3 text-sm text-[#4b3422] outline-none transition focus:border-amber-200 focus:bg-white"
-                    />
+                    <div className="flex gap-2">
+                      <input
+                        type="text"
+                        value={formData.defaultModel}
+                        onChange={(event) =>
+                          handleInputChange("defaultModel", event.target.value)
+                        }
+                        placeholder="例如：gpt-4o 或 claude-sonnet"
+                        className="flex-1 rounded-[1.2rem] border border-white/80 bg-white/84 px-4 py-3 text-sm text-[#4b3422] outline-none transition focus:border-amber-200 focus:bg-white"
+                      />
+                      <button
+                        type="button"
+                        onClick={() => setShowModelsPanel(true)}
+                        className="rounded-[1.2rem] border border-amber-200 bg-amber-50 px-4 py-3 text-sm font-medium text-amber-700 transition hover:bg-amber-100"
+                      >
+                        管理模型
+                      </button>
+                    </div>
                   </div>
 
                   <div>
@@ -947,6 +957,10 @@ export function ConfigPage() {
           )}
         </div>
       </div>
+
+      {showModelsPanel && (
+        <ModelsPanel onClose={() => setShowModelsPanel(false)} />
+      )}
     </section>
   )
 }
