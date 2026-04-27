@@ -551,46 +551,25 @@ export function ConfigPage() {
                   </h2>
                 </div>
                 <p className="mt-2 text-sm leading-6 text-[#816451]">
-                  设置默认模型和系统提示词，决定桌宠如何思考、如何表达。
+                  模型选择已迁移到统一模型面板，这里专注管理与切换。
                 </p>
 
-                <div className="mt-5 space-y-4">
-                  <div>
-                    <label className="mb-1.5 block text-sm font-medium text-[#5d4430]">
-                      默认模型
-                    </label>
-                    <div className="flex gap-2">
-                      <input
-                        type="text"
-                        value={formData.defaultModel}
-                        onChange={(event) =>
-                          handleInputChange("defaultModel", event.target.value)
-                        }
-                        placeholder="例如：gpt-4o 或 claude-sonnet"
-                        className="flex-1 rounded-[1.2rem] border border-white/80 bg-white/84 px-4 py-3 text-sm text-[#4b3422] outline-none transition focus:border-amber-200 focus:bg-white"
-                      />
-                      <button
-                        type="button"
-                        onClick={() => setShowModelsPanel(true)}
-                        className="rounded-[1.2rem] border border-amber-200 bg-amber-50 px-4 py-3 text-sm font-medium text-amber-700 transition hover:bg-amber-100"
-                      >
-                        管理模型
-                      </button>
+                <div className="mt-5 rounded-[1.4rem] border border-white/75 bg-[linear-gradient(145deg,rgba(255,255,255,0.9),rgba(255,247,238,0.82))] p-4 shadow-sm">
+                  <div className="flex flex-wrap items-center justify-between gap-3">
+                    <div className="inline-flex items-center gap-2 rounded-full border border-amber-200/80 bg-amber-50/90 px-3 py-1.5 text-xs font-medium text-amber-700">
+                      <span className="h-2 w-2 rounded-full bg-amber-500 shadow-[0_0_10px_rgba(245,158,11,0.45)]" />
+                      模型中心
                     </div>
+                    <button
+                      type="button"
+                      onClick={() => setShowModelsPanel(true)}
+                      className="rounded-[1.2rem] border border-amber-200 bg-amber-50 px-4 py-2.5 text-sm font-medium text-amber-700 transition hover:bg-amber-100"
+                    >
+                      管理模型
+                    </button>
                   </div>
-
-                  <div>
-                    <label className="mb-1.5 block text-sm font-medium text-[#5d4430]">
-                      系统提示词
-                    </label>
-                    <textarea
-                      value={formData.systemPrompt}
-                      onChange={(event) =>
-                        handleInputChange("systemPrompt", event.target.value)
-                      }
-                      placeholder="描述桌宠的角色、语气与行为边界..."
-                      className="h-36 w-full resize-none rounded-[1.2rem] border border-white/80 bg-white/84 px-4 py-3 text-sm text-[#4b3422] outline-none transition focus:border-amber-200 focus:bg-white"
-                    />
+                  <div className="mt-3 rounded-[1rem] border border-white/80 bg-white/82 px-3 py-3 text-sm leading-6 text-[#7f5f48]">
+                    已移除默认模型与系统提示词编辑入口。请在模型管理中统一配置可用模型。
                   </div>
                 </div>
               </article>

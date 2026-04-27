@@ -1,12 +1,11 @@
 "use client"
 
-import { useEffect, useRef, useState, type CSSProperties } from "react"
+import { useEffect, useState, type CSSProperties } from "react"
 import { createPortal } from "react-dom"
 import {
+  AlarmClock,
   AlertCircle,
   Clock,
-  Cpu,
-  FolderUp,
   Home,
   Layers,
   MessageSquare,
@@ -19,10 +18,6 @@ import {
 
 import { type UseChatResult } from "@/hooks/use-chat"
 import { useGatewayStatus } from "@/hooks/use-picoclaw"
-import {
-  openOnboardingPopup,
-  SCHEDULE_ICS_NAME_STORAGE_KEY,
-} from "@/lib/onboarding"
 import { cn } from "@/lib/utils"
 
 interface SidebarProps {
@@ -51,7 +46,7 @@ const navItems = [
       "from-orange-100 via-rose-50 to-white text-[#924d2f] border-orange-200/90",
   },
   {
-    icon: Clock,
+    icon: AlarmClock,
     label: "定时任务",
     detail: "自动执行",
     accent:
@@ -125,12 +120,9 @@ export function Sidebar({
   layoutMode = "full",
   chat,
 }: SidebarProps) {
-  const [scheduleFileName, setScheduleFileName] = useState("")
-  const [scheduleImportHint, setScheduleImportHint] = useState("")
   const [historyOpen, setHistoryOpen] = useState(false)
   const [mounted, setMounted] = useState(false)
   const { data: gatewayStatus } = useGatewayStatus()
-  const scheduleFileInputRef = useRef<HTMLInputElement | null>(null)
 
   useEffect(() => {
     setMounted(true)
@@ -147,31 +139,7 @@ export function Sidebar({
     setHistoryOpen(false)
   }
 
-  useEffect(() => {
-    try {
-      const savedName = window.localStorage.getItem(SCHEDULE_ICS_NAME_STORAGE_KEY)
-      if (savedName) {
-        setScheduleFileName(savedName)
-      }
-    } catch {}
-  }, [])
-
-  const handleScheduleFilePick = (file: File | null) => {
-    if (!file) return
-    if (!file.name.toLowerCase().endsWith(".ics")) {
-      setScheduleImportHint("只支持 .ics 课表文件")
-      return
-    }
-
-    setScheduleImportHint("已导入，可在初始化里继续使用")
-    setScheduleFileName(file.name)
-    try {
-      window.localStorage.setItem(SCHEDULE_ICS_NAME_STORAGE_KEY, file.name)
-    } catch {}
-  }
-
   const gatewayAppearance = resolveGatewayAppearance(gatewayStatus?.state)
-  const importedScheduleLabel = scheduleFileName ? scheduleFileName : "未导入课表"
   const sessionCount = chat.sessions.length
   const isCompact = layoutMode !== "full"
 
@@ -262,7 +230,7 @@ export function Sidebar({
             <div className="relative flex h-full min-h-0 flex-col items-center gap-2 overflow-y-scroll p-2">
               <button
                 onClick={() => setActiveNav("聊天")}
-                title="桌宠驾驶舱"
+                title="ClawPet"
                 className="dashboard-enter dashboard-card flex h-12 w-12 items-center justify-center rounded-2xl border border-white/80 bg-[linear-gradient(140deg,rgba(255,255,255,0.94),rgba(255,243,228,0.9))] text-amber-700 shadow-sm"
               >
                 <Sparkles className="h-5 w-5" />
@@ -280,38 +248,12 @@ export function Sidebar({
             </button>
 
             <button
-              onClick={openOnboardingPopup}
-              title="重新初始化"
-              className="dashboard-enter dashboard-card flex h-11 w-11 items-center justify-center rounded-2xl border border-white/80 bg-white/85 text-[#6a452a]"
-            >
-              <Sparkles className="h-4 w-4" />
-            </button>
-
-            <button
-              onClick={() => scheduleFileInputRef.current?.click()}
-              title="导入课表"
-              className="dashboard-enter dashboard-card flex h-11 w-11 items-center justify-center rounded-2xl border border-white/80 bg-white/85 text-[#6a452a]"
-            >
-              <FolderUp className="h-4 w-4" />
-            </button>
-
-            <button
               onClick={openHistory}
               title="会话历史"
               className="dashboard-enter dashboard-card flex h-11 w-11 items-center justify-center rounded-2xl border border-white/80 bg-white/85 text-[#6a452a]"
             >
               <Clock className="h-4 w-4" />
             </button>
-
-            <input
-              ref={scheduleFileInputRef}
-              type="file"
-              accept=".ics"
-              className="hidden"
-              onChange={(event) =>
-                handleScheduleFilePick(event.target.files?.[0] ?? null)
-              }
-            />
 
             <div className="my-1 h-px w-10 bg-white/70" />
 
@@ -362,26 +304,20 @@ export function Sidebar({
           )}
         >
           <section className={cn("dashboard-enter dashboard-card rounded-[1.8rem] border border-white/70 bg-[linear-gradient(145deg,rgba(255,252,247,0.94),rgba(255,244,232,0.88),rgba(255,248,242,0.86))] shadow-[0_18px_45px_-28px_rgba(131,84,37,0.52)]", isCompact ? "p-2.5" : "p-3")}>
-            <div className="flex items-start justify-between gap-3">
+            <div className="flex items-start gap-3">
               <div className="flex items-center gap-3">
                 <div className="dashboard-pulse-glow flex h-10 w-10 items-center justify-center rounded-2xl bg-gradient-to-br from-amber-400 via-orange-400 to-rose-400 text-white shadow-[0_12px_26px_-18px_rgba(217,119,6,0.7)]">
                   <Sparkles className="h-4.5 w-4.5" />
                 </div>
                 <div>
                   <p className="text-[0.72rem] font-medium uppercase tracking-[0.22em] text-amber-700/75">
-                    ClawPet Console
+                    ClawPet
                   </p>
-                  <h2 className={cn("mt-1 font-semibold tracking-tight text-[#52331d]", isCompact ? "text-base" : "text-lg")}>
-                    桌宠驾驶舱
-                  </h2>
                 </div>
               </div>
-              <span className={cn("rounded-full border border-white/70 bg-white/80 font-medium text-[#876140]", isCompact ? "px-2 py-1 text-[0.68rem]" : "px-2.5 py-1 text-[0.72rem]")}>
-                测试版
-              </span>
             </div>
 
-             <div className={cn("mt-3 grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-1 xl:grid-cols-2", isCompact ? "gap-2" : "gap-2.5")}>
+             <div className={cn("mt-3 grid grid-cols-2", isCompact ? "gap-2" : "gap-2.5")}>
               <div
                 className={cn(
                   "dashboard-card rounded-[1.2rem] border bg-gradient-to-r shadow-sm",
@@ -407,8 +343,7 @@ export function Sidebar({
 
               <div className={cn("dashboard-card rounded-[1.2rem] border border-white/75 bg-white/78 shadow-sm", isCompact ? "px-2.5 py-2.5" : "px-3 py-3")}>
                 <div className="flex items-center gap-2 text-[#5d4632]">
-                  <Cpu className="h-4 w-4 text-amber-600" />
-                  <span className="text-sm font-semibold">会话概览</span>
+                  <span className="text-sm font-semibold">测试版</span>
                 </div>
                 <p
                   className={cn(
@@ -416,14 +351,11 @@ export function Sidebar({
                     isCompact && "hidden",
                   )}
                 >
-                  已保存 {sessionCount} 个会话。
+                  功能持续更新中。
                 </p>
               </div>
             </div>
 
-            <div className={cn("mt-3 rounded-[1.2rem] border border-white/70 bg-white/72 px-3 py-2.5 text-xs text-[#7b624f] shadow-sm", isCompact && "hidden")}>
-              课表状态：<span className="font-medium text-[#5d4430]">{importedScheduleLabel}</span>
-            </div>
           </section>
 
           {isCompact && (
@@ -443,60 +375,19 @@ export function Sidebar({
             </section>
           )}
 
-          <section className={cn("grid grid-cols-2", isCompact ? "gap-2" : "gap-3")}>
+          <section className={cn("grid grid-cols-1", isCompact ? "gap-2" : "gap-3")}>
             <button
               onClick={() => {
                 setActiveNav("聊天")
                 void chat.newChat()
               }}
-              className={cn("dashboard-enter dashboard-card group rounded-[1.4rem] border border-white/80 bg-[linear-gradient(140deg,rgba(255,255,255,0.9),rgba(255,245,235,0.82))] text-left shadow-[0_16px_30px_-24px_rgba(125,81,36,0.48)] transition hover:border-amber-200 hover:shadow-[0_22px_34px_-24px_rgba(217,119,6,0.4)]", isCompact ? "p-2.5" : "p-3")}
+              className={cn("dashboard-enter dashboard-card group flex flex-col items-center justify-center rounded-[1.4rem] border border-white/80 bg-[linear-gradient(140deg,rgba(255,255,255,0.9),rgba(255,245,235,0.82))] text-center shadow-[0_16px_30px_-24px_rgba(125,81,36,0.48)] transition hover:border-amber-200 hover:shadow-[0_22px_34px_-24px_rgba(217,119,6,0.4)]", isCompact ? "p-2.5" : "p-3")}
             >
               <div className={cn("flex items-center justify-center rounded-2xl bg-amber-100 text-amber-700", isCompact ? "h-8 w-8" : "h-9 w-9")}>
                 <Plus className={cn(isCompact ? "h-3.5 w-3.5" : "h-4 w-4")} />
               </div>
               <p className={cn("mt-2 font-semibold text-[#533621]", isCompact ? "text-xs" : "text-sm")}>新建聊天</p>
             </button>
-
-            <button
-              onClick={openOnboardingPopup}
-              className={cn("dashboard-enter dashboard-card group rounded-[1.4rem] border border-white/80 bg-[linear-gradient(140deg,rgba(255,248,228,0.96),rgba(255,240,214,0.84),rgba(255,248,238,0.8))] text-left shadow-[0_16px_30px_-24px_rgba(150,92,31,0.46)] transition hover:border-orange-200 hover:shadow-[0_22px_34px_-24px_rgba(245,158,11,0.42)]", isCompact ? "p-2.5" : "p-3")}
-            >
-              <div className={cn("flex items-center justify-center rounded-2xl bg-white/85 text-amber-700", isCompact ? "h-8 w-8" : "h-9 w-9")}>
-                <Sparkles className={cn(isCompact ? "h-3.5 w-3.5" : "h-4 w-4")} />
-              </div>
-              <p className={cn("mt-2 font-semibold text-[#684120]", isCompact ? "text-xs" : "text-sm")}>重新初始化</p>
-            </button>
-
-            <button
-              onClick={() => scheduleFileInputRef.current?.click()}
-              className={cn("dashboard-enter dashboard-card col-span-2 group rounded-[1.4rem] border border-white/80 bg-[linear-gradient(140deg,rgba(245,251,255,0.94),rgba(255,249,243,0.84))] text-left shadow-[0_16px_30px_-24px_rgba(95,119,156,0.32)] transition hover:border-sky-200 hover:shadow-[0_22px_34px_-24px_rgba(56,189,248,0.28)]", isCompact ? "p-2.5" : "p-3")}
-            >
-              <div className="flex items-start justify-between gap-3">
-                <div>
-                  <div className="flex items-center gap-2">
-                    <div className={cn("flex items-center justify-center rounded-2xl bg-sky-100 text-sky-700", isCompact ? "h-8 w-8" : "h-9 w-9")}>
-                      <FolderUp className={cn(isCompact ? "h-3.5 w-3.5" : "h-4 w-4")} />
-                    </div>
-                    <div>
-                      <p className={cn("font-semibold text-[#4b3a2c]", isCompact ? "text-sm" : "text-base")}>导入课表</p>
-                    </div>
-                  </div>
-                </div>
-                <span className={cn("rounded-full border border-white/70 bg-white/80 px-2 py-1 text-[0.65rem] text-[#7d6755]", isCompact ? "inline-flex" : "text-[0.7rem]")}>
-                  {scheduleFileName ? "已同步" : "可选"}
-                </span>
-              </div>
-            </button>
-
-            <input
-              ref={scheduleFileInputRef}
-              type="file"
-              accept=".ics"
-              className="hidden"
-              onChange={(event) =>
-                handleScheduleFilePick(event.target.files?.[0] ?? null)
-              }
-            />
           </section>
 
           <section
@@ -624,16 +515,10 @@ export function Sidebar({
             </section>
           )}
 
-          {(scheduleImportHint || scheduleFileName || gatewayStatus?.restartRequired) && (
+          {gatewayStatus?.restartRequired && (
             <section className={cn("dashboard-enter dashboard-card rounded-[1.8rem] border border-white/70 bg-[linear-gradient(145deg,rgba(255,252,248,0.92),rgba(255,246,238,0.84))] shadow-[0_16px_36px_-28px_rgba(118,84,49,0.36)]", isCompact ? "p-2.5" : "p-3", "mb-1 shrink-0 max-[860px]:p-2")}> 
-              {(scheduleImportHint || scheduleFileName) && (
-                <div className="rounded-[1.1rem] border border-white/75 bg-white/78 px-3 py-2 text-xs leading-5 text-[#7d6755]">
-                  {scheduleImportHint || `已导入：${scheduleFileName}`}
-                </div>
-              )}
-
               {gatewayStatus?.restartRequired && (
-                <div className="mt-3 flex items-start gap-2 rounded-[1.1rem] border border-orange-200/70 bg-orange-50/90 px-3 py-2 text-xs leading-5 text-[#955924]">
+                <div className="flex items-start gap-2 rounded-[1.1rem] border border-orange-200/70 bg-orange-50/90 px-3 py-2 text-xs leading-5 text-[#955924]">
                   <AlertCircle className="mt-0.5 h-4 w-4 shrink-0" />
                   <span>检测到网关需要重启，部分新配置会在重启后生效。</span>
                 </div>
