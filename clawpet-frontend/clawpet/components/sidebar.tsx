@@ -304,12 +304,12 @@ export function Sidebar({
           )}
         >
           <section className={cn("dashboard-enter dashboard-card rounded-[1.8rem] border border-white/70 bg-[linear-gradient(145deg,rgba(255,252,247,0.94),rgba(255,244,232,0.88),rgba(255,248,242,0.86))] shadow-[0_18px_45px_-28px_rgba(131,84,37,0.52)]", isCompact ? "p-2.5" : "p-3")}>
-            <div className="flex items-start gap-3">
-              <div className="flex items-center gap-3">
+            <div className="flex items-start justify-center gap-3">
+              <div className="flex items-center justify-center gap-3">
                 <div className="dashboard-pulse-glow flex h-10 w-10 items-center justify-center rounded-2xl bg-gradient-to-br from-amber-400 via-orange-400 to-rose-400 text-white shadow-[0_12px_26px_-18px_rgba(217,119,6,0.7)]">
                   <Sparkles className="h-4.5 w-4.5" />
                 </div>
-                <div>
+                <div className="text-center">
                   <p className="text-[0.72rem] font-medium uppercase tracking-[0.22em] text-amber-700/75">
                     ClawPet
                   </p>
@@ -317,7 +317,7 @@ export function Sidebar({
               </div>
             </div>
 
-             <div className={cn("mt-3 grid grid-cols-2", isCompact ? "gap-2" : "gap-2.5")}>
+             <div className={cn("mx-auto mt-3 grid grid-cols-1", isCompact ? "w-full gap-2" : "w-full gap-2.5")}>
               <div
                 className={cn(
                   "dashboard-card rounded-[1.2rem] border bg-gradient-to-r shadow-sm",
@@ -325,7 +325,7 @@ export function Sidebar({
                   gatewayAppearance.shell,
                 )}
               >
-                <div className="flex items-center gap-2">
+                <div className="flex items-center justify-center gap-2">
                   <span className={cn("h-2.5 w-2.5 rounded-full", gatewayAppearance.dot)} />
                   <span className="text-sm font-semibold text-[#4e3827]">
                     {gatewayAppearance.title}
@@ -333,7 +333,7 @@ export function Sidebar({
                 </div>
                 <p
                   className={cn(
-                    "mt-2 text-sm leading-5 text-[#83654d] [@media(max-height:860px)]:hidden",
+                    "mt-2 text-center text-sm leading-5 text-[#83654d] [@media(max-height:860px)]:hidden",
                     isCompact && "hidden",
                   )}
                 >
@@ -341,19 +341,6 @@ export function Sidebar({
                 </p>
               </div>
 
-              <div className={cn("dashboard-card rounded-[1.2rem] border border-white/75 bg-white/78 shadow-sm", isCompact ? "px-2.5 py-2.5" : "px-3 py-3")}>
-                <div className="flex items-center gap-2 text-[#5d4632]">
-                  <span className="text-sm font-semibold">测试版</span>
-                </div>
-                <p
-                  className={cn(
-                    "mt-2 text-sm leading-5 text-[#83654d] [@media(max-height:860px)]:hidden",
-                    isCompact && "hidden",
-                  )}
-                >
-                  功能持续更新中。
-                </p>
-              </div>
             </div>
 
           </section>

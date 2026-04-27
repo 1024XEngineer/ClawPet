@@ -6,7 +6,6 @@ import {
   Lightbulb,
   Mic,
   PenTool,
-  RefreshCw,
   Search,
   Send,
   Sparkles,
@@ -73,7 +72,6 @@ interface ChatAreaProps {
 }
 
 export function ChatArea({ chat, layoutMode = "full" }: ChatAreaProps) {
-  const [activeTab, setActiveTab] = useState("聊天")
   const [message, setMessage] = useState("")
   const isCompact = layoutMode !== "full"
   const isUltra = layoutMode === "ultra"
@@ -125,8 +123,7 @@ export function ChatArea({ chat, layoutMode = "full" }: ChatAreaProps) {
   }
 
   const hasMessages = messages.length > 0
-  const heroTitle =
-    activeTab === "工作" ? "今天准备推进哪项任务？" : "今天想让桌宠帮你什么？"
+  const heroTitle = "今天想让桌宠帮你什么？"
 
   const visibleSuggestions = isUltra ? suggestions.slice(0, 2) : suggestions
 
@@ -138,67 +135,7 @@ export function ChatArea({ chat, layoutMode = "full" }: ChatAreaProps) {
       <div className="pointer-events-none absolute inset-0 bg-[radial-gradient(circle_at_18%_12%,rgba(255,255,255,0.8),transparent_26%),radial-gradient(circle_at_86%_10%,rgba(255,215,170,0.32),transparent_24%),radial-gradient(circle_at_70%_72%,rgba(254,205,211,0.18),transparent_30%),radial-gradient(circle_at_18%_82%,rgba(191,219,254,0.18),transparent_26%)]" />
 
       <div className="relative flex min-h-0 flex-1 flex-col">
-        <div
-          className={cn(
-            "dashboard-enter",
-            isUltra ? "px-2.5 pb-1.5 pt-2" : isCompact ? "px-3 pb-2 pt-3" : "px-6 pb-3 pt-5",
-          )}
-        >
-          <div className={cn("dashboard-card border border-white/70 bg-[linear-gradient(145deg,rgba(255,251,246,0.92),rgba(255,245,237,0.86),rgba(255,249,244,0.84))] shadow-[0_20px_45px_-30px_rgba(120,83,42,0.45)] backdrop-blur-xl", isUltra ? "rounded-[1rem] px-2.5 py-2" : isCompact ? "rounded-[1.2rem] px-3 py-2.5" : "rounded-[1.8rem] px-5 py-4")}>
-            <div className="flex flex-wrap items-center justify-end gap-3">
-              <div className={cn("flex items-center gap-2 rounded-full border border-white/75 bg-white/82", isUltra ? "p-0.5" : "p-1")}>
-                {(["聊天", "工作"] as const).map((tab) => (
-                  <button
-                    key={tab}
-                    onClick={() => setActiveTab(tab)}
-                    className={cn(
-                       "rounded-full font-medium transition",
-                       isUltra ? "px-3 py-1.5 text-xs" : "px-4 py-2 text-sm",
-                      activeTab === tab
-                        ? "bg-gradient-to-r from-white via-amber-50 to-white text-[#4d3420] shadow-[0_12px_20px_-18px_rgba(115,75,34,0.55)]"
-                        : "text-[#8a6b50] hover:text-[#4d3420]",
-                    )}
-                  >
-                    {tab}
-                  </button>
-                ))}
-              </div>
-
-              <div className="flex items-center gap-2">
-                {!isConnected && (
-                  <Button
-                    variant="outline"
-                    size="sm"
-                    onClick={reconnect}
-                    className="rounded-full border-white/80 bg-white/82 text-[#6f5033] hover:bg-white"
-                  >
-                    <RefreshCw className="mr-2 h-3.5 w-3.5" />
-                    重新连接
-                  </Button>
-                )}
-                {!isCompact && <div className="text-right">
-                  <p className="text-xs uppercase tracking-[0.24em] text-[#b07b4d]">
-                    陪伴牌组
-                  </p>
-                  <p className="mt-1 text-base font-semibold text-[#51341f]">
-                    ClawPet AI
-                  </p>
-                </div>}
-                {!isCompact && (
-                  <Button
-                    variant="outline"
-                    size="sm"
-                    className="rounded-full border-amber-300 bg-amber-50/90 text-amber-700 hover:bg-amber-100 hover:text-amber-800"
-                  >
-                    体验增强版
-                  </Button>
-                )}
-              </div>
-            </div>
-          </div>
-        </div>
-
-        <div className={cn("min-h-0 flex-1 overflow-y-scroll", isCompact ? "px-3 pb-2 pt-1" : "px-6 pb-4 pt-1")}>
+        <div className={cn("min-h-0 flex-1 overflow-y-scroll", isCompact ? "px-3 pb-2 pt-3" : "px-6 pb-4 pt-5")}>
           {hasMessages ? (
             <div className={cn("grid min-h-full gap-4", !isCompact && "lg:grid-cols-[minmax(0,1fr)_18rem]")}>
               <div className="dashboard-enter dashboard-card min-h-0 overflow-y-scroll rounded-[2rem] border border-white/75 bg-[linear-gradient(145deg,rgba(255,252,249,0.94),rgba(255,247,242,0.9))] p-5 shadow-[0_24px_50px_-34px_rgba(116,80,42,0.4)]">
