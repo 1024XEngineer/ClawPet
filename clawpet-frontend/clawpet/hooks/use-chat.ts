@@ -79,6 +79,11 @@ interface ResolvedAudioChunkPayload {
 }
 
 const EMPTY_SESSION_TITLE = "新对话"
+
+function generateChatSessionKey(): string {
+  return `session-${Date.now()}-${Math.random().toString(36).substring(2, 11)}`
+}
+
 function normalizeTimestamp(value: number | string): number {
   const numeric = typeof value === "number" ? value : Number(value)
   return Number.isFinite(numeric) ? numeric : Date.now()
@@ -380,7 +385,7 @@ export function useChat(options: UseChatOptions = {}): UseChatResult {
   const [error, setError] = useState<string | null>(null)
   const wsRef = useRef(getWebSocketInstance())
   const optionsRef = useRef(options)
-  const initialSessionIdRef = useRef(wsRef.current.ensureSessionId())
+  const initialSessionIdRef = useRef(generateChatSessionKey())
 
   // 尝试从 localStorage 加载会话
   const storedSessions = loadSessionsFromStorage()
@@ -976,14 +981,15 @@ export function useChat(options: UseChatOptions = {}): UseChatResult {
       setIsTyping(true)
       setError(null)
 
-      wsRef.current.send(outbound)
+      wsRef.current.send(outbound, activeSessionIdRef.current)
     },
     [updateSessionMessages],
   )
 
   const newChat = useCallback(async () => {
-    const nextSessionId = wsRef.current.startNewSession()
+    const nextSessionId = generateChatSessionKey()
     const nextSession = createSessionState(nextSessionId)
+    wsRef.current.disconnect()
 
     if (currentAudioRef.current) {
       currentAudioRef.current.pause()
@@ -1027,7 +1033,7 @@ export function useChat(options: UseChatOptions = {}): UseChatResult {
       // Load session history from backend
       await loadSessionHistory(sessionId)
 
-      wsRef.current.useSession(sessionId)
+      wsRef.current.disconnect()
       if (currentAudioRef.current) {
         currentAudioRef.current.pause()
       }
@@ -1064,7 +1070,7 @@ export function useChat(options: UseChatOptions = {}): UseChatResult {
 
       let nextActiveId = activeSessionIdRef.current
       if (sessionId === activeSessionIdRef.current) {
-        nextActiveId = remaining[0]?.id ?? wsRef.current.startNewSession()
+        nextActiveId = remaining[0]?.id ?? generateChatSessionKey()
       }
 
       const nextSessions =
@@ -1077,7 +1083,7 @@ export function useChat(options: UseChatOptions = {}): UseChatResult {
       saveSessionsToStorage(nextSessions, nextActiveId)
 
       if (sessionId === activeSessionIdRef.current) {
-        wsRef.current.useSession(nextActiveId)
+        wsRef.current.disconnect()
         if (currentAudioRef.current) {
           currentAudioRef.current.pause()
         }

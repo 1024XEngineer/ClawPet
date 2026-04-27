@@ -111,7 +111,7 @@ interface TokenCandidate {
 
 type WSEventData = ChatMessage | string | Record<string, unknown>
 type WSMode = "pet" | "pico"
-type OutboundRequest = PetRequest
+type OutboundRequest = PetRequest | PicoWireMessage
 
 interface PicoWireMessage {
   type?: string
@@ -145,7 +145,7 @@ function normalizeIncomingText(text: string): string {
 
 export class PicoClawWebSocket {
   private ws: WebSocket | null = null
-  private sessionId = ""
+  private routeSessionId = ""
   private reconnectAttempts = 0
   private readonly maxReconnectAttempts = 5
   private readonly reconnectDelay = 1000
@@ -195,13 +195,13 @@ export class PicoClawWebSocket {
       }
 
       try {
-        if (!this.sessionId) {
-          this.sessionId = this.generateSessionId()
+        if (!this.routeSessionId) {
+          this.routeSessionId = this.generateSessionId()
         }
         const { token, wsPath, wsBaseUrl, mode } =
           await this.resolveTokenAndPath()
         this.wsMode = mode
-        const query = `session=${encodeURIComponent(this.sessionId)}&session_id=${encodeURIComponent(this.sessionId)}`
+        const query = `session=${encodeURIComponent(this.routeSessionId)}&session_id=${encodeURIComponent(this.routeSessionId)}`
         const url = `${wsBaseUrl}${wsPath}?${query}`
         this.connectWebSocket(url, token)
       } catch (err) {
@@ -213,27 +213,11 @@ export class PicoClawWebSocket {
     })
   }
 
-  ensureSessionId(): string {
-    if (!this.sessionId) {
-      this.sessionId = this.generateSessionId()
+  ensureRouteSessionId(): string {
+    if (!this.routeSessionId) {
+      this.routeSessionId = this.generateSessionId()
     }
-    return this.sessionId
-  }
-
-  startNewSession(): string {
-    this.disconnect()
-    this.sessionId = this.generateSessionId()
-    this.messageQueue = []
-    this.resetAssistantState()
-    return this.sessionId
-  }
-
-  useSession(sessionId: string): string {
-    this.disconnect()
-    this.sessionId = sessionId || this.generateSessionId()
-    this.messageQueue = []
-    this.resetAssistantState()
-    return this.sessionId
+    return this.routeSessionId
   }
 
   private resetAssistantState(): void {
@@ -847,14 +831,15 @@ export class PicoClawWebSocket {
     this.reconnectAttempts = 0
   }
 
-  send(content: string): void {
+  send(content: string, sessionKey?: string): void {
     this.resetAssistantState()
+    const resolvedSessionKey = sessionKey?.trim() || this.generateSessionId()
     if (this.wsMode === "pico") {
       const requestId = `req-${++this.msgIdCounter}-${Date.now()}`
       const msg: PicoWireMessage = {
         type: "message.send",
         id: requestId,
-        session_id: this.ensureSessionId(),
+        session_id: resolvedSessionKey,
         timestamp: Date.now(),
         payload: {
           content,
@@ -864,7 +849,7 @@ export class PicoClawWebSocket {
         this.sendRaw(msg)
         return
       }
-      this.messageQueue.push(msg as OutboundRequest)
+      this.messageQueue.push(msg)
       this.connect().catch(() => {
         this.emit({ type: "error", data: "Connection failed" })
       })
@@ -873,7 +858,7 @@ export class PicoClawWebSocket {
 
     this.sendAction(CHAT_ACTION, {
       text: content,
-      session_key: this.ensureSessionId(),
+      session_key: resolvedSessionKey,
     })
   }
 
