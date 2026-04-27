@@ -441,7 +441,7 @@ func (c *PetChannel) handleWebSocket(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	sessionID := r.URL.Query().Get("session")
+	sessionID := r.URL.Query().Get("sessionId")
 	if sessionID == "" {
 		sessionID = "default"
 	}

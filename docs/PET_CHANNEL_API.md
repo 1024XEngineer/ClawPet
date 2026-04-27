@@ -11,40 +11,40 @@
 ### 1.1 WebSocket 连接地址
 
 ```
-ws://{host}:{port}/ws?session={sessionId}&session_id={sessionId}
+ws://{host}:{port}/ws?sessionId={sessionId}
 ```
 
 **参数说明**：
 
-| 参数 | 类型 | 必填 | 说明 |
-|------|------|------|------|
-| host | string | 是 | 服务器地址，默认 `0.0.0.0` |
-| port | int | 是 | 服务器端口，默认 `8080` |
-| sessionId | string | 是 | 主会话ID，用于流式传输路由 |
+| 参数        | 类型 | 必填 | 说明                 |
+|-----------|------|------|--------------------|
+| host      | string | 是 | 服务器地址，默认 `0.0.0.0` |
+| port      | int | 是 | 服务器端口，默认 `8080`    |
+| sessionId | string | 是 | 连接的id凭证，用于流式传输路由   |
 
 **连接示例**：
 ```javascript
-const ws = new WebSocket('ws://localhost:8080/ws?session=user_001&session_id=user_001');
+const ws = new WebSocket('ws://localhost:8080/ws?sessionId=user_001');
 ```
 
 **重要说明**：
 
-- `session` 参数：**主会话ID**，用于流式传输时路由到正确的 WebSocket 连接
-- 服务器根据 `session` 匹配连接，确保响应发送到正确的客户端
+- `sessionId` 参数：**连接的id凭证**，用于流式传输时路由到正确的 WebSocket 连接
+- 服务器根据 `sessionId` 匹配连接，确保响应发送到正确的客户端
 - 连接建立后，服务器会主动推送 `init_status`，告知前端是否需要初始化配置
 
 **session 与 session_key 的区别**：
 
-| 字段 | 来源 | 用途 |
-|------|------|------|
-| `session`（URL 参数） | WebSocket 连接时传入 | 流式传输路由，匹配 WebSocket 连接 |
-| `session_key`（chat 请求中） | 消息中传入 | 会话隔离，picoclaw 据此生成 sessionKey |
+| 字段                      | 来源              | 用途                                                                               |
+|-------------------------|-----------------|----------------------------------------------------------------------------------|
+| `sessionId`（URL 参数）     | WebSocket 连接时传入 | 流式传输路由，匹配 WebSocket 连接                                                           |
+| `session_key`（chat 请求中） | 消息中传入           | 会话隔离，picoclaw 据此生成 session_key,通过session_key细化会话，达到session_key在一个角色的会话上属于一个聊天上下文 |
 
 **示例**：
-- 用户A 连接：`session=user_001`
-- 用户B 连接：`session=user_002`
-- 用户A 发送消息：`session_key=session-xxx` → 流式响应发送到 `session=user_001` 的连接
-- 用户B 发送消息：`session_key=session-yyy` → 流式响应发送到 `session=user_002` 的连接
+- 用户A 连接：`sessionId=user_001`
+- 用户B 连接：`sessionId=user_002`
+- 用户A 发送消息：`session_key=session-xxx` → 流式响应发送到 `sessionId=user_001` 的连接
+- 用户B 发送消息：`session_key=session-yyy` → 流式响应发送到 `sessionId=user_002` 的连接
 
 ---
 
