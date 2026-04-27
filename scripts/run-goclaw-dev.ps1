@@ -571,10 +571,11 @@ if ((Test-HttpReady -Url $launcherBaseUrl -TimeoutSeconds 2) -or (Test-PortListe
   Write-Step "Launcher is ready at $launcherBaseUrl"
 }
 
-Write-Step "Ensuring gateway is running before opening UI..."
+# Gateway preflight - 非阻塞检查，允许 UI 先启动
+Write-Step "Checking gateway status (non-blocking)..."
+$gatewayReady = $false
+$gatewayPreconditionBlocked = $false
 try {
-  $gatewayReady = $false
-  $gatewayPreconditionBlocked = $false
   for ($attempt = 1; $attempt -le 2; $attempt++) {
     Ensure-GatewayPortAvailable -ConfigPath $LauncherConfigPath -DesiredPort $GatewayPort
 
@@ -592,11 +593,13 @@ try {
           if ([string]::IsNullOrWhiteSpace($reason)) {
             $reason = "gateway start preconditions are not met yet"
           }
-          Write-Warning "Gateway not started yet: $reason. Continuing startup so onboarding/UI can open."
+          Write-Warning "Gateway not started yet: $reason. UI will open for onboarding/model setup."
           $gatewayPreconditionBlocked = $true
           break
         }
-        throw
+        Write-Warning "Gateway start failed: $($_.Exception.Message). UI will open for configuration."
+        $gatewayPreconditionBlocked = $true
+        break
       }
     }
 
@@ -627,20 +630,19 @@ try {
     if ($latest.gateway_start_reason) {
       $reason = " reason: $($latest.gateway_start_reason)"
     }
-    throw "Gateway is not running after startup.$reason"
-  }
-
-  if (-not $gatewayReady -and -not $gatewayPreconditionBlocked) {
-    throw "Gateway is not running after startup."
+    Write-Warning "Gateway is not running after startup.$reason UI will open for configuration."
+    $gatewayPreconditionBlocked = $true
+    break
   }
 
   if ($gatewayReady) {
     Write-Step "Gateway is running."
   } else {
-    Write-Step "Gateway is not running yet (waiting for onboarding/model setup)."
+    Write-Step "Gateway is not running yet (will start after UI configuration)."
   }
 } catch {
-  throw "Gateway preflight failed: $($_.Exception.Message)"
+  Write-Warning "Gateway preflight check failed: $($_.Exception.Message). UI will open for configuration."
+  $gatewayPreconditionBlocked = $true
 }
 
 $currentGatewayPort = Get-GatewayPortFromConfig -ConfigPath $LauncherConfigPath
