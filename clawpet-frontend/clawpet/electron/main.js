@@ -516,6 +516,7 @@ function createPetWindow() {
     startPetHoverMonitor();
     if (!onboardingLocked) {
       petWindow.show();
+      ensurePetWindowTopMost('ready-to-show');
     }
   });
 
@@ -535,11 +536,12 @@ function resetPetWindow() {
   }
 
   petWindow.setResizable(false);
-  petWindow.setAlwaysOnTop(true);
+  petWindow.setAlwaysOnTop(true, 'pop-up-menu');
   petWindow.setSkipTaskbar(true);
   petWindow.setBounds(getPetBounds(), true);
   setPetWindowClickThrough(true);
   startPetHoverMonitor();
+  ensurePetWindowTopMost('reset');
 }
 
 /**
@@ -624,6 +626,7 @@ function createSettingsWindow(targetUrl = buildSettingsWindowUrl()) {
     }
     settingsWindow.show();
     settingsWindow.focus();
+    ensurePetWindowTopMost('settings-window-reuse');
     return;
   }
 
@@ -672,6 +675,7 @@ function createSettingsWindow(targetUrl = buildSettingsWindowUrl()) {
   settingsWindow.once('ready-to-show', () => {
     settingsWindow.show();
     settingsWindow.focus();
+    ensurePetWindowTopMost('settings-ready');
     if (shouldOpenDevTools) {
       settingsWindow.webContents.openDevTools({ mode: 'detach' });
     }
@@ -694,6 +698,7 @@ function createOnboardingWindow(targetUrl = buildSettingsWindowUrl({ onboarding:
     }
     onboardingWindow.show();
     onboardingWindow.focus();
+    ensurePetWindowTopMost('onboarding-window-reuse');
     return;
   }
 
@@ -738,6 +743,7 @@ function createOnboardingWindow(targetUrl = buildSettingsWindowUrl({ onboarding:
   onboardingWindow.once('ready-to-show', () => {
     onboardingWindow.show();
     onboardingWindow.focus();
+    ensurePetWindowTopMost('onboarding-ready');
     if (shouldOpenDevTools) {
       onboardingWindow.webContents.openDevTools({ mode: 'detach' });
     }
@@ -745,7 +751,35 @@ function createOnboardingWindow(targetUrl = buildSettingsWindowUrl({ onboarding:
 
   onboardingWindow.on('closed', () => {
     onboardingWindow = null;
+
+    // If onboarding window is closed before completion, do not leave the pet
+    // hidden forever. Restore runtime windows so desktop pet remains visible.
+    if (onboardingLocked) {
+      logToFile('[ONBOARDING] window closed before completion, restore pet window visibility');
+      if (petWindow && !petWindow.isDestroyed()) {
+        resetPetWindow();
+        petWindow.show();
+        ensurePetWindowTopMost('onboarding-closed-without-complete');
+      }
+      if (settingsWindow && !settingsWindow.isDestroyed()) {
+        settingsWindow.show();
+      }
+    }
   });
+}
+
+function ensurePetWindowTopMost(reason = 'unknown') {
+  if (!petWindow || petWindow.isDestroyed() || !petWindow.isVisible()) {
+    return;
+  }
+
+  try {
+    petWindow.setAlwaysOnTop(true, 'pop-up-menu');
+    petWindow.moveTop();
+    logToFile(`[PET WINDOW] reassert top-most (${reason})`);
+  } catch (error) {
+    logToFile(`[PET WINDOW] ensure top-most failed (${reason}): ${String(error)}`);
+  }
 }
 
 function createStartupWindow() {
@@ -913,6 +947,7 @@ ipcMain.on('open-settings', async () => {
   logToFile('[IPC] open-settings');
   const targetUrl = await resolveInitialSettingsTargetUrl();
   createSettingsWindow(targetUrl);
+  ensurePetWindowTopMost('ipc-open-settings');
 });
 
 // 打开引导窗口
@@ -1080,6 +1115,16 @@ app.whenReady().then(async () => {
   if (onboardingLocked) {
     enterOnboardingMode('first-run');
   }
+});
+
+app.on('browser-window-focus', (_event, focusedWindow) => {
+  if (!petWindow || petWindow.isDestroyed()) {
+    return;
+  }
+  if (focusedWindow === petWindow) {
+    return;
+  }
+  ensurePetWindowTopMost('browser-window-focus');
 });
 
 // 所有窗口关闭时退出应用（macOS 除外）
