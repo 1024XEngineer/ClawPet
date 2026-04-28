@@ -405,6 +405,7 @@ export function useChat(options: UseChatOptions = {}): UseChatResult {
   const currentAudioRef = useRef<HTMLAudioElement | null>(null)
   const currentAudioUrlRef = useRef<string | null>(null)
   const audioAdvanceTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+  const pendingBubbleTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   const lastQueuedSegmentRef = useRef<{ chatId: number | null; seq: number | null }>({
     chatId: null,
     seq: null,
@@ -517,6 +518,10 @@ export function useChat(options: UseChatOptions = {}): UseChatResult {
   }, [])
 
   const showBubble = useCallback((text: string | null, audio?: string) => {
+    lastBubbleTextRef.current = {
+      text: text?.trim() || "",
+      at: Date.now(),
+    }
     window.electronAPI?.showBubble?.({
       text,
       emotion: lastEmotionRef.current,
@@ -530,6 +535,35 @@ export function useChat(options: UseChatOptions = {}): UseChatResult {
       audioAdvanceTimerRef.current = null
     }
   }, [])
+
+  const clearPendingBubbleTimer = useCallback(() => {
+    if (pendingBubbleTimerRef.current) {
+      clearTimeout(pendingBubbleTimerRef.current)
+      pendingBubbleTimerRef.current = null
+    }
+  }, [])
+
+  const scheduleAssistantBubble = useCallback(
+    (text: string) => {
+      const bubbleText = text.trim()
+      if (!bubbleText || !window.electronAPI?.showBubble) {
+        return
+      }
+
+      clearPendingBubbleTimer()
+      pendingBubbleTimerRef.current = setTimeout(() => {
+        const now = Date.now()
+        if (
+          lastBubbleTextRef.current.text !== bubbleText ||
+          now - lastBubbleTextRef.current.at > 1800
+        ) {
+          showBubble(bubbleText)
+        }
+        pendingBubbleTimerRef.current = null
+      }, 1200)
+    },
+    [clearPendingBubbleTimer, showBubble],
+  )
 
   const playAudioBase64 = useCallback(
     (
@@ -557,6 +591,8 @@ export function useChat(options: UseChatOptions = {}): UseChatResult {
         value: audioBase64,
         at: Date.now(),
       }
+
+      clearPendingBubbleTimer()
 
       if (window.electronAPI?.showBubble) {
         // Keep bubble text sync, but always play audio via HTMLAudio to ensure
@@ -678,7 +714,7 @@ export function useChat(options: UseChatOptions = {}): UseChatResult {
 
       tryPlayWithMime(0)
     },
-    [clearAudioAdvanceTimer, showBubble],
+    [clearAudioAdvanceTimer, clearPendingBubbleTimer, showBubble],
   )
 
   const resetAudioQueue = useCallback(() => {
@@ -812,6 +848,7 @@ export function useChat(options: UseChatOptions = {}): UseChatResult {
             setIsTyping(message.streaming ?? false)
             if (message.role === "assistant" && !message.streaming) {
               lastAssistantTextRef.current = message.content
+              scheduleAssistantBubble(message.content)
             }
             optionsRef.current.onMessage?.(message)
           }
@@ -921,6 +958,7 @@ export function useChat(options: UseChatOptions = {}): UseChatResult {
         currentAudioRef.current = null
       }
       clearAudioAdvanceTimer()
+      clearPendingBubbleTimer()
       if (currentAudioUrlRef.current) {
         URL.revokeObjectURL(currentAudioUrlRef.current)
         currentAudioUrlRef.current = null
@@ -935,9 +973,11 @@ export function useChat(options: UseChatOptions = {}): UseChatResult {
     enqueueAudioSegment,
     playAudioBase64,
     resetAudioQueue,
+    scheduleAssistantBubble,
     showBubble,
     updateSessionMessages,
     clearAudioAdvanceTimer,
+    clearPendingBubbleTimer,
   ])
 
   const sendMessage = useCallback(
@@ -967,12 +1007,13 @@ export function useChat(options: UseChatOptions = {}): UseChatResult {
         ...prev,
         userMessage,
       ])
+      clearPendingBubbleTimer()
       setIsTyping(true)
       setError(null)
 
       wsRef.current.send(outbound, activeSessionIdRef.current)
     },
-    [updateSessionMessages],
+    [clearPendingBubbleTimer, updateSessionMessages],
   )
 
   const newChat = useCallback(async () => {
@@ -984,6 +1025,7 @@ export function useChat(options: UseChatOptions = {}): UseChatResult {
       currentAudioRef.current.pause()
     }
     resetAudioQueue()
+    clearPendingBubbleTimer()
     lastPlayedAudioRef.current = { value: "", at: 0 }
     lastAssistantTextRef.current = ""
     lastBubbleTextRef.current = { text: "", at: 0 }
@@ -1008,7 +1050,7 @@ export function useChat(options: UseChatOptions = {}): UseChatResult {
     setActiveSessionId(nextSessionId)
 
     await connectWithBootstrap()
-  }, [connectWithBootstrap, resetAudioQueue])
+  }, [clearPendingBubbleTimer, connectWithBootstrap, resetAudioQueue])
 
   const switchSession = useCallback(
     async (sessionId: string) => {
@@ -1027,6 +1069,7 @@ export function useChat(options: UseChatOptions = {}): UseChatResult {
         currentAudioRef.current.pause()
       }
       resetAudioQueue()
+      clearPendingBubbleTimer()
       lastPlayedAudioRef.current = { value: "", at: 0 }
       lastAssistantTextRef.current = ""
       lastBubbleTextRef.current = { text: "", at: 0 }
@@ -1036,7 +1079,13 @@ export function useChat(options: UseChatOptions = {}): UseChatResult {
 
       await connectWithBootstrap()
     },
-    [connectWithBootstrap, loadSessionHistory, resetAudioQueue, sessionsState],
+    [
+      clearPendingBubbleTimer,
+      connectWithBootstrap,
+      loadSessionHistory,
+      resetAudioQueue,
+      sessionsState,
+    ],
   )
 
   const deleteSession = useCallback(
@@ -1077,6 +1126,7 @@ export function useChat(options: UseChatOptions = {}): UseChatResult {
           currentAudioRef.current.pause()
         }
         resetAudioQueue()
+        clearPendingBubbleTimer()
         lastPlayedAudioRef.current = { value: "", at: 0 }
         lastAssistantTextRef.current = ""
         lastBubbleTextRef.current = { text: "", at: 0 }
@@ -1085,19 +1135,20 @@ export function useChat(options: UseChatOptions = {}): UseChatResult {
         await connectWithBootstrap()
       }
     },
-    [connectWithBootstrap, resetAudioQueue, sessionsState],
+    [clearPendingBubbleTimer, connectWithBootstrap, resetAudioQueue, sessionsState],
   )
 
   const reconnect = useCallback(() => {
     setError(null)
     setIsTyping(false)
+    clearPendingBubbleTimer()
     wsRef.current.disconnect()
 
     void connectWithBootstrap().catch((err) => {
       setError("重新连接失败")
       console.error("Reconnection failed:", err)
     })
-  }, [connectWithBootstrap])
+  }, [clearPendingBubbleTimer, connectWithBootstrap])
 
   const clearError = useCallback(() => {
     setError(null)
@@ -1114,6 +1165,7 @@ export function useChat(options: UseChatOptions = {}): UseChatResult {
         currentAudioUrlRef.current = null
       }
       resetAudioQueue()
+      clearPendingBubbleTimer()
       wsRef.current.disconnect()
       lastAssistantTextRef.current = ""
       lastPlayedAudioRef.current = { value: "", at: 0 }
