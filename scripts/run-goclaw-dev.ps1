@@ -133,15 +133,25 @@ function Write-Step([string]$message) {
 function Invoke-Npm {
   param(
     [string]$WorkingDir,
-    [string]$Arguments
+    [string[]]$Arguments
   )
+
+  if (-not (Test-Path $WorkingDir)) {
+    throw "Working directory not found: $WorkingDir"
+  }
+
+  $npmCmd = Get-Command npm -ErrorAction SilentlyContinue
+  if (-not $npmCmd) {
+    throw "npm command not found. Please install Node.js and ensure it is in PATH."
+  }
 
   $old = Get-Location
   try {
-    Set-Location $WorkingDir
-    & npm $Arguments.Split(" ")
+    Set-Location -LiteralPath $WorkingDir
+    & npm @Arguments
     if (-not $?) {
-      throw "npm $Arguments failed in $WorkingDir"
+      $argString = $Arguments -join " "
+      throw "npm $argString failed in $WorkingDir (exit code: $LASTEXITCODE)"
     }
   } finally {
     Set-Location $old
@@ -261,15 +271,25 @@ function Start-DetachedPowerShell {
 function Invoke-Npm {
   param(
     [string]$WorkingDir,
-    [string]$Arguments
+    [string[]]$Arguments
   )
+
+  if (-not (Test-Path $WorkingDir)) {
+    throw "Working directory not found: $WorkingDir"
+  }
+
+  $npmCmd = Get-Command npm -ErrorAction SilentlyContinue
+  if (-not $npmCmd) {
+    throw "npm command not found. Please install Node.js and ensure it is in PATH."
+  }
 
   $old = Get-Location
   try {
-    Set-Location $WorkingDir
-    & npm $Arguments.Split(" ")
+    Set-Location -LiteralPath $WorkingDir
+    & npm @Arguments
     if (-not $?) {
-      throw "npm $Arguments failed in $WorkingDir"
+      $argString = $Arguments -join " "
+      throw "npm $argString failed in $WorkingDir (exit code: $LASTEXITCODE)"
     }
   } finally {
     Set-Location $old
@@ -354,7 +374,7 @@ function Ensure-NpmDeps {
   }
 
   Write-Step "Installing npm dependencies for $DisplayName (first run)..."
-  Invoke-Npm -WorkingDir $ProjectDir -Arguments "install"
+  Invoke-Npm -WorkingDir $ProjectDir -Arguments @("install")
 }
 
 $resolvedGoCmd = $null
@@ -573,6 +593,45 @@ if ((Test-HttpReady -Url $launcherBaseUrl -TimeoutSeconds 2) -or (Test-PortListe
 
 # Gateway preflight - 非阻塞检查，允许 UI 先启动
 Write-Step "Checking gateway status (non-blocking)..."
+
+# 预检查：确保配置目录和文件存在
+Write-Step "Verifying PicoClaw configuration..."
+$gatewayConfigDir = Split-Path -Parent $GatewayConfigPath
+if (-not (Test-Path $gatewayConfigDir)) {
+  Write-Step "Creating gateway config directory: $gatewayConfigDir"
+  try {
+    New-Item -ItemType Directory -Path $gatewayConfigDir -Force | Out-Null
+    Write-Step "Config directory created."
+  } catch {
+    Write-Warning "Failed to create config directory: $($_.Exception.Message). UI will open for configuration."
+    $gatewayPreconditionBlocked = $true
+  }
+}
+
+if (-not (Test-Path $GatewayConfigPath)) {
+  Write-Step "Config file not found: $GatewayConfigPath"
+  if ($null -ne $resolvedGatewayBin) {
+    Write-Step "Attempting to initialize config with onboard..."
+    try {
+      # 使用环境变量调用 onboard，确保配置写入正确路径
+      $onboardCmd = "`$env:PICOCLAW_HOME='$gatewayHomeDir'; `$env:PICOCLAW_CONFIG='$GatewayConfigPath'; & '$resolvedGatewayBin' onboard"
+      Invoke-Expression $onboardCmd
+      if ($LASTEXITCODE -eq 0) {
+        Write-Step "Config initialized successfully."
+      } else {
+        Write-Warning "Onboard failed (exit code: $LASTEXITCODE). UI will open for manual configuration."
+        $gatewayPreconditionBlocked = $true
+      }
+    } catch {
+      Write-Warning "Onboard command failed: $($_.Exception.Message). UI will open for configuration."
+      $gatewayPreconditionBlocked = $true
+    }
+  } else {
+    Write-Warning "Gateway binary not available for onboard. UI will open for manual configuration."
+    $gatewayPreconditionBlocked = $true
+  }
+}
+
 $gatewayReady = $false
 $gatewayPreconditionBlocked = $false
 try {
@@ -680,10 +739,12 @@ if ($gatewayReady) {
   }
   Start-DetachedPowerShell -Title "GoClaw - Gateway" -Command $gatewayCmd
 
+  # 非阻塞等待：Gateway 启动失败不影响 UI 启动
   if (-not (Wait-HttpReady -Url "$gatewayBaseUrl/health" -TimeoutSeconds 35)) {
-    throw "Gateway did not become ready on $gatewayBaseUrl"
+    Write-Warning "Gateway did not become ready on $gatewayBaseUrl within 35 seconds. UI will continue for configuration."
+  } else {
+    Write-Step "Gateway is ready at $gatewayBaseUrl"
   }
-  Write-Step "Gateway is ready at $gatewayBaseUrl"
 }
 
 if ((Test-HttpReady -Url $DashboardUrl -TimeoutSeconds 2)) {
@@ -694,7 +755,7 @@ if ((Test-HttpReady -Url $DashboardUrl -TimeoutSeconds 2)) {
     $shouldBuild = $ForceFrontendBuild -or -not (Test-Path $buildIdPath)
     if ($shouldBuild) {
       Write-Step "Building petclaw dashboard (prod mode)..."
-      Invoke-Npm -WorkingDir $petclawDir -Arguments "run build"
+      Invoke-Npm -WorkingDir $petclawDir -Arguments @("run", "build")
     } else {
       Write-Step "Using existing petclaw production build (.next/BUILD_ID detected)."
     }
