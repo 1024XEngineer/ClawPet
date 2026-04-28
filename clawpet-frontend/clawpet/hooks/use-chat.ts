@@ -812,17 +812,6 @@ export function useChat(options: UseChatOptions = {}): UseChatResult {
             setIsTyping(message.streaming ?? false)
             if (message.role === "assistant" && !message.streaming) {
               lastAssistantTextRef.current = message.content
-              const bubbleText = message.content.trim()
-              if (bubbleText && window.electronAPI?.showBubble) {
-                const now = Date.now()
-                if (
-                  lastBubbleTextRef.current.text !== bubbleText ||
-                  now - lastBubbleTextRef.current.at > 1800
-                ) {
-                  lastBubbleTextRef.current = { text: bubbleText, at: now }
-                  showBubble(bubbleText)
-                }
-              }
             }
             optionsRef.current.onMessage?.(message)
           }

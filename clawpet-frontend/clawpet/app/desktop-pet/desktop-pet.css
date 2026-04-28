@@ -81,22 +81,24 @@
 
 .desktop-pet-bubble {
   position: absolute;
-  top: 48px;
+  top: 100%;
   left: 50%;
   transform: translateX(-50%);
+  margin-top: -280px;
+  width: 180px;
   background: rgba(255, 255, 255, 0.95);
   border-radius: 12px;
   padding: 8px 12px;
-  max-width: 180px;
-  min-width: 50px;
-  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.15);
-  z-index: 180;
   border: 2px solid #667eea;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.15);
+  max-height: 400px;
+  overflow-y: auto;
+  z-index: 180;
+  pointer-events: none;
   font-size: 12px;
   color: #444;
-  word-break: break-word;
   text-align: center;
-  pointer-events: none;
+  word-break: break-word;
 }
 
 .desktop-pet-area {

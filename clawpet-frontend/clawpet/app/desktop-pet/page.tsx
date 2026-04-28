@@ -158,13 +158,14 @@ export default function DesktopPetPage() {
   const [currentImage, setCurrentImage] = useState("/pets/standby1.gif")
   const [bubble, setBubble] = useState("")
   const [showControls, setShowControls] = useState(false)
-
   const stackRef = useRef<HTMLDivElement | null>(null)
   const controlsVisibleRef = useRef(false)
   const currentImageRef = useRef(currentImage)
   const audioRef = useRef<HTMLAudioElement | null>(null)
   const audioObjectUrlRef = useRef<string | null>(null)
   const bubbleTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+  const bubbleRef = useRef<HTMLDivElement | null>(null)
+  const currentAudioIdRef = useRef<number>(0)
 
   currentImageRef.current = currentImage
 
@@ -182,10 +183,23 @@ export default function DesktopPetPage() {
 
   useEffect(() => {
     const handleBubbleShow = (data: BubbleData) => {
+      const bubbleId = ++currentAudioIdRef.current
+
       if (bubbleTimerRef.current) {
         clearTimeout(bubbleTimerRef.current)
         bubbleTimerRef.current = null
       }
+      if (audioRef.current) {
+        audioRef.current.pause()
+        audioRef.current = null
+      }
+
+      console.log('[petclaw] handleBubbleShow:', {
+        bubbleId,
+        text: data.text,
+        hasAudio: !!data.audio,
+        timestamp: Date.now()
+      })
 
       if (data.text !== null) {
         setBubble(data.text || "")
@@ -213,8 +227,10 @@ export default function DesktopPetPage() {
             audioLength: rawAudio.length,
             audioPrefix: rawAudio.slice(0, 64),
           })
-          setBubble("")
-          transitionTo("standby")
+          if (bubbleId === currentAudioIdRef.current) {
+            setBubble("")
+            transitionTo("standby")
+          }
           return
         }
 
@@ -224,6 +240,7 @@ export default function DesktopPetPage() {
 
         if (audioRef.current) {
           audioRef.current.pause()
+          audioRef.current.onended = null
         }
         const rawCandidates = Array.from(
           new Set([mimeType, "audio/mpeg", "audio/ogg", "audio/wav"]),
@@ -236,14 +253,19 @@ export default function DesktopPetPage() {
           supportedCandidates.length > 0 ? supportedCandidates : rawCandidates
 
         const tryPlayWithMime = (index: number) => {
+          if (bubbleId !== currentAudioIdRef.current) {
+            return
+          }
           if (index >= mimeCandidates.length) {
             console.error("[petclaw] desktop exhausted audio mime candidates", {
               mimeCandidates,
               byteHead,
               audioLength: rawAudio.length,
             })
-            setBubble("")
-            transitionTo("standby")
+            if (bubbleId === currentAudioIdRef.current) {
+              setBubble("")
+              transitionTo("standby")
+            }
             return
           }
           const attemptMime = mimeCandidates[index]
@@ -254,10 +276,19 @@ export default function DesktopPetPage() {
           const audio = new Audio(audioUrl)
           audioRef.current = audio
           audio.onended = () => {
-            setBubble("")
-            transitionTo("standby")
+            console.log('[petclaw] audio.onended:', {
+              bubbleId,
+              currentAudioId: currentAudioIdRef.current
+            })
+            if (bubbleId === currentAudioIdRef.current) {
+              setBubble("")
+              transitionTo("standby")
+            }
           }
           audio.onerror = (errorEvent) => {
+            if (bubbleId !== currentAudioIdRef.current) {
+              return
+            }
             const mediaError = audio.error
             console.warn("[petclaw] desktop audio element error", {
               errorEvent,
@@ -273,6 +304,9 @@ export default function DesktopPetPage() {
             tryPlayWithMime(index + 1)
           }
           audio.play().catch((playbackError) => {
+            if (bubbleId !== currentAudioIdRef.current) {
+              return
+            }
             console.warn("[petclaw] desktop failed to play audio", {
               playbackError,
               attemptMime,
@@ -289,11 +323,13 @@ export default function DesktopPetPage() {
         tryPlayWithMime(0)
       } else {
         bubbleTimerRef.current = setTimeout(() => {
-          setBubble("")
-          transitionTo("standby")
+          if (bubbleId === currentAudioIdRef.current) {
+            setBubble("")
+            transitionTo("standby")
+          }
         }, 10000)
       }
-    }
+}
 
     window.electronAPI?.onBubbleShow?.(handleBubbleShow)
     window.electronAPI?.onSettingsUpdate?.(() => {})
@@ -310,7 +346,7 @@ export default function DesktopPetPage() {
         URL.revokeObjectURL(audioObjectUrlRef.current)
         audioObjectUrlRef.current = null
       }
-    }
+}
   }, [transitionTo])
 
   useEffect(() => {
@@ -414,9 +450,15 @@ export default function DesktopPetPage() {
             <img className="desktop-pet-image" src={currentImage} alt="Pet" />
             <span className="desktop-pet-state">{petState}</span>
           </div>
+          {bubble ? (
+          <div
+            ref={bubbleRef}
+            className="desktop-pet-bubble"
+          >
+            <span>{bubble}</span>
+          </div>
+        ) : null}
         </div>
-
-        {bubble ? <div className="desktop-pet-bubble">{bubble}</div> : null}
       </div>
     </div>
   )
