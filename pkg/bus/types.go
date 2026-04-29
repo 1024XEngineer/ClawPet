@@ -55,10 +55,12 @@ type OutboundMediaMessage struct {
 
 // AudioChunk represents a chunk of streaming voice data.
 type AudioChunk struct {
-	SessionID  string `json:"session_id"`
-	SpeakerID  string `json:"speaker_id"` // User ID or SSRC
-	ChatID     string `json:"chat_id"`    // Where to respond
-	Channel    string `json:"channel"`    // Source channel type (e.g. "discord")
+	SessionID  string `json:"session_id"`  // WS connection ID, 用于路由响应
+	SessionKey string `json:"session_key"` // 会话隔离标识
+	CharID     string `json:"char_id"`     // 当前角色 ID，用于 Peer.Kind
+	SpeakerID  string `json:"speaker_id"`  // User ID or SSRC
+	ChatID     string `json:"chat_id"`     // Where to respond
+	Channel    string `json:"channel"`     // Source channel type (e.g. "discord")
 	Sequence   uint64 `json:"sequence"`
 	Timestamp  uint32 `json:"timestamp"`
 	SampleRate int    `json:"sample_rate"`
