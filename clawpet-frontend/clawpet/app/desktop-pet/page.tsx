@@ -23,6 +23,7 @@ interface BubbleData {
   animationHints?: string[]
   audio?: string
   audio_mime?: string
+  duration_ms?: number
 }
 
 function normalizeAudioMimeType(mime?: string): string | null {
@@ -322,12 +323,16 @@ export default function DesktopPetPage() {
 
         tryPlayWithMime(0)
       } else {
+        const hintedDuration = Number(data.duration_ms)
+        const fallbackMs = Number.isFinite(hintedDuration) && hintedDuration > 0
+          ? Math.min(Math.max(hintedDuration + 300, 1200), 20000)
+          : 10000
         bubbleTimerRef.current = setTimeout(() => {
           if (bubbleId === currentAudioIdRef.current) {
             setBubble("")
             transitionTo("standby")
           }
-        }, 10000)
+        }, fallbackMs)
       }
 }
 

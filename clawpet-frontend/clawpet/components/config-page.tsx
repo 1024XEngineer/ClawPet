@@ -1,12 +1,12 @@
 "use client"
 
-import { useEffect, useMemo, useState } from "react"
+import { useCallback, useEffect, useMemo, useState } from "react"
 import {
   AlertTriangle,
   Code,
   Cpu,
   Eye,
-  Globe,
+  Mic,
   RotateCcw,
   Save,
   Settings,
@@ -28,10 +28,12 @@ import {
   getWebSocketInstance,
   type CharacterProfileData,
   type Config,
+  type VoiceModelData,
 } from "@/lib/api"
 import { openOnboardingPopup } from "@/lib/onboarding"
 import { cn } from "@/lib/utils"
 import { ModelsPanel } from "./models-panel"
+import { VoiceModelsPanel } from "./voice-models-panel"
 
 type ConfigTab = "visual" | "raw"
 
@@ -54,6 +56,12 @@ interface PersonalityFormState {
   emotionEnabled: boolean
 }
 
+interface VoiceConfigState {
+  voiceEnabled: boolean
+  asrEnabled: boolean
+  defaultVoiceModel: string
+}
+
 const emptyPersonalityForm: PersonalityFormState = {
   petId: "",
   petName: "",
@@ -71,6 +79,12 @@ const emptyFormState: ConfigFormState = {
   cronEnabled: true,
   publicAccess: false,
   port: 18790,
+}
+
+const emptyVoiceState: VoiceConfigState = {
+  voiceEnabled: false,
+  asrEnabled: false,
+  defaultVoiceModel: "",
 }
 
 function getErrorMessage(error: unknown): string {
@@ -115,6 +129,7 @@ export function ConfigPage() {
   const [rawJson, setRawJson] = useState("")
   const [hasChanges, setHasChanges] = useState(false)
   const [showModelsPanel, setShowModelsPanel] = useState(false)
+  const [showVoiceModelsPanel, setShowVoiceModelsPanel] = useState(false)
   const [actionState, setActionState] = useState<{
     type: "error" | "success"
     message: string
@@ -135,6 +150,13 @@ export function ConfigPage() {
   const [personalityLoading, setPersonalityLoading] = useState(false)
   const [personalitySaving, setPersonalitySaving] = useState(false)
   const [personalityState, setPersonalityState] = useState<{
+    type: "error" | "success"
+    message: string
+  } | null>(null)
+  const [voiceModels, setVoiceModels] = useState<VoiceModelData[]>([])
+  const [voiceConfig, setVoiceConfig] = useState<VoiceConfigState>(emptyVoiceState)
+  const [voiceLoading, setVoiceLoading] = useState(false)
+  const [voiceState, setVoiceState] = useState<{
     type: "error" | "success"
     message: string
   } | null>(null)
@@ -193,6 +215,47 @@ export function ConfigPage() {
     }
   }, [])
 
+  const loadVoiceConfig = useCallback(async () => {
+    setVoiceLoading(true)
+    setVoiceState(null)
+    try {
+      const ws = getWebSocketInstance()
+      const [voiceResp, petConfigResp] = await Promise.all([
+        ws.getVoiceModelList(),
+        ws.getPetConfig(),
+      ])
+
+      const models = voiceResp.data?.models ?? []
+      const defaultVoiceModel =
+        voiceResp.data?.default ||
+        models.find((item) => item.is_default)?.name ||
+        models[0]?.name ||
+        ""
+
+      setVoiceModels(models)
+
+      setVoiceConfig({
+        ...emptyVoiceState,
+        voiceEnabled: Boolean(petConfigResp.data?.voice_enabled),
+        asrEnabled: Boolean(
+          (petConfigResp.data as { asr_enabled?: boolean } | undefined)?.asr_enabled,
+        ),
+        defaultVoiceModel,
+      })
+    } catch (loadError) {
+      setVoiceState({
+        type: "error",
+        message: `加载语音配置失败：${getErrorMessage(loadError)}`,
+      })
+    } finally {
+      setVoiceLoading(false)
+    }
+  }, [])
+
+  useEffect(() => {
+    void loadVoiceConfig()
+  }, [loadVoiceConfig])
+
   const gatewaySummary = useMemo(() => {
     if (!gatewayStatus) {
       return {
@@ -249,6 +312,16 @@ export function ConfigPage() {
     }))
     setPersonalityDirty(true)
     setPersonalityState(null)
+  }
+
+  function handleVoiceConfigChange(
+    field: keyof VoiceConfigState,
+    value: string | boolean,
+  ) {
+    setVoiceConfig((prev) => ({ ...prev, [field]: value }))
+    setHasChanges(true)
+    setActionState(null)
+    setVoiceState(null)
   }
 
   async function handleSavePersonality() {
@@ -336,6 +409,16 @@ export function ConfigPage() {
             publicAccess: formData.publicAccess,
           },
         })
+
+        const ws = getWebSocketInstance()
+        await ws.updatePetConfig({
+          voice_enabled: voiceConfig.voiceEnabled,
+          asr_enabled: voiceConfig.asrEnabled,
+        })
+
+        if (voiceConfig.defaultVoiceModel) {
+          await ws.setDefaultVoiceModel(voiceConfig.defaultVoiceModel)
+        }
       }
 
       const refreshed = await mutate()
@@ -371,15 +454,9 @@ export function ConfigPage() {
     },
     {
       icon: Shield,
-      title: "自动化闸门",
-      description: "控制命令执行和定时任务权限，决定桌宠能做多深。",
+      title: "运行边界",
+      description: "统一管理命令、定时任务、端口与局域网接入边界。",
       shell: "from-violet-100 via-purple-50 to-white border-violet-200/80",
-    },
-    {
-      icon: Globe,
-      title: "启动器表面",
-      description: "管理端口、可见性以及其他设备如何接入桌宠。",
-      shell: "from-sky-100 via-cyan-50 to-white border-sky-200/80",
     },
   ]
 
@@ -402,7 +479,7 @@ export function ConfigPage() {
                 调校桌宠的行为与边界
               </h1>
               <p className="mt-3 max-w-3xl text-base leading-8 text-[#816451]">
-                这里不再是普通后台表单，而是桌宠的控制舱。模型、自动化闸门和启动器表面都在同一套驾驶台里完成。
+                这里不再是普通后台表单，而是桌宠的控制舱。模型、语音与运行边界都在同一套驾驶台里完成。
               </p>
             </div>
 
@@ -431,7 +508,7 @@ export function ConfigPage() {
             </div>
           </div>
 
-          <div className="mt-8 grid gap-3 md:grid-cols-3">
+          <div className="mt-8 grid gap-3 md:grid-cols-2">
             {visualCards.map((card) => {
               const Icon = card.icon
               return (
@@ -572,17 +649,118 @@ export function ConfigPage() {
                     已移除默认模型与系统提示词编辑入口。请在模型管理中统一配置可用模型。
                   </div>
                 </div>
+
+                <div className="mt-4 rounded-[1.4rem] border border-white/75 bg-[linear-gradient(145deg,rgba(255,255,255,0.9),rgba(255,247,238,0.82))] p-4 shadow-sm">
+                  <div className="flex items-center gap-2">
+                    <Mic className="h-4.5 w-4.5 text-amber-600" />
+                    <p className="text-sm font-semibold text-[#4f3725]">语音中枢</p>
+                  </div>
+                  <p className="mt-2 text-xs leading-5 text-[#816451]">
+                    配置桌宠如何开口（TTS）与如何听懂你（ASR/STT）。
+                  </p>
+
+                  {voiceState && (
+                    <div
+                      className={cn(
+                        "mt-3 rounded-[1rem] border px-3 py-2 text-xs",
+                        voiceState.type === "error"
+                          ? "border-rose-200 bg-rose-50 text-rose-700"
+                          : "border-emerald-200 bg-emerald-50 text-emerald-700",
+                      )}
+                    >
+                      {voiceState.message}
+                    </div>
+                  )}
+
+                  {voiceLoading ? (
+                    <div className="mt-4 flex items-center gap-2 text-xs text-[#816451]">
+                      <Spinner className="h-3.5 w-3.5 text-amber-600" />
+                      正在加载语音配置...
+                    </div>
+                  ) : (
+                    <div className="mt-4 space-y-3">
+                      <div className="dashboard-card flex items-center justify-between gap-4 rounded-[1rem] border border-white/80 bg-white/82 px-3 py-3">
+                        <div>
+                          <p className="text-sm font-semibold text-[#4f3725]">TTS（文字转语音）</p>
+                          <p className="mt-1 text-xs text-[#816451]">控制桌宠是否播报语音回复。</p>
+                        </div>
+                        <button
+                          type="button"
+                          aria-pressed={voiceConfig.voiceEnabled}
+                          onClick={() =>
+                            handleVoiceConfigChange("voiceEnabled", !voiceConfig.voiceEnabled)
+                          }
+                          className={cn(
+                            "relative h-7 w-14 rounded-full transition",
+                            voiceConfig.voiceEnabled ? "bg-emerald-500" : "bg-[#e7ddd3]",
+                          )}
+                          title="TTS 开关"
+                        >
+                          <span
+                            className={cn(
+                              "absolute left-1 top-1 h-5 w-5 rounded-full bg-white transition-transform",
+                              voiceConfig.voiceEnabled ? "translate-x-7" : "translate-x-0",
+                            )}
+                          />
+                        </button>
+                      </div>
+
+                      <div className="dashboard-card rounded-[1rem] border border-white/80 bg-white/82 px-3 py-3">
+                        <p className="text-sm font-semibold text-[#4f3725]">默认语音模型</p>
+                        <p className="mt-1 text-xs text-[#816451]">
+                          {voiceConfig.defaultVoiceModel || "未设置默认模型"}
+                        </p>
+                        <p className="mt-1 text-xs text-[#9b7b62]">
+                          可用模型：{voiceModels.length} 个
+                        </p>
+                        <button
+                          type="button"
+                          onClick={() => setShowVoiceModelsPanel(true)}
+                          className="mt-3 rounded-[1rem] border border-amber-200 bg-amber-50 px-3 py-2 text-xs font-medium text-amber-700 transition hover:bg-amber-100"
+                        >
+                          管理语音模型
+                        </button>
+                      </div>
+
+                      <div className="dashboard-card flex items-center justify-between gap-4 rounded-[1rem] border border-white/80 bg-white/82 px-3 py-3">
+                        <div>
+                          <p className="text-sm font-semibold text-[#4f3725]">ASR / STT（语音转文字）</p>
+                          <p className="mt-1 text-xs text-[#816451]">控制桌宠是否启用语音识别输入。</p>
+                        </div>
+                        <button
+                          type="button"
+                          aria-pressed={voiceConfig.asrEnabled}
+                          onClick={() =>
+                            handleVoiceConfigChange("asrEnabled", !voiceConfig.asrEnabled)
+                          }
+                          className={cn(
+                            "relative h-7 w-14 rounded-full transition",
+                            voiceConfig.asrEnabled ? "bg-emerald-500" : "bg-[#e7ddd3]",
+                          )}
+                          title="ASR 开关"
+                        >
+                          <span
+                            className={cn(
+                              "absolute left-1 top-1 h-5 w-5 rounded-full bg-white transition-transform",
+                              voiceConfig.asrEnabled ? "translate-x-7" : "translate-x-0",
+                            )}
+                          />
+                        </button>
+                      </div>
+                    </div>
+                  )}
+                </div>
               </article>
 
               <article className="dashboard-enter dashboard-card rounded-[1.8rem] border border-white/75 bg-[linear-gradient(145deg,rgba(255,252,247,0.94),rgba(255,247,242,0.88))] p-5 shadow-[0_20px_42px_-32px_rgba(116,80,42,0.34)]">
                 <div className="flex items-center gap-2">
                   <Shield className="h-5 w-5 text-violet-600" />
                   <h2 className="text-xl font-semibold text-[#4f3725]">
-                    自动化闸门
+                    运行边界
                   </h2>
                 </div>
                 <p className="mt-2 text-sm leading-6 text-[#816451]">
-                  决定桌宠能否运行命令，以及是否允许它使用定时自动化。
+                  统一管理命令执行、自动化任务与启动器接入边界。
                 </p>
 
                 <div className="mt-5 space-y-4">
@@ -635,21 +813,7 @@ export function ConfigPage() {
                       </button>
                     </div>
                   ))}
-                </div>
-              </article>
 
-              <article className="dashboard-enter dashboard-card rounded-[1.8rem] border border-white/75 bg-[linear-gradient(145deg,rgba(255,252,247,0.94),rgba(255,247,242,0.88))] p-5 shadow-[0_20px_42px_-32px_rgba(116,80,42,0.34)]">
-                <div className="flex items-center gap-2">
-                  <Globe className="h-5 w-5 text-sky-600" />
-                  <h2 className="text-xl font-semibold text-[#4f3725]">
-                    启动器表面
-                  </h2>
-                </div>
-                <p className="mt-2 text-sm leading-6 text-[#816451]">
-                  管理启动器端口，以及是否允许其他设备访问这个桌宠入口。
-                </p>
-
-                <div className="mt-5 space-y-4">
                   <div>
                     <label className="mb-1.5 block text-sm font-medium text-[#5d4430]">
                       端口
@@ -669,9 +833,7 @@ export function ConfigPage() {
 
                   <div className="dashboard-card flex items-center justify-between gap-4 rounded-[1.2rem] border border-white/80 bg-white/82 px-4 py-4">
                     <div>
-                      <p className="text-sm font-semibold text-[#4f3725]">
-                        局域网访问
-                      </p>
+                      <p className="text-sm font-semibold text-[#4f3725]">局域网访问</p>
                       <p className="mt-1 text-xs leading-5 text-[#816451]">
                         允许同一网络内的其他设备访问这个启动器。
                       </p>
@@ -684,18 +846,14 @@ export function ConfigPage() {
                       }
                       className={cn(
                         "relative h-7 w-14 rounded-full transition",
-                        formData.publicAccess
-                          ? "bg-emerald-500"
-                          : "bg-[#e7ddd3]",
+                        formData.publicAccess ? "bg-emerald-500" : "bg-[#e7ddd3]",
                       )}
                       title="局域网访问"
                     >
                       <span
                         className={cn(
                           "absolute left-1 top-1 h-5 w-5 rounded-full bg-white transition-transform",
-                          formData.publicAccess
-                            ? "translate-x-7"
-                            : "translate-x-0",
+                          formData.publicAccess ? "translate-x-7" : "translate-x-0",
                         )}
                       />
                     </button>
@@ -944,6 +1102,16 @@ export function ConfigPage() {
 
       {showModelsPanel && (
         <ModelsPanel onClose={() => setShowModelsPanel(false)} onDefaultModelChange={handleDefaultModelChange} />
+      )}
+
+      {showVoiceModelsPanel && (
+        <VoiceModelsPanel
+          onClose={() => setShowVoiceModelsPanel(false)}
+          onChanged={() => {
+            void loadVoiceConfig()
+            setHasChanges(true)
+          }}
+        />
       )}
     </section>
   )

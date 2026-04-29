@@ -161,7 +161,19 @@ export function ChatArea({ chat, layoutMode = "full" }: ChatAreaProps) {
                 )}
 
                 <div className="mt-4 space-y-4">
-                  {messages.map((msg) => (
+                  {(() => {
+                    let lastAssistantIndex = -1
+                    for (let i = messages.length - 1; i >= 0; i -= 1) {
+                      if (messages[i]?.role === "assistant") {
+                        lastAssistantIndex = i
+                        break
+                      }
+                    }
+
+                    return messages.map((msg, index) => {
+                      const isLastAssistant =
+                        msg.role === "assistant" && lastAssistantIndex === index
+                      return (
                     <div
                       key={msg.id}
                       className={cn(
@@ -180,29 +192,22 @@ export function ChatArea({ chat, layoutMode = "full" }: ChatAreaProps) {
                         <p className="whitespace-pre-wrap leading-7">
                           {msg.content}
                         </p>
-                        {msg.streaming && (
-                          <span className="ml-1 inline-block h-4 w-2 animate-pulse bg-current align-middle" />
+                        {isLastAssistant && msg.streaming && isTyping && (
+                          <div className="mt-1 text-xs text-[#7a5a3d]/70">思考中</div>
                         )}
                       </div>
                     </div>
-                  ))}
+                      )
+                    })
+                  })()}
 
                   {isTyping && !messages.some((msg) => msg.streaming) && (
                     <div className="flex justify-start">
                       <div className="rounded-[1.4rem] border border-white/75 bg-white/82 px-4 py-3 shadow-sm">
-                        <div className="flex items-center gap-1.5">
-                          <span
-                            className="h-2 w-2 rounded-full bg-[#d08a3a] animate-bounce"
-                            style={{ animationDelay: "0ms" }}
-                          />
-                          <span
-                            className="h-2 w-2 rounded-full bg-[#d08a3a] animate-bounce"
-                            style={{ animationDelay: "150ms" }}
-                          />
-                          <span
-                            className="h-2 w-2 rounded-full bg-[#d08a3a] animate-bounce"
-                            style={{ animationDelay: "300ms" }}
-                          />
+                        <div className="relative h-3 w-3">
+                          <span className="absolute inset-0 rounded-full bg-[#d08a3a]/25 animate-ping" />
+                          <span className="absolute inset-0 rounded-full bg-[#d08a3a]/20 animate-ping [animation-delay:600ms]" />
+                          <span className="absolute inset-[2px] rounded-full bg-[#d08a3a]" />
                         </div>
                       </div>
                     </div>

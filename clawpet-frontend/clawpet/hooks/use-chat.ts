@@ -526,6 +526,7 @@ export function useChat(options: UseChatOptions = {}): UseChatResult {
       text,
       emotion: lastEmotionRef.current,
       audio,
+      duration_ms: durationMs,
     })
   }, [])
 
@@ -597,7 +598,7 @@ export function useChat(options: UseChatOptions = {}): UseChatResult {
       if (window.electronAPI?.showBubble) {
         // Keep bubble text sync, but always play audio via HTMLAudio to ensure
         // deterministic ordered playback in chat runtime.
-        showBubble(bubbleText ?? (lastAssistantTextRef.current || null))
+        showBubble(bubbleText ?? (lastAssistantTextRef.current || null), undefined, durationMs)
       }
 
       const decoded = decodeBase64Chunk(audioBase64)
@@ -825,17 +826,45 @@ export function useChat(options: UseChatOptions = {}): UseChatResult {
   useEffect(() => {
     const ws = wsRef.current
 
+    const finalizeStreamingAssistantMessages = () => {
+      updateSessionMessages(activeSessionIdRef.current, (prev) => {
+        let changed = false
+        const next = prev.map((msg) => {
+          if (msg.role === "assistant" && msg.streaming) {
+            changed = true
+            return {
+              ...msg,
+              streaming: false,
+            }
+          }
+          return msg
+        })
+        return changed ? next : prev
+      })
+      clearStreamingGuardTimer()
+    }
+
+    const refreshStreamingGuard = () => {
+      clearStreamingGuardTimer()
+      streamingGuardTimerRef.current = setTimeout(() => {
+        setIsTyping(false)
+        finalizeStreamingAssistantMessages()
+      }, 1800)
+    }
+
     const handleEvent = (event: WSEvent) => {
       switch (event.type) {
         case "connected":
           setIsConnected(true)
           setError(null)
+          clearStreamingGuardTimer()
           optionsRef.current.onConnectionChange?.(true)
           break
 
         case "disconnected":
           setIsConnected(false)
           setIsTyping(false)
+          finalizeStreamingAssistantMessages()
           optionsRef.current.onConnectionChange?.(false)
           break
 
@@ -846,6 +875,11 @@ export function useChat(options: UseChatOptions = {}): UseChatResult {
               mergeMessage(prev, message),
             )
             setIsTyping(message.streaming ?? false)
+            if (message.role === "assistant" && message.streaming) {
+              refreshStreamingGuard()
+            } else if (message.role === "assistant" && !message.streaming) {
+              clearStreamingGuardTimer()
+            }
             if (message.role === "assistant" && !message.streaming) {
               lastAssistantTextRef.current = message.content
               scheduleAssistantBubble(message.content)
@@ -910,9 +944,17 @@ export function useChat(options: UseChatOptions = {}): UseChatResult {
         }
 
         case "typing":
-          setIsTyping(
-            typeof event.data === "string" ? event.data === "true" : true,
-          )
+          {
+            const typing =
+              typeof event.data === "string" ? event.data === "true" : true
+            setIsTyping(typing)
+
+            if (!typing) {
+              finalizeStreamingAssistantMessages()
+            } else {
+              refreshStreamingGuard()
+            }
+          }
           break
 
         case "error": {
@@ -920,6 +962,7 @@ export function useChat(options: UseChatOptions = {}): UseChatResult {
             typeof event.data === "string" ? event.data : "Unknown error"
           setError(errorMsg)
           setIsTyping(false)
+          finalizeStreamingAssistantMessages()
           optionsRef.current.onError?.(errorMsg)
           break
         }
@@ -927,6 +970,7 @@ export function useChat(options: UseChatOptions = {}): UseChatResult {
         case "reconnecting":
           setError("正在重新连接...")
           setIsTyping(false)
+          finalizeStreamingAssistantMessages()
           break
 
         case "emotion_change":
@@ -950,6 +994,7 @@ export function useChat(options: UseChatOptions = {}): UseChatResult {
     })
 
     return () => {
+      clearStreamingGuardTimer()
       unsubscribe()
       ws.disconnect()
       resetAudioQueue()

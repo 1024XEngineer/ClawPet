@@ -55,6 +55,7 @@ export interface PetConfigData {
   proactive_care?: boolean
   proactive_interval_minutes?: number
   voice_enabled?: boolean
+  asr_enabled?: boolean
   language?: string
 }
 
