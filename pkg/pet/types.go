@@ -53,6 +53,7 @@ const (
 	ActionSkillGet             = "skill_get"               // 获取 skill 内容
 	ActionCharacterCreate      = "character_create"        // 创建角色
 	ActionUserProfileGet       = "user_profile_get"        // 获取用户画像
+	ActionAudioFrame           = "audio_frame"             // 音频帧（语音输入）
 )
 
 // =============================================================================
@@ -458,4 +459,15 @@ type StreamData struct {
 	Text    string `json:"text"`              // 文本内容
 	Emotion string `json:"emotion,omitempty"` // 当前情绪标签
 	Action  string `json:"action,omitempty"`  // 动作名称
+}
+
+// AudioFrameRequest 音频帧请求数据（语音输入）
+type AudioFrameRequest struct {
+	Audio      string `json:"audio"`       // base64 编码的 PCM 数据
+	Format     string `json:"format"`      // 音频格式，如 "pcm"
+	SampleRate int    `json:"sample_rate"` // 采样率
+	Channels   int    `json:"channels"`    // 声道数
+	Sequence   uint64 `json:"sequence"`    // 帧序号
+	Timestamp  uint32 `json:"timestamp"`   // 时间戳（毫秒）
+	SessionKey string `json:"session_key"` // 会话隔离标识，和文本聊天一样
 }
