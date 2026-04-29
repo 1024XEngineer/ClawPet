@@ -535,7 +535,73 @@ WebSocket 连接: session=user_001
 
 ---
 
-### 4.2 onboarding_config - 提交初始化配置
+### 4.2 audio_frame - 发送语音帧
+
+发送用户语音数据给 ASR 进行语音识别。语音输入和文本聊天走同一套会话机制，通过 `session_key` 实现会话隔离。
+
+**请求**：
+
+```json
+{
+  "action": "audio_frame",
+  "data": {
+    "audio": "//uQxAAAAs3gAAFBYy...",
+    "format": "pcm",
+    "sample_rate": 16000,
+    "channels": 1,
+    "sequence": 1,
+    "timestamp": 1234567890,
+    "session_key": "session-1712345678-abc123"
+  },
+  "request_id": "req_002"
+}
+```
+
+**响应**：
+
+```json
+{
+  "status": "ok",
+  "action": "audio_frame",
+  "data": {
+    "received": true
+  }
+}
+```
+
+**session_key 字段说明**：
+
+| 字段 | 类型 | 必填 | 说明 |
+|------|------|------|------|
+| audio | string | 是 | PCM 音频数据的 Base64 编码 |
+| format | string | 是 | 音频格式，固定为 `"pcm"` |
+| sample_rate | int | 是 | 采样率，建议 16000 |
+| channels | int | 是 | 声道数，建议 1（单声道） |
+| sequence | uint64 | 是 | 帧序号，用于音频帧排序 |
+| timestamp | uint32 | 是 | 毫秒级时间戳 |
+| session_key | string | 是 | 会话隔离标识，和文本聊天的 `session_key` 一致 |
+
+**语音输入与文本聊天的关系**：
+
+- 语音输入和文本聊天使用相同的 `session_key` 机制
+- 语音识别结果会进入与文本聊天相同的会话
+- ASR 转写结果通过 `ai_chat` 推送返回，详见 3.2
+
+**示例**：
+```
+WebSocket 连接: session=user_001
+发送语音: session_key=session-xxx → ASR 结果通过 ai_chat 推送到 session=user_001 的连接
+发送文本: session_key=session-xxx → AI 回复通过 ai_chat 推送到 session=user_001 的连接
+```
+
+**注意**：
+- 前端应使用 `MediaRecorder` 采集 PCM 音频，采样率 16000，声道 1
+- 建议每 20-50ms 的音频数据为一帧，带序号发送
+- 后端会自动检测静默（1.5s 无音频），触发 ASR 转写
+
+---
+
+### 4.3 onboarding_config - 提交初始化配置
 
 首次启动时提交用户与桌宠的配置信息。
 
