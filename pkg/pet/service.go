@@ -2,6 +2,7 @@ package pet
 
 import (
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"path/filepath"
@@ -501,6 +502,8 @@ func (s *PetService) HandleRequest(connID string, req Request) error {
 		return s.handleSkillRemove(sessionID, req)
 	case ActionSkillGet:
 		return s.handleSkillGet(sessionID, req)
+	case ActionAudioFrame:
+		return s.handleAudioFrame(sessionID, req)
 	default:
 		return s.sendError(sessionID, req.Action, fmt.Sprintf("unknown action: %s", req.Action))
 	}
@@ -1699,4 +1702,63 @@ func (s *PetService) handleSkillGet(sessionID string, req Request) error {
 		"name":    data.Name,
 		"content": content,
 	})
+}
+
+func (s *PetService) handleAudioFrame(sessionID string, req Request) error {
+	var data AudioFrameRequest
+	if err := json.Unmarshal(req.Data, &data); err != nil {
+		return s.sendError(sessionID, req.Action, "invalid audio frame data")
+	}
+
+	if data.Audio == "" {
+		return s.sendError(sessionID, req.Action, "audio data is empty")
+	}
+
+	if data.SessionKey == "" {
+		return s.sendError(sessionID, req.Action, "session_key is required for voice input")
+	}
+
+	char := s.charManager.GetCurrent()
+	if char == nil {
+		return s.sendError(sessionID, req.Action, "no active character")
+	}
+
+	pcmData, err := base64.StdEncoding.DecodeString(data.Audio)
+	if err != nil {
+		return s.sendError(sessionID, req.Action, "failed to decode audio data")
+	}
+
+	sampleRate := data.SampleRate
+	if sampleRate <= 0 {
+		sampleRate = 16000
+	}
+	channels := data.Channels
+	if channels <= 0 {
+		channels = 1
+	}
+
+	chunk := bus.AudioChunk{
+		SessionID:  sessionID,
+		SessionKey: data.SessionKey,
+		CharID:     char.ID,
+		SpeakerID:  "pet_user",
+		ChatID:     sessionID,
+		Channel:    "pet",
+		Sequence:   data.Sequence,
+		Timestamp:  data.Timestamp,
+		SampleRate: sampleRate,
+		Channels:   channels,
+		Format:     "pcm",
+		Data:       pcmData,
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 100*time.Millisecond)
+	err = s.msgBus.PublishAudioChunk(ctx, chunk)
+	cancel()
+	if err != nil {
+		logger.ErrorCF("pet", "Failed to publish audio chunk", map[string]any{"error": err.Error()})
+		return s.sendError(sessionID, req.Action, "语音识别失败，请重试")
+	}
+
+	return s.sendResponse(sessionID, req.Action, map[string]bool{"received": true})
 }
