@@ -47,6 +47,7 @@ type wavWriter struct {
 	file       *os.File
 	sampleRate int
 	channels   int
+	dataSize   int64
 }
 
 func newWavWriter(filename string, sampleRate, channels int) (*wavWriter, error) {
@@ -81,14 +82,26 @@ func newWavWriter(filename string, sampleRate, channels int) (*wavWriter, error)
 }
 
 func (w *wavWriter) WriteRTPPacket(seq uint16, ts uint32, data []byte) error {
-	_, err := w.file.Write(data)
+	n, err := w.file.Write(data)
+	if err == nil {
+		w.dataSize += int64(n)
+	}
 	return err
 }
 
 func (w *wavWriter) Close() error {
 	if w.file != nil {
+		// RIFF size = fileSize - 8 (total file size minus RIFF header and this field)
+		riffSize := w.dataSize + 36
+		w.file.Seek(4, 0)
+		binary.Write(w.file, binary.LittleEndian, uint32(riffSize))
+
+		// data chunk size
+		w.file.Seek(40, 0)
+		binary.Write(w.file, binary.LittleEndian, uint32(w.dataSize))
+
 		w.file.Sync()
-		w.file.Close()
+		return w.file.Close()
 	}
 	return nil
 }
