@@ -228,6 +228,9 @@ Add `metrics` and `chart` only when needed.
 
 Keep the JSON compact enough to pass as one command argument.
 
+Treat `state.json` as the source of truth for modify/restyle.
+Do not assume manual edits made directly inside an exported `.pptx` file can be preserved by this engine.
+
 Preferred compact examples:
 
 - `{layout:process,variant:timeline-ribbon}`
@@ -241,13 +244,13 @@ Run the resolved engine from the workspace root.
 Command shape:
 
 ```text
-ENGINE_CMD --action modify --template_key TEMPLATE_KEY --template generated/student-ppt-pet/My_Academic_Presentation.pptx --page_index N --new_data "{layout:process,variant:timeline-ribbon}" --state state.json --output generated/student-ppt-pet/My_Academic_Presentation_modified.pptx
+ENGINE_CMD --action modify --template_key TEMPLATE_KEY --page_index N --new_data "{layout:process,variant:timeline-ribbon}" --state state.json --output generated/student-ppt-pet/My_Academic_Presentation_modified.pptx
 ```
 
 Replace:
 
 - `ENGINE_CMD` with the resolved engine command
-- `TEMPLATE_KEY` with the current or requested deck template
+- `TEMPLATE_KEY` with one exact known template key such as `academic-multi` or `campus-sunrise`
 - `N` with the actual 1-based page index
 - `--new_data` with the actual compact slide JSON
 
@@ -270,12 +273,13 @@ Rules:
 
 1. Read `state.json`.
 2. Determine the current `template_key`.
-3. If the target `template_key` is the same as the current one:
+3. Treat `state.json` as the source of truth. Restyle rebuilds from stored plan data and does not read an existing exported `.pptx` file back in.
+4. If the target `template_key` is the same as the current one:
    - tell the user it is already using that template
    - explain that the visual style will not change
    - do not call `restyle`
    - mention the other available templates
-4. If the target `template_key` is different:
+5. If the target `template_key` is different:
    - keep the existing slide content structure
    - run:
 

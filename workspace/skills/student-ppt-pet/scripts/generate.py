@@ -100,14 +100,24 @@ def load_template_registry() -> dict:
 TEMPLATE_REGISTRY = load_template_registry()
 
 
+def validate_template_key(template_key: str | None) -> str:
+    chosen_key = str(template_key or DEFAULT_TEMPLATE_KEY).strip() or DEFAULT_TEMPLATE_KEY
+    if chosen_key not in TEMPLATE_REGISTRY:
+        available = ", ".join(sorted(TEMPLATE_REGISTRY))
+        raise ValueError(
+            f"unknown template_key '{chosen_key}'. Available template_key values: {available}"
+        )
+    return chosen_key
+
+
 def set_active_template(template_key: str | None) -> dict:
     global ACTIVE_TEMPLATE
     global THEME
     global DEFAULT_FONT
     global TITLE_FONT
 
-    chosen_key = str(template_key or DEFAULT_TEMPLATE_KEY).strip() or DEFAULT_TEMPLATE_KEY
-    ACTIVE_TEMPLATE = deepcopy(TEMPLATE_REGISTRY.get(chosen_key, TEMPLATE_REGISTRY[DEFAULT_TEMPLATE_KEY]))
+    chosen_key = validate_template_key(template_key)
+    ACTIVE_TEMPLATE = deepcopy(TEMPLATE_REGISTRY[chosen_key])
     THEME = deepcopy(ACTIVE_TEMPLATE.get("theme", {}))
     DEFAULT_FONT = str(ACTIVE_TEMPLATE.get("fonts", {}).get("body", "Microsoft YaHei"))
     TITLE_FONT = str(ACTIVE_TEMPLATE.get("fonts", {}).get("title", DEFAULT_FONT))
@@ -140,15 +150,15 @@ def resolve_template_key(
     if explicit_template_key:
         value = str(explicit_template_key).strip()
         if value:
-            return value
+            return validate_template_key(value)
 
     if isinstance(payload, dict):
         for key in ("template_key", "template"):
             value = str(payload.get(key, "")).strip()
             if value:
-                return value
+                return validate_template_key(value)
 
-    return DEFAULT_TEMPLATE_KEY
+    return validate_template_key(DEFAULT_TEMPLATE_KEY)
 
 
 def rgb(hex_color: str) -> RGBColor:
@@ -458,15 +468,17 @@ def restyle_plan_to_template_defaults(plan: dict, template_key: str) -> dict:
     return normalize_plan(restyled, template_key)
 
 
-def make_state(plan: dict, *, template_path: str, output_path: str, template_key: str) -> dict:
+def make_state(
+    plan: dict, *, template_path: Path | None, output_path: Path | None, template_key: str
+) -> dict:
     return {
         "version": 1,
         "engine": {"name": "student-ppt-pet", "mode": "local-exe"},
         "updated_at": now_iso(),
         "template_key": template_key,
         "template_name": ACTIVE_TEMPLATE.get("display_name", template_key),
-        "template_path": template_path,
-        "output_path": output_path,
+        "template_path": serialize_state_path(template_path),
+        "output_path": serialize_state_path(output_path),
         "plan": plan,
     }
 
@@ -1145,7 +1157,22 @@ def resolve_path(path_str: str | None, default: str | None = None) -> Path | Non
     value = path_str or default
     if not value:
         return None
-    return Path(value).expanduser().resolve()
+    return Path(value).expanduser()
+
+
+def serialize_state_path(path: Path | None) -> str:
+    if path is None:
+        return ""
+
+    expanded = path.expanduser()
+    if not expanded.is_absolute():
+        return str(expanded)
+
+    cwd = Path.cwd()
+    try:
+        return str(expanded.relative_to(cwd))
+    except ValueError:
+        return str(expanded)
 
 
 def merge_slide(existing_slide: dict, new_slide_data: dict, page_index: int) -> dict:
@@ -1190,8 +1217,8 @@ def create_presentation(
         make_state(
             plan,
             template_key=chosen_template_key,
-            template_path=str(template_path) if template_path else "",
-            output_path=str(output_path),
+            template_path=template_path,
+            output_path=output_path,
         ),
     )
     return output_str
@@ -1208,7 +1235,10 @@ def modify_presentation(
 ) -> str:
     state_path = resolve_path(state_file, DEFAULT_STATE)
     output_path = resolve_path(output_file, DEFAULT_OUTPUT)
-    template_path = resolve_path(template_file)
+    if template_file:
+        raise ValueError(
+            "--template/--template-file is not supported for modify; modify rebuilds from state.json and does not open an existing PPTX file"
+        )
 
     state = load_json(state_path)
     chosen_template_key = resolve_template_key(template_key, state)
@@ -1225,17 +1255,15 @@ def modify_presentation(
     output_str = write_presentation(plan, output_path)
 
     chosen_template = (
-        str(template_path)
-        if template_path
-        else str(state.get("template_path", "")).strip()
+        str(state.get("template_path", "")).strip()
     )
     save_json(
         state_path,
         make_state(
             plan,
             template_key=chosen_template_key,
-            template_path=chosen_template,
-            output_path=str(output_path),
+            template_path=Path(chosen_template) if chosen_template else None,
+            output_path=output_path,
         ),
     )
     return output_str
@@ -1250,7 +1278,10 @@ def restyle_presentation(
 ) -> str:
     state_path = resolve_path(state_file, DEFAULT_STATE)
     output_path = resolve_path(output_file, DEFAULT_OUTPUT)
-    template_path = resolve_path(template_file)
+    if template_file:
+        raise ValueError(
+            "--template/--template-file is not supported for restyle; restyle rebuilds from state.json and does not open an existing PPTX file"
+        )
 
     state = load_json(state_path)
     chosen_template_key = resolve_template_key(template_key, state)
@@ -1260,17 +1291,15 @@ def restyle_presentation(
     output_str = write_presentation(plan, output_path)
 
     chosen_template = (
-        str(template_path)
-        if template_path
-        else str(state.get("template_path", "")).strip()
+        str(state.get("template_path", "")).strip()
     )
     save_json(
         state_path,
         make_state(
             plan,
             template_key=chosen_template_key,
-            template_path=chosen_template,
-            output_path=str(output_path),
+            template_path=Path(chosen_template) if chosen_template else None,
+            output_path=output_path,
         ),
     )
     return output_str
