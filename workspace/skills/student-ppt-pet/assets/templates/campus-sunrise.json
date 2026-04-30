@@ -1,0 +1,39 @@
+{
+  "key": "campus-sunrise",
+  "display_name": "Campus Sunrise",
+  "fonts": {
+    "body": "Microsoft YaHei",
+    "title": "Microsoft YaHei UI"
+  },
+  "theme": {
+    "navy": "4A2F1C",
+    "blue": "C96B2C",
+    "sky": "FFF1E4",
+    "cyan": "F2A65A",
+    "ink": "2E241E",
+    "gray": "74675E",
+    "light": "FFF9F3",
+    "white": "FFFFFF",
+    "border": "F0DCC8",
+    "accent": "2E9C7F",
+    "green": "3EAD74",
+    "panel": "7A4A28",
+    "panel_alt": "A35F2B"
+  },
+  "default_variants": {
+    "title": "center-spotlight",
+    "agenda": "stacked-list",
+    "content": "split-panel",
+    "process": "timeline-ribbon",
+    "results": "insight-grid",
+    "summary": "closing-quote"
+  },
+  "variants": {
+    "title": ["hero-band", "center-spotlight"],
+    "agenda": ["grid-cards", "stacked-list"],
+    "content": ["sidebar-focus", "split-panel"],
+    "process": ["step-cards", "timeline-ribbon"],
+    "results": ["metrics-chart", "insight-grid"],
+    "summary": ["takeaway-panel", "closing-quote"]
+  }
+}

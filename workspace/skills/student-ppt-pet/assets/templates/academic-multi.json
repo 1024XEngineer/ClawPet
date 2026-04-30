@@ -1,0 +1,39 @@
+{
+  "key": "academic-multi",
+  "display_name": "Academic Multi",
+  "fonts": {
+    "body": "Microsoft YaHei",
+    "title": "Microsoft YaHei UI"
+  },
+  "theme": {
+    "navy": "0F2747",
+    "blue": "1F5EFF",
+    "sky": "EAF2FF",
+    "cyan": "4DA8FF",
+    "ink": "1E2A39",
+    "gray": "5E6B78",
+    "light": "F7F9FC",
+    "white": "FFFFFF",
+    "border": "D8E1F0",
+    "accent": "FF8A3D",
+    "green": "1FA971",
+    "panel": "17365F",
+    "panel_alt": "214C99"
+  },
+  "default_variants": {
+    "title": "hero-band",
+    "agenda": "grid-cards",
+    "content": "sidebar-focus",
+    "process": "step-cards",
+    "results": "metrics-chart",
+    "summary": "takeaway-panel"
+  },
+  "variants": {
+    "title": ["hero-band", "center-spotlight"],
+    "agenda": ["grid-cards", "stacked-list"],
+    "content": ["sidebar-focus", "split-panel"],
+    "process": ["step-cards", "timeline-ribbon"],
+    "results": ["metrics-chart", "insight-grid"],
+    "summary": ["takeaway-panel", "closing-quote"]
+  }
+}
