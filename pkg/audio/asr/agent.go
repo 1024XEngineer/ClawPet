@@ -108,7 +108,7 @@ func (w *wavWriter) Close() error {
 
 type speechAccumulator struct {
 	writer      audioWriter
-	format      string
+	format      string // 保留字段，用于将来多格式支持
 	file        string
 	lastAudioAt time.Time
 	mu          sync.Mutex
@@ -119,8 +119,8 @@ type speechAccumulator struct {
 	sessionKey  string // 会话隔离标识
 	charID      string // 当前角色 ID
 	channel     string
-	sampleRate  int
-	channels    int
+	sampleRate  int // 保留字段，用于将来多格式支持
+	channels    int // 保留字段，用于将来多格式支持
 }
 
 func (a *speechAccumulator) Push(chunk bus.AudioChunk) {
