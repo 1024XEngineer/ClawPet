@@ -127,6 +127,7 @@ export type WSEventType =
   | "disconnected"
   | "message"
   | "audio"
+  | "tool_status"
   | "typing"
   | "error"
   | "reconnecting"
@@ -518,14 +519,16 @@ export class PicoClawWebSocket {
         return
       }
       this.emit({
-        type: "message",
+        type: "tool_status",
         data: {
-          id: `tool-${timestamp}-${Math.random().toString(36).slice(2, 8)}`,
-          role: "assistant",
-          content: text,
+          status: /执行完成|completed|done/i.test(text)
+            ? "done"
+            : /失败|error|failed/i.test(text)
+              ? "error"
+              : "busy",
+          text,
           timestamp,
-          streaming: false,
-        } satisfies ChatMessage,
+        },
       })
       return
     }

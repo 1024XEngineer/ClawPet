@@ -8,6 +8,7 @@ import {
   PenTool,
   Search,
   Send,
+  Square,
   Sparkles,
 } from "lucide-react"
 
@@ -93,8 +94,11 @@ export function ChatArea({ chat, layoutMode = "full" }: ChatAreaProps) {
     messages,
     isConnected,
     isTyping,
+    isTurnActive,
+    toolStatus,
     error,
     sendMessage,
+    terminateTurn,
     reconnect,
     clearError,
   } = chat
@@ -119,6 +123,9 @@ export function ChatArea({ chat, layoutMode = "full" }: ChatAreaProps) {
   }
 
   const handleSuggestionClick = (prompt: string) => {
+    if (isTurnActive) {
+      return
+    }
     sendMessage(prompt)
   }
 
@@ -209,6 +216,18 @@ export function ChatArea({ chat, layoutMode = "full" }: ChatAreaProps) {
                           <span className="absolute inset-0 rounded-full bg-[#d08a3a]/20 animate-ping [animation-delay:600ms]" />
                           <span className="absolute inset-[2px] rounded-full bg-[#d08a3a]" />
                         </div>
+                      </div>
+                    </div>
+                  )}
+
+                  {toolStatus !== "idle" && (
+                    <div className="flex justify-start">
+                      <div className="rounded-[1.2rem] border border-white/75 bg-white/82 px-4 py-2 text-sm text-[#6f533a] shadow-sm">
+                        {toolStatus === "error"
+                          ? "工具调用失败，正在尝试恢复…"
+                          : toolStatus === "done"
+                            ? "工具调用完成，正在整理结果…"
+                            : "我正在调用工具处理你的请求…"}
                       </div>
                     </div>
                   )}
@@ -395,17 +414,32 @@ export function ChatArea({ chat, layoutMode = "full" }: ChatAreaProps) {
                 <Mic className="h-4.5 w-4.5" />
               </button>
 
-              <Button
-                size="icon"
-                onClick={handleSend}
-                disabled={!message.trim() || !isConnected}
-                className={cn(
-                  "bg-[linear-gradient(135deg,#9a5929_0%,#c87734_48%,#e1a05b_100%)] text-amber-50 shadow-[0_18px_26px_-18px_rgba(154,89,41,0.75)] hover:brightness-105 disabled:opacity-50",
-                  isUltra ? "h-9 w-9 rounded-xl" : "h-11 w-11 rounded-2xl",
-                )}
-              >
-                <Send className="h-4 w-4" />
-              </Button>
+              {isTurnActive ? (
+                <Button
+                  size="icon"
+                  onClick={terminateTurn}
+                  className={cn(
+                    "bg-[linear-gradient(135deg,#a53333_0%,#c24a4a_48%,#df6f6f_100%)] text-rose-50 shadow-[0_18px_26px_-18px_rgba(165,51,51,0.75)] hover:brightness-105",
+                    isUltra ? "h-9 w-9 rounded-xl" : "h-11 w-11 rounded-2xl",
+                  )}
+                  title="终止本轮"
+                >
+                  <Square className="h-4 w-4" />
+                </Button>
+              ) : (
+                <Button
+                  size="icon"
+                  onClick={handleSend}
+                  disabled={!message.trim() || !isConnected}
+                  className={cn(
+                    "bg-[linear-gradient(135deg,#9a5929_0%,#c87734_48%,#e1a05b_100%)] text-amber-50 shadow-[0_18px_26px_-18px_rgba(154,89,41,0.75)] hover:brightness-105 disabled:opacity-50",
+                    isUltra ? "h-9 w-9 rounded-xl" : "h-11 w-11 rounded-2xl",
+                  )}
+                  title="发送"
+                >
+                  <Send className="h-4 w-4" />
+                </Button>
+              )}
             </div>
           </div>
         </div>

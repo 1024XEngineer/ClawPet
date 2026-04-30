@@ -42,8 +42,11 @@ export interface UseChatResult {
   activeSessionId: string
   isConnected: boolean
   isTyping: boolean
+  isTurnActive: boolean
+  toolStatus: "idle" | "busy" | "done" | "error"
   error: string | null
   sendMessage: (content: string) => void
+  terminateTurn: () => void
   newChat: () => Promise<void>
   switchSession: (sessionId: string) => Promise<void>
   deleteSession: (sessionId: string) => Promise<void>
@@ -76,6 +79,11 @@ interface AudioSegmentItem {
 interface ResolvedAudioChunkPayload {
   audioBase64: string
   audioMime?: string
+}
+
+interface ToolStatusEventData {
+  status?: "busy" | "done" | "error"
+  text?: string
 }
 
 const EMPTY_SESSION_TITLE = "新对话"
@@ -382,6 +390,8 @@ function resolveAudioChunkPayload(data: AudioPushData): ResolvedAudioChunkPayloa
 export function useChat(options: UseChatOptions = {}): UseChatResult {
   const [isConnected, setIsConnected] = useState(false)
   const [isTyping, setIsTyping] = useState(false)
+  const [isTurnActive, setIsTurnActive] = useState(false)
+  const [toolStatus, setToolStatus] = useState<"idle" | "busy" | "done" | "error">("idle")
   const [error, setError] = useState<string | null>(null)
   const wsRef = useRef(getWebSocketInstance())
   const optionsRef = useRef(options)
@@ -411,6 +421,7 @@ export function useChat(options: UseChatOptions = {}): UseChatResult {
     seq: null,
   })
   const lastAssistantTextRef = useRef("")
+  const assistantTurnActiveRef = useRef(false)
   const lastEmotionRef = useRef("neutral")
   const lastPlayedAudioRef = useRef<{ value: string; at: number }>({
     value: "",
@@ -517,18 +528,21 @@ export function useChat(options: UseChatOptions = {}): UseChatResult {
     }
   }, [])
 
-  const showBubble = useCallback((text: string | null, audio?: string) => {
-    lastBubbleTextRef.current = {
-      text: text?.trim() || "",
-      at: Date.now(),
-    }
-    window.electronAPI?.showBubble?.({
-      text,
-      emotion: lastEmotionRef.current,
-      audio,
-      duration_ms: durationMs,
-    })
-  }, [])
+  const showBubble = useCallback(
+    (text: string | null, audio?: string, durationMs?: number) => {
+      lastBubbleTextRef.current = {
+        text: text?.trim() || "",
+        at: Date.now(),
+      }
+      window.electronAPI?.showBubble?.({
+        text,
+        emotion: lastEmotionRef.current,
+        audio,
+        duration_ms: typeof durationMs === "number" ? durationMs : undefined,
+      })
+    },
+    [],
+  )
 
   const clearAudioAdvanceTimer = useCallback(() => {
     if (audioAdvanceTimerRef.current) {
@@ -794,6 +808,8 @@ export function useChat(options: UseChatOptions = {}): UseChatResult {
   const connectWithBootstrap = useCallback(async () => {
     setError(null)
     setIsTyping(false)
+    setIsTurnActive(false)
+    setToolStatus("idle")
 
     const bootstrap = await ensureBackendReadyForChat()
     if (!bootstrap.ok) {
@@ -841,15 +857,19 @@ export function useChat(options: UseChatOptions = {}): UseChatResult {
         })
         return changed ? next : prev
       })
-      clearStreamingGuardTimer()
     }
 
-    const refreshStreamingGuard = () => {
-      clearStreamingGuardTimer()
-      streamingGuardTimerRef.current = setTimeout(() => {
-        setIsTyping(false)
-        finalizeStreamingAssistantMessages()
-      }, 1800)
+    const endAssistantTurn = () => {
+      assistantTurnActiveRef.current = false
+      setIsTyping(false)
+      setIsTurnActive(false)
+      setToolStatus("idle")
+    }
+
+    const beginOrKeepAssistantTurn = () => {
+      assistantTurnActiveRef.current = true
+      setIsTyping(true)
+      setIsTurnActive(true)
     }
 
     const handleEvent = (event: WSEvent) => {
@@ -857,14 +877,13 @@ export function useChat(options: UseChatOptions = {}): UseChatResult {
         case "connected":
           setIsConnected(true)
           setError(null)
-          clearStreamingGuardTimer()
           optionsRef.current.onConnectionChange?.(true)
           break
 
         case "disconnected":
           setIsConnected(false)
-          setIsTyping(false)
           finalizeStreamingAssistantMessages()
+          endAssistantTurn()
           optionsRef.current.onConnectionChange?.(false)
           break
 
@@ -874,11 +893,10 @@ export function useChat(options: UseChatOptions = {}): UseChatResult {
             updateSessionMessages(activeSessionIdRef.current, (prev) =>
               mergeMessage(prev, message),
             )
-            setIsTyping(message.streaming ?? false)
             if (message.role === "assistant" && message.streaming) {
-              refreshStreamingGuard()
+              beginOrKeepAssistantTurn()
             } else if (message.role === "assistant" && !message.streaming) {
-              clearStreamingGuardTimer()
+              endAssistantTurn()
             }
             if (message.role === "assistant" && !message.streaming) {
               lastAssistantTextRef.current = message.content
@@ -940,6 +958,13 @@ export function useChat(options: UseChatOptions = {}): UseChatResult {
             })
           }
 
+          // Some turns may finish via audio final marker without explicit typing=false.
+          // Treat this as a definitive end-of-turn signal to avoid stuck "thinking" state.
+          if (data.is_final) {
+            finalizeStreamingAssistantMessages()
+            endAssistantTurn()
+          }
+
           break
         }
 
@@ -947,30 +972,39 @@ export function useChat(options: UseChatOptions = {}): UseChatResult {
           {
             const typing =
               typeof event.data === "string" ? event.data === "true" : true
-            setIsTyping(typing)
-
-            if (!typing) {
-              finalizeStreamingAssistantMessages()
+            if (typing) {
+              beginOrKeepAssistantTurn()
             } else {
-              refreshStreamingGuard()
+              finalizeStreamingAssistantMessages()
+              endAssistantTurn()
             }
           }
           break
+
+        case "tool_status": {
+          const data = (event.data || {}) as ToolStatusEventData
+          const status = data.status || "busy"
+          if (status === "busy" || status === "done" || status === "error") {
+            beginOrKeepAssistantTurn()
+            setToolStatus(status)
+          }
+          break
+        }
 
         case "error": {
           const errorMsg =
             typeof event.data === "string" ? event.data : "Unknown error"
           setError(errorMsg)
-          setIsTyping(false)
           finalizeStreamingAssistantMessages()
+          endAssistantTurn()
           optionsRef.current.onError?.(errorMsg)
           break
         }
 
         case "reconnecting":
           setError("正在重新连接...")
-          setIsTyping(false)
           finalizeStreamingAssistantMessages()
+          endAssistantTurn()
           break
 
         case "emotion_change":
@@ -994,7 +1028,7 @@ export function useChat(options: UseChatOptions = {}): UseChatResult {
     })
 
     return () => {
-      clearStreamingGuardTimer()
+      assistantTurnActiveRef.current = false
       unsubscribe()
       ws.disconnect()
       resetAudioQueue()
@@ -1053,7 +1087,10 @@ export function useChat(options: UseChatOptions = {}): UseChatResult {
         userMessage,
       ])
       clearPendingBubbleTimer()
+      assistantTurnActiveRef.current = true
       setIsTyping(true)
+      setIsTurnActive(true)
+      setToolStatus("idle")
       setError(null)
 
       wsRef.current.send(outbound, activeSessionIdRef.current)
@@ -1075,6 +1112,8 @@ export function useChat(options: UseChatOptions = {}): UseChatResult {
     lastAssistantTextRef.current = ""
     lastBubbleTextRef.current = { text: "", at: 0 }
     setIsTyping(false)
+    setIsTurnActive(false)
+    setToolStatus("idle")
     setError(null)
 
     setSessionsState((prev) => {
@@ -1119,6 +1158,8 @@ export function useChat(options: UseChatOptions = {}): UseChatResult {
       lastAssistantTextRef.current = ""
       lastBubbleTextRef.current = { text: "", at: 0 }
       setIsTyping(false)
+      setIsTurnActive(false)
+      setToolStatus("idle")
       setError(null)
       setActiveSessionId(sessionId)
 
@@ -1176,6 +1217,8 @@ export function useChat(options: UseChatOptions = {}): UseChatResult {
         lastAssistantTextRef.current = ""
         lastBubbleTextRef.current = { text: "", at: 0 }
         setIsTyping(false)
+        setIsTurnActive(false)
+        setToolStatus("idle")
         setError(null)
         await connectWithBootstrap()
       }
@@ -1186,6 +1229,8 @@ export function useChat(options: UseChatOptions = {}): UseChatResult {
   const reconnect = useCallback(() => {
     setError(null)
     setIsTyping(false)
+    setIsTurnActive(false)
+    setToolStatus("idle")
     clearPendingBubbleTimer()
     wsRef.current.disconnect()
 
@@ -1198,6 +1243,27 @@ export function useChat(options: UseChatOptions = {}): UseChatResult {
   const clearError = useCallback(() => {
     setError(null)
   }, [])
+
+  const terminateTurn = useCallback(() => {
+    if (!assistantTurnActiveRef.current) {
+      return
+    }
+    assistantTurnActiveRef.current = false
+    setIsTyping(false)
+    setIsTurnActive(false)
+    setToolStatus("idle")
+    clearPendingBubbleTimer()
+    if (currentAudioRef.current) {
+      currentAudioRef.current.pause()
+      currentAudioRef.current = null
+    }
+    resetAudioQueue()
+    wsRef.current.disconnect()
+    void connectWithBootstrap().catch((err) => {
+      setError("终止后重连失败")
+      console.error("Reconnect after terminate failed:", err)
+    })
+  }, [clearPendingBubbleTimer, connectWithBootstrap, resetAudioQueue])
 
   useEffect(() => {
     const unlisten = window.electronAPI?.onForceStopMedia?.(() => {
@@ -1216,6 +1282,8 @@ export function useChat(options: UseChatOptions = {}): UseChatResult {
       lastPlayedAudioRef.current = { value: "", at: 0 }
       lastBubbleTextRef.current = { text: "", at: 0 }
       setIsTyping(false)
+      setIsTurnActive(false)
+      setToolStatus("idle")
       setError(null)
     })
 
@@ -1238,8 +1306,11 @@ export function useChat(options: UseChatOptions = {}): UseChatResult {
     activeSessionId,
     isConnected,
     isTyping,
+    isTurnActive,
+    toolStatus,
     error,
     sendMessage,
+    terminateTurn,
     newChat,
     switchSession,
     deleteSession,
