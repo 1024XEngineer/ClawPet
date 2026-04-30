@@ -67,7 +67,7 @@ func TestAgentHandleChunkCreatesSession(t *testing.T) {
 
 	agent.handleChunk(chunk)
 
-	key := "sess_speaker"
+	key := "sess__speaker"
 	agent.mu.Lock()
 	acc, ok := agent.sessions[key]
 	agent.mu.Unlock()

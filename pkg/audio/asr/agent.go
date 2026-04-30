@@ -191,7 +191,7 @@ func (a *Agent) handleChunk(chunk bus.AudioChunk) {
 		return
 	}
 
-	key := fmt.Sprintf("%s_%s", chunk.SessionID, chunk.SpeakerID)
+	key := fmt.Sprintf("%s_%s_%s", chunk.SessionID, chunk.SessionKey, chunk.SpeakerID)
 
 	a.mu.Lock()
 	acc, exists := a.sessions[key]
