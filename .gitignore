@@ -101,3 +101,7 @@ dist/
 # Environment
 .env
 .env.local
+
+# Allow committed runtime binaries for the packaged student PPT skill
+!workspace/skills/student-ppt-pet/runtime/ppt_engine/ppt_engine.exe
+!workspace/skills/student-ppt-pet/runtime/ppt_engine/_internal/*.dll
