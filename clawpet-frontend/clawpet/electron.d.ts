@@ -8,6 +8,7 @@ declare global {
     animation?: string
     animationHints?: string[]
     audio?: string
+    duration_ms?: number
   }
 
   interface Window {
