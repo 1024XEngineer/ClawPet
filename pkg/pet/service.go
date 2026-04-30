@@ -1718,6 +1718,10 @@ func (s *PetService) handleAudioFrame(sessionID string, req Request) error {
 		return s.sendError(sessionID, req.Action, "session_key is required for voice input")
 	}
 
+	if data.Format != "" && data.Format != "pcm" {
+		return s.sendError(sessionID, req.Action, "only pcm format is supported")
+	}
+
 	char := s.charManager.GetCurrent()
 	if char == nil {
 		return s.sendError(sessionID, req.Action, "no active character")
