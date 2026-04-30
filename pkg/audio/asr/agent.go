@@ -77,7 +77,12 @@ func newWavWriter(filename string, sampleRate, channels int) (*wavWriter, error)
 	copy(header[36:40], "data")
 	binary.LittleEndian.PutUint32(header[40:44], 0xFFFFFFFF)
 
-	f.Write(header)
+	if _, err := f.Write(header); err != nil {
+		f.Close()
+		os.Remove(filename)
+		return nil, err
+	}
+
 	return w, nil
 }
 
