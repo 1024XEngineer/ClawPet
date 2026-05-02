@@ -18,6 +18,7 @@ const { app, BrowserWindow, ipcMain, screen, globalShortcut } = require('electro
 const path = require('path');
 const os = require('os');
 const fs = require('fs');
+const net = require('net');
 const { spawn } = require('child_process');
 
 // 全局窗口引用
@@ -90,7 +91,83 @@ function isLoopbackProxyValue(value) {
   }
 }
 
-function buildChildProcessEnv(extraEnv = {}) {
+function getLoopbackProxyTarget(value) {
+  if (typeof value !== 'string') {
+    return null;
+  }
+
+  const trimmed = value.trim();
+  if (!trimmed) {
+    return null;
+  }
+
+  const defaultPorts = {
+    'http:': 80,
+    'https:': 443,
+    'socks5:': 1080,
+    'socks5h:': 1080,
+  };
+
+  try {
+    const parsed = new URL(trimmed);
+    const hostname = parsed.hostname;
+    if (hostname !== '127.0.0.1' && hostname !== 'localhost' && hostname !== '::1') {
+      return null;
+    }
+
+    const parsedPort = Number(parsed.port || defaultPorts[parsed.protocol] || 0);
+    if (!Number.isInteger(parsedPort) || parsedPort <= 0 || parsedPort > 65535) {
+      return null;
+    }
+
+    return {
+      host: hostname === '::1' ? '127.0.0.1' : hostname,
+      port: parsedPort,
+      cacheKey: `${hostname}:${parsedPort}`,
+    };
+  } catch {
+    return null;
+  }
+}
+
+const loopbackProxyReachabilityCache = new Map();
+
+function canConnectToLoopbackProxy(target, timeoutMs = 250) {
+  return new Promise((resolve) => {
+    const socket = net.createConnection({ host: target.host, port: target.port });
+
+    const finalize = (reachable) => {
+      socket.removeAllListeners();
+      if (!socket.destroyed) {
+        socket.destroy();
+      }
+      resolve(reachable);
+    };
+
+    socket.setTimeout(timeoutMs);
+    socket.once('connect', () => finalize(true));
+    socket.once('timeout', () => finalize(false));
+    socket.once('error', () => finalize(false));
+  });
+}
+
+async function shouldKeepLoopbackProxy(value) {
+  const target = getLoopbackProxyTarget(value);
+  if (!target) {
+    return false;
+  }
+
+  const cached = loopbackProxyReachabilityCache.get(target.cacheKey);
+  if (typeof cached === 'boolean') {
+    return cached;
+  }
+
+  const reachable = await canConnectToLoopbackProxy(target);
+  loopbackProxyReachabilityCache.set(target.cacheKey, reachable);
+  return reachable;
+}
+
+async function buildChildProcessEnv(extraEnv = {}) {
   const childEnv = { ...process.env };
   const proxyKeys = [
     'HTTP_PROXY',
@@ -102,7 +179,17 @@ function buildChildProcessEnv(extraEnv = {}) {
   ];
 
   for (const key of proxyKeys) {
-    if (isLoopbackProxyValue(childEnv[key])) {
+    if (!isLoopbackProxyValue(childEnv[key])) {
+      continue;
+    }
+
+    // Keep valid loopback proxies such as Clash/mitmproxy when they are
+    // actually reachable. We only strip stale loopback proxy env vars when
+    // the local proxy endpoint is no longer accepting connections, because
+    // that breaks packaged child processes while preserving intentional proxy
+    // setups and required egress controls.
+    const keepProxy = await shouldKeepLoopbackProxy(childEnv[key]);
+    if (!keepProxy) {
       delete childEnv[key];
     }
   }
@@ -279,7 +366,7 @@ const isProduction = app.isPackaged;
 let effectiveDashboardBaseUrl = dashboardBaseUrl;
 let nextServerProcess = null;
 
-function startNextServer() {
+async function startNextServer() {
   if (!isProduction) {
     return;
   }
@@ -308,18 +395,20 @@ function startNextServer() {
 
   logToFile(`[NEXT] Starting Next.js from ${appDir}`);
 
+  const childEnv = await buildChildProcessEnv({
+    ELECTRON_RUN_AS_NODE: '1',
+    NODE_ENV: 'production',
+    PORT: '3000',
+    NEXT_PUBLIC_PICOCLAW_API_URL: 'http://127.0.0.1:18800',
+    NEXT_PUBLIC_PICOCLAW_WS_URL: 'ws://127.0.0.1:18800',
+    NEXT_PUBLIC_PICOCLAW_DIRECT_GATEWAY_URL: 'http://127.0.0.1:18790',
+  });
+
   nextServerProcess = spawn(process.execPath, [nextCliPath, 'start', '-p', '3000'], {
     cwd: appDir,
     stdio: ['ignore', 'pipe', 'pipe'],
     windowsHide: true,
-    env: buildChildProcessEnv({
-      ELECTRON_RUN_AS_NODE: '1',
-      NODE_ENV: 'production',
-      PORT: '3000',
-      NEXT_PUBLIC_PICOCLAW_API_URL: 'http://127.0.0.1:18800',
-      NEXT_PUBLIC_PICOCLAW_WS_URL: 'ws://127.0.0.1:18800',
-      NEXT_PUBLIC_PICOCLAW_DIRECT_GATEWAY_URL: 'http://127.0.0.1:18790',
-    }),
+    env: childEnv,
   });
 
   nextServerProcess.stdout.on('data', (data) => {
@@ -1577,7 +1666,7 @@ async function startBackendServices() {
   logToFile('[BACKEND] Starting embedded backend services...');
   if (isProduction) {
     try {
-      startNextServer();
+      await startNextServer();
     } catch (error) {
       logToFile(`[BACKEND] Failed to start Next.js: ${error.message}`);
     }
@@ -1607,21 +1696,28 @@ async function startBackendServices() {
 /**
  * 启动 Launcher 服务
  */
-function startLauncher(exePath, workDir) {
-  return new Promise((resolve, reject) => {
-    const configDir = path.join(os.homedir(), '.picoclaw');
-    if (!fs.existsSync(configDir)) {
-      fs.mkdirSync(configDir, { recursive: true });
-    }
-    
-    const configPath = path.join(configDir, 'config.json');
-    
-    if (!launcherToken) {
-      launcherToken = embeddedLauncherTokenDefault;
-    }
-    process.env.GOCLAW_LAUNCHER_TOKEN = launcherToken;
-    process.env.PICOCLAW_LAUNCHER_TOKEN = launcherToken;
+async function startLauncher(exePath, workDir) {
+  const configDir = path.join(os.homedir(), '.picoclaw');
+  if (!fs.existsSync(configDir)) {
+    fs.mkdirSync(configDir, { recursive: true });
+  }
+  
+  const configPath = path.join(configDir, 'config.json');
+  
+  if (!launcherToken) {
+    launcherToken = embeddedLauncherTokenDefault;
+  }
+  process.env.GOCLAW_LAUNCHER_TOKEN = launcherToken;
+  process.env.PICOCLAW_LAUNCHER_TOKEN = launcherToken;
 
+  const childEnv = await buildChildProcessEnv({
+    PICOCLAW_LAUNCHER_TOKEN: launcherToken,
+    GOCLAW_LAUNCHER_TOKEN: launcherToken,
+    PICOCLAW_HOME: configDir,
+    PICOCLAW_CONFIG: configPath
+  });
+
+  return new Promise((resolve, reject) => {
     launcherProcess = spawn(exePath, [
       '-port', '18800',
       '-no-browser',
@@ -1630,12 +1726,7 @@ function startLauncher(exePath, workDir) {
       cwd: workDir,
       detached: true,
       stdio: ['ignore', 'pipe', 'pipe'],
-      env: buildChildProcessEnv({
-        PICOCLAW_LAUNCHER_TOKEN: launcherToken,
-        GOCLAW_LAUNCHER_TOKEN: launcherToken,
-        PICOCLAW_HOME: configDir,
-        PICOCLAW_CONFIG: configPath
-      }),
+      env: childEnv,
     });
     
     launcherProcess.stdout.on('data', (data) => {
@@ -1679,10 +1770,16 @@ function startLauncher(exePath, workDir) {
 /**
  * 启动 Gateway 服务
  */
-function startGateway(exePath, workDir) {
+async function startGateway(exePath, workDir) {
+  const configDir = path.join(os.homedir(), '.picoclaw');
+  const configPath = path.join(configDir, 'config.json');
+
+  const childEnv = await buildChildProcessEnv({
+    PICOCLAW_HOME: configDir,
+    PICOCLAW_CONFIG: configPath
+  });
+
   return new Promise((resolve, reject) => {
-    const configDir = path.join(os.homedir(), '.picoclaw');
-    const configPath = path.join(configDir, 'config.json');
     
     logToFile(`[GATEWAY] Config dir: ${configDir}`);
     logToFile(`[GATEWAY] Config path: ${configPath}`);
@@ -1714,10 +1811,7 @@ function startGateway(exePath, workDir) {
       cwd: workDir,
       detached: true,
       stdio: ['ignore', 'pipe', 'pipe'],
-      env: buildChildProcessEnv({
-        PICOCLAW_HOME: configDir,
-        PICOCLAW_CONFIG: configPath
-      }),
+      env: childEnv,
     });
     
     gatewayProcess.stdout.on('data', (data) => {
