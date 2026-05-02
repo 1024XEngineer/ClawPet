@@ -85,6 +85,12 @@ contextBridge.exposeInMainWorld('electronAPI', {
    * 关闭当前窗口
    */
   closeWindow: () => ipcRenderer.send('window-close'),
+
+  /**
+   * 设置桌宠窗口是否穿透鼠标
+   * @param {boolean} enabled - true 为穿透，false 为可点击
+   */
+  setPetClickThrough: (enabled) => ipcRenderer.send('set-pet-click-through', Boolean(enabled)),
   
   // ==================== 设置窗口 ====================
   
@@ -148,6 +154,16 @@ contextBridge.exposeInMainWorld('electronAPI', {
    * 发送连接活跃状态（心跳）
    */
   sendConnectionAlive: () => ipcRenderer.send('connection-alive'),
+
+  /**
+   * 上报气泡窗口内容尺寸（用于主进程自适应窗口大小）
+   * @param {{width:number,height:number}} size
+   */
+  reportBubbleWindowSize: (size) => {
+    const width = Number(size?.width) || 0
+    const height = Number(size?.height) || 0
+    ipcRenderer.send('bubble-window-size', { width, height })
+  },
   
   // ==================== 事件监听 ====================
   
