@@ -1400,6 +1400,7 @@ ipcMain.on('show-bubble', (_event, data) => {
   const emotion = typeof data?.emotion === 'string' ? data.emotion.trim() : '';
   const fingerprint = `${audio}|${text}|${emotion}`;
   const now = Date.now();
+  const hasDetachedBubbleWindow = bubbleWindow && !bubbleWindow.isDestroyed();
 
   if (fingerprint && fingerprint === lastBubbleFingerprint && now - lastBubbleAt < 2500) {
     logToFile('[IPC] show-bubble dropped duplicated payload');
@@ -1409,11 +1410,11 @@ ipcMain.on('show-bubble', (_event, data) => {
   lastBubbleFingerprint = fingerprint;
   lastBubbleAt = now;
 
-  if (petWindow && !petWindow.isDestroyed()) {
+  if (!hasDetachedBubbleWindow && petWindow && !petWindow.isDestroyed()) {
     petWindow.webContents.send('bubble-show', data);
   }
 
-  if (bubbleWindow && !bubbleWindow.isDestroyed()) {
+  if (hasDetachedBubbleWindow) {
     syncBubbleWindowToPet({ show: true });
     bubbleWindow.webContents.send('bubble-show', data);
   }
