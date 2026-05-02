@@ -62,9 +62,9 @@ let bubbleWindowHeight = BUBBLE_WINDOW_DEFAULT_HEIGHT;
 
 /**
  * 设置 Electron 用户数据目录
- * 使用 .goclaw 目录存储日志等数据
+ * 使用 .picoclaw 目录存储日志等数据
  */
-const userDataPath = path.join(os.homedir(), '.goclaw');
+const userDataPath = path.join(os.homedir(), '.picoclaw');
 app.setPath('userData', userDataPath);
 const onboardingStatePath = path.join(userDataPath, 'onboarding-state.json');
 
@@ -72,9 +72,50 @@ if (!fs.existsSync(userDataPath)) {
   fs.mkdirSync(userDataPath, { recursive: true });
 }
 
+function isLoopbackProxyValue(value) {
+  if (typeof value !== 'string') {
+    return false;
+  }
+
+  const trimmed = value.trim();
+  if (!trimmed) {
+    return false;
+  }
+
+  try {
+    const parsed = new URL(trimmed);
+    return parsed.hostname === '127.0.0.1' || parsed.hostname === 'localhost' || parsed.hostname === '::1';
+  } catch {
+    return /^(https?|socks5h?):\/\/(127\.0\.0\.1|localhost|\[::1\])(?::\d+)?$/i.test(trimmed);
+  }
+}
+
+function buildChildProcessEnv(extraEnv = {}) {
+  const childEnv = { ...process.env };
+  const proxyKeys = [
+    'HTTP_PROXY',
+    'HTTPS_PROXY',
+    'ALL_PROXY',
+    'http_proxy',
+    'https_proxy',
+    'all_proxy',
+  ];
+
+  for (const key of proxyKeys) {
+    if (isLoopbackProxyValue(childEnv[key])) {
+      delete childEnv[key];
+    }
+  }
+
+  return {
+    ...childEnv,
+    ...extraEnv,
+  };
+}
+
 /**
  * 日志系统配置
- * 所有日志输出到 ~/.goclaw/logs.txt
+ * 所有日志输出到 ~/.picoclaw/logs.txt
  */
 const logFilePath = path.join(userDataPath, 'logs.txt');
 const logStream = fs.createWriteStream(logFilePath, { flags: 'a' });
@@ -271,15 +312,14 @@ function startNextServer() {
     cwd: appDir,
     stdio: ['ignore', 'pipe', 'pipe'],
     windowsHide: true,
-    env: {
-      ...process.env,
+    env: buildChildProcessEnv({
       ELECTRON_RUN_AS_NODE: '1',
       NODE_ENV: 'production',
       PORT: '3000',
       NEXT_PUBLIC_PICOCLAW_API_URL: 'http://127.0.0.1:18800',
       NEXT_PUBLIC_PICOCLAW_WS_URL: 'ws://127.0.0.1:18800',
       NEXT_PUBLIC_PICOCLAW_DIRECT_GATEWAY_URL: 'http://127.0.0.1:18790',
-    },
+    }),
   });
 
   nextServerProcess.stdout.on('data', (data) => {
@@ -1569,7 +1609,7 @@ async function startBackendServices() {
  */
 function startLauncher(exePath, workDir) {
   return new Promise((resolve, reject) => {
-    const configDir = path.join(os.homedir(), '.goclaw-runtime');
+    const configDir = path.join(os.homedir(), '.picoclaw');
     if (!fs.existsSync(configDir)) {
       fs.mkdirSync(configDir, { recursive: true });
     }
@@ -1590,13 +1630,12 @@ function startLauncher(exePath, workDir) {
       cwd: workDir,
       detached: true,
       stdio: ['ignore', 'pipe', 'pipe'],
-      env: {
-        ...process.env,
+      env: buildChildProcessEnv({
         PICOCLAW_LAUNCHER_TOKEN: launcherToken,
         GOCLAW_LAUNCHER_TOKEN: launcherToken,
         PICOCLAW_HOME: configDir,
         PICOCLAW_CONFIG: configPath
-      }
+      }),
     });
     
     launcherProcess.stdout.on('data', (data) => {
@@ -1642,7 +1681,7 @@ function startLauncher(exePath, workDir) {
  */
 function startGateway(exePath, workDir) {
   return new Promise((resolve, reject) => {
-    const configDir = path.join(os.homedir(), '.goclaw-runtime');
+    const configDir = path.join(os.homedir(), '.picoclaw');
     const configPath = path.join(configDir, 'config.json');
     
     logToFile(`[GATEWAY] Config dir: ${configDir}`);
@@ -1675,11 +1714,10 @@ function startGateway(exePath, workDir) {
       cwd: workDir,
       detached: true,
       stdio: ['ignore', 'pipe', 'pipe'],
-      env: {
-        ...process.env,
+      env: buildChildProcessEnv({
         PICOCLAW_HOME: configDir,
         PICOCLAW_CONFIG: configPath
-      }
+      }),
     });
     
     gatewayProcess.stdout.on('data', (data) => {
