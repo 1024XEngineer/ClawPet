@@ -49,6 +49,14 @@
         }
       ],
       "signAndEditExecutable": false
+    },
+    "mac": {
+      "target": [
+        {
+          "target": "zip"
+        }
+      ],
+      "category": "public.app-category.entertainment"
     }
   },
   "dependencies": {

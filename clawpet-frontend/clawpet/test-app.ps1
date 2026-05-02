@@ -87,5 +87,5 @@ Write-Host ""
 Write-Host "Tips:" -ForegroundColor Yellow
 Write-Host "  - The app will show startup progress window first" -ForegroundColor Gray
 Write-Host "  - Gateway (18790) and Launcher (18800) will auto-start" -ForegroundColor Gray
-Write-Host "  - View logs: Get-Content \"$env:USERPROFILE\.goclaw\logs.txt\" -Tail 30" -ForegroundColor Gray
+Write-Host "  - View logs: Get-Content \"$env:USERPROFILE\.picoclaw\logs.txt\" -Tail 30" -ForegroundColor Gray
 Write-Host ""

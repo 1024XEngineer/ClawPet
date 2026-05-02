@@ -26,5 +26,5 @@ Write-Host "Tips:" -ForegroundColor Yellow
 Write-Host "  - Startup progress window will appear first" -ForegroundColor Gray
 Write-Host "  - Backend services will auto-start (Gateway + Launcher)" -ForegroundColor Gray
 Write-Host "  - Check logs if needed:" -ForegroundColor Gray
-Write-Host "    Get-Content `"$env:USERPROFILE\.goclaw\logs.txt`" -Tail 30" -ForegroundColor White
+Write-Host "    Get-Content `"$env:USERPROFILE\.picoclaw\logs.txt`" -Tail 30" -ForegroundColor White
 Write-Host ""

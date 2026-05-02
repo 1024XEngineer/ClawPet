@@ -22,7 +22,7 @@ env:
 
 jobs:
   build-linux-macos-freebsd:
-    runs-on: ubuntu-latest
+    runs-on: ${{ matrix.goos == 'darwin' && 'macos-latest' || 'ubuntu-latest' }}
     strategy:
       fail-fast: false
       matrix:
@@ -199,11 +199,58 @@ jobs:
           chmod +x "${BIN}-gateway"
           tar -czf "${BASE}.tar.gz" "${BIN}" "${LAUNCHER_BIN}" "${BIN}-gateway"
 
+      - name: Package macOS Electron App
+        if: matrix.goos == 'darwin'
+        shell: bash
+        env:
+          CSC_IDENTITY_AUTO_DISCOVERY: "false"
+        run: |
+          set -euo pipefail
+          
+          # Copy Go binaries to Electron project
+          cp dist/${APP_NAME} clawpet-frontend/clawpet/picoclaw
+          cp dist/${APP_NAME}-web clawpet-frontend/clawpet/picoclaw-web
+          
+          # Build Electron app for macOS
+          cd clawpet-frontend/clawpet
+          
+          # Install dependencies
+          npm install
+          
+          # Build Next.js
+          npm run build
+          
+          # Package with electron-builder
+          if [[ "${{ matrix.goarch }}" == "arm64" ]]; then
+            npx electron-builder --mac --arm64 --publish never
+          elif [[ "${{ matrix.goarch }}" == "amd64" ]]; then
+            npx electron-builder --mac --x64 --publish never
+          else
+            npx electron-builder --mac --publish never
+          fi
+          
+          # Copy Electron app zip to release directory (as the main package)
+          cd dist
+          
+          # Find Electron builder output
+          electronZip=$(ls -t ClawPet*.zip 2>/dev/null | head -1)
+          if [[ -n "$electronZip" ]]; then
+            repoDist="../../../dist"
+            mkdir -p "$repoDist"
+            # Use standard naming for the complete package
+            cp "$electronZip" "${repoDist}/${APP_NAME}_${{ matrix.file_os }}_${{ matrix.file_arch }}.zip"
+            echo "✅ Main package (Electron + Backend): $electronZip"
+          else
+            echo "️  No Electron zip found"
+          fi
+
       - name: Upload package artifact
         uses: actions/upload-artifact@v4
         with:
           name: release-${{ matrix.goos }}-${{ matrix.goarch }}${{ matrix.goarm && format('-arm{0}', matrix.goarm) || '' }}
-          path: dist/*.tar.gz
+          path: |
+            dist/*.tar.gz
+            dist/*.zip
           if-no-files-found: error
 
   build-windows:
@@ -348,11 +395,6 @@ jobs:
           exit /b %EXIT_CODE%
           '@ | Out-File -FilePath "${{ env.APP_NAME }}-gateway.bat" -Encoding ASCII
 
-          # Standard package using PowerShell Compress-Archive
-          $zipFiles = @($WIN_BIN, $WIN_LAUNCHER_BIN, "${{ env.APP_NAME }}-gateway.bat")
-          Compress-Archive -Path $zipFiles -DestinationPath "${BASE}.zip" -Force
-          Write-Host "✅ Standard package created: ${BASE}.zip"
-
           # Copy Go binaries to Electron project
           Copy-Item -Path $WIN_BIN -Destination "../clawpet-frontend/clawpet/picoclaw.exe" -Force
           Copy-Item -Path $WIN_LAUNCHER_BIN -Destination "../clawpet-frontend/clawpet/picoclaw-web.exe" -Force
@@ -368,17 +410,21 @@ jobs:
             npx electron-builder --win --publish never
           }
           
-          # Copy built zip to release directory
+          # Copy Electron app zip to release directory (as the main package)
           Set-Location dist
           Get-ChildItem
           
-          # Copy zip archive
-          $zipFile = Get-ChildItem -Filter "*.zip" | Select-Object -First 1
-          if ($zipFile) {
+          # Find Electron builder output
+          $electronZip = Get-ChildItem -Filter "ClawPet*.zip" | Select-Object -First 1
+          if ($electronZip) {
             $repoDist = "../../../dist"
             New-Item -ItemType Directory -Force -Path $repoDist | Out-Null
-            Copy-Item -Path $zipFile.FullName -Destination "${repoDist}/${{ env.APP_NAME }}_${{ matrix.file_os }}_${{ matrix.file_arch }}.zip" -Force
-            Write-Host "✅ Zip archive: $($zipFile.Name)"
+            # Use standard naming for the complete package
+            $mainDest = "${repoDist}/${{ env.APP_NAME }}_${{ matrix.file_os }}_${{ matrix.file_arch }}.zip"
+            Copy-Item -Path $electronZip.FullName -Destination $mainDest -Force
+            Write-Host "✅ Main package (Electron + Backend): $($electronZip.Name)"
+          } else {
+            Write-Host "⚠️  No Electron zip found" -ForegroundColor Yellow
           }
           
           # Copy win-unpacked directory for debugging

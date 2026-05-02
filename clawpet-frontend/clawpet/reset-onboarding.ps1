@@ -44,9 +44,9 @@ if ($confirm -ne "y" -and $confirm -ne "Y") {
 }
 
 # 定义路径
-$goclawDir = "$env:USERPROFILE\.goclaw"
-$onboardingStateFile = "$goclawDir\onboarding-state.json"
-$logFile = "$goclawDir\logs.txt"
+$picoclawDir = "$env:USERPROFILE\.picoclaw"
+$onboardingStateFile = "$picoclawDir\onboarding-state.json"
+$logFile = "$picoclawDir\logs.txt"
 $clawpetExe = "D:\study part\GoClawPet\clawpet-frontend\clawpet\dist\win-unpacked\ClawPet.exe"
 
 # 步骤1：停止所有相关进程

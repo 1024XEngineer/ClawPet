@@ -144,7 +144,7 @@ cd clawpet-frontend\clawpet
 ### 查看日志
 
 ```powershell
-Get-Content "$env:USERPROFILE\.goclaw\logs.txt" -Tail 30
+Get-Content "$env:USERPROFILE\.picoclaw\logs.txt" -Tail 30
 ```
 
 成功启动的日志应包含：
@@ -323,6 +323,6 @@ git push origin v0.1.0
 
 如遇到问题：
 
-1. 查看日志文件：`$env:USERPROFILE\.goclaw\logs.txt`
+1. 查看日志文件：`$env:USERPROFILE\.picoclaw\logs.txt`
 2. 检查进程是否运行：`Get-Process -Name "ClawPet,picoclaw" -ErrorAction SilentlyContinue`
 3. 检查端口占用：`netstat -ano | findstr :18790` 和 `netstat -ano | findstr :18800`

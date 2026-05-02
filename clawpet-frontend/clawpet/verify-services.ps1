@@ -72,7 +72,7 @@ try {
 
 # 检查最新日志
 Write-Host "`n[4] 最新日志（最近 10 行）" -ForegroundColor Yellow
-$logPath = "$env:USERPROFILE\.goclaw\logs.txt"
+$logPath = "$env:USERPROFILE\.picoclaw\logs.txt"
 if (Test-Path $logPath) {
     Get-Content $logPath -Tail 10 | ForEach-Object {
         if ($_ -match "ERROR|Failed|error") {
@@ -90,5 +90,5 @@ if (Test-Path $logPath) {
 Write-Host "`n=== 验证完成 ===" -ForegroundColor Cyan
 Write-Host "`n提示：" -ForegroundColor Yellow
 Write-Host "- 如果所有检查都通过，WebSocket 连接应该正常工作" -ForegroundColor White
-Write-Host "- 如果仍有问题，请查看完整日志: Get-Content `$env:USERPROFILE\.goclaw\logs.txt -Tail 50" -ForegroundColor White
+Write-Host "- 如果仍有问题，请查看完整日志: Get-Content `$env:USERPROFILE\.picoclaw\logs.txt -Tail 50" -ForegroundColor White
 Write-Host ""

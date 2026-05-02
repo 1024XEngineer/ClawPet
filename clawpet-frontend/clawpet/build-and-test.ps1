@@ -95,5 +95,5 @@ Write-Host "  # Method 2: Run portable version" -ForegroundColor Gray
 Write-Host "  & \"$ClawpetDir\dist\ClawPet 0.1.0.exe\"" -ForegroundColor White
 Write-Host ""
 Write-Host "View logs:" -ForegroundColor Yellow
-Write-Host "  Get-Content \"$env:USERPROFILE\.goclaw\logs.txt\" -Tail 30" -ForegroundColor White
+Write-Host "  Get-Content \"$env:USERPROFILE\.picoclaw\logs.txt\" -Tail 30" -ForegroundColor White
 Write-Host ""
