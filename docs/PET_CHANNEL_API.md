@@ -2134,7 +2134,109 @@ WebSocket 连接: session=user_001
 
 ---
 
-### 4.27 skill_list - 列出已安装的 Skills
+### 4.27 voice_config_get - 获取 voice 配置
+
+获取当前 voice 配置信息，包括 ASR 模型名称（`model_name`）和 TTS 模型名称（`tts_model_name`）。
+
+**请求**：
+
+```json
+{
+  "action": "voice_config_get",
+  "data": {}
+}
+```
+
+**响应**：
+
+```json
+{
+  "status": "ok",
+  "action": "voice_config_get",
+  "data": {
+    "model_name": "groq-asr",
+    "tts_model_name": "minimax-tts",
+    "echo_transcription": true
+  }
+}
+```
+
+**字段说明**：
+
+| 字段 | 类型 | 说明 |
+|------|------|------|
+| model_name | string | ASR 模型名称，指向 `model_list` 中的某个 `model_name` |
+| tts_model_name | string | TTS 模型名称，指向 `model_list` 中的某个 `model_name` |
+| echo_transcription | bool | 是否回显转录结果 |
+
+**ASR 配置说明**：
+
+- `model_name` 用于指定 ASR（语音识别）模型
+- ASR 模型需要在 `model_list` 中配置，并确保 `.security.yml` 中有对应的 API Key
+- 详细的 ASR 配置说明请参考 [ASR 文档](../../pkg/audio/asr/README_zh.md)
+
+**推荐 ASR 模型**：
+
+| 提供商 | 示例模型 | 说明 |
+|--------|----------|------|
+| Groq | `groq/whisper-large-v3-turbo` | Whisper 风格转录速度快 |
+| ElevenLabs | `elevenlabs/scribe_v1` | 上手简单，质量不错 |
+| OpenAI | `openai/whisper-1` | OpenAI Whisper 模型 |
+
+---
+
+### 4.28 voice_config_update - 更新 voice 配置
+
+更新 voice 配置信息，如切换 ASR 或 TTS 模型。
+
+**请求**：
+
+```json
+{
+  "action": "voice_config_update",
+  "data": {
+    "model_name": "groq-asr",
+    "tts_model_name": "minimax-tts",
+    "echo_transcription": true
+  }
+}
+```
+
+**响应**：
+
+```json
+{
+  "status": "ok",
+  "action": "voice_config_update",
+  "data": {
+    "status": "ok"
+  }
+}
+```
+
+**字段说明**：
+
+| 字段 | 类型 | 必填 | 说明 |
+|------|------|------|------|
+| model_name | string | 否 | ASR 模型名称，指向 `model_list` 中的某个 `model_name` |
+| tts_model_name | string | 否 | TTS 模型名称，指向 `model_list` 中的某个 `model_name` |
+| echo_transcription | bool | 否 | 是否回显转录结果 |
+
+**更新说明**：
+
+- 所有字段都是可选的，只更新提供的字段
+- 配置更新后会保存到 `config.json`
+- **ASR 模型切换需要重启 picoclaw 才能生效**（最小化实现）
+- TTS 模型切换支持热切换
+
+**错误**：
+
+- `config not available` - 配置不可用
+- `failed to save config: xxx` - 保存配置失败
+
+---
+
+### 4.29 skill_list - 列出已安装的 Skills
 
 获取所有已安装的 skills 列表（包括 workspace、global、builtin 三种来源）。
 
@@ -2611,6 +2713,8 @@ async def send_chat(ws, text):
 | voice_model_get_voices | 获取可用音色 | 查询供应商的音色列表 |
 | voice_model_update | 更新语音模型 | 修改模型的配置（API Key、音色等） |
 | voice_model_set_default | 设置默认语音模型 | 热切换到指定模型 |
+| voice_config_get | 获取 voice 配置 | 查看 ASR/TTS 模型配置 |
+| voice_config_update | 更新 voice 配置 | 修改 ASR/TTS 模型配置 |
 | skill_list | 列出 Skills | 获取已安装的 skills 列表 |
 | skill_search | 搜索 Skills | 从 registry 搜索可安装的 skills |
 | skill_install | 安装 Skill | 从 registry 安装 skill 到本地 |
