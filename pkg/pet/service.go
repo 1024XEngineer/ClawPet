@@ -504,6 +504,10 @@ func (s *PetService) HandleRequest(connID string, req Request) error {
 		return s.handleSkillGet(sessionID, req)
 	case ActionAudioFrame:
 		return s.handleAudioFrame(sessionID, req)
+	case ActionVoiceConfigGet:
+		return s.handleVoiceConfigGet(sessionID, req)
+	case ActionVoiceConfigUpdate:
+		return s.handleVoiceConfigUpdate(sessionID, req)
 	default:
 		return s.sendError(sessionID, req.Action, fmt.Sprintf("unknown action: %s", req.Action))
 	}
@@ -1765,4 +1769,59 @@ func (s *PetService) handleAudioFrame(sessionID string, req Request) error {
 	}
 
 	return s.sendResponse(sessionID, req.Action, map[string]bool{"received": true})
+}
+
+type VoiceConfigGetResponse struct {
+	ModelName         string `json:"model_name"`
+	TTSModelName      string `json:"tts_model_name"`
+	EchoTranscription bool   `json:"echo_transcription"`
+}
+
+type VoiceConfigUpdateRequest struct {
+	ModelName         *string `json:"model_name,omitempty"`
+	TTSModelName      *string `json:"tts_model_name,omitempty"`
+	EchoTranscription *bool   `json:"echo_transcription,omitempty"`
+}
+
+func (s *PetService) handleVoiceConfigGet(sessionID string, req Request) error {
+	if s.config.Config == nil {
+		return s.sendError(sessionID, req.Action, "config not available")
+	}
+
+	return s.sendResponse(sessionID, req.Action, VoiceConfigGetResponse{
+		ModelName:         s.config.Config.Voice.ModelName,
+		TTSModelName:      s.config.Config.Voice.TTSModelName,
+		EchoTranscription: s.config.Config.Voice.EchoTranscription,
+	})
+}
+
+func (s *PetService) handleVoiceConfigUpdate(sessionID string, req Request) error {
+	if s.config.Config == nil {
+		return s.sendError(sessionID, req.Action, "config not available")
+	}
+
+	var data VoiceConfigUpdateRequest
+	if err := json.Unmarshal(req.Data, &data); err != nil {
+		return s.sendError(sessionID, req.Action, "invalid request data")
+	}
+
+	voiceCfg := &s.config.Config.Voice
+
+	if data.ModelName != nil {
+		voiceCfg.ModelName = *data.ModelName
+	}
+	if data.TTSModelName != nil {
+		voiceCfg.TTSModelName = *data.TTSModelName
+	}
+	if data.EchoTranscription != nil {
+		voiceCfg.EchoTranscription = *data.EchoTranscription
+	}
+
+	if s.config.ConfigPath != "" {
+		if err := config.SaveConfig(s.config.ConfigPath, s.config.Config); err != nil {
+			return s.sendError(sessionID, req.Action, fmt.Sprintf("failed to save config: %v", err))
+		}
+	}
+
+	return s.sendResponse(sessionID, req.Action, map[string]string{"status": "ok"})
 }
