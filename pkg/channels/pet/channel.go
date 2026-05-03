@@ -49,6 +49,25 @@ func parsePureText(raw string) string {
 	return sb.String()
 }
 
+func inferAudioMimeFromBytes(raw []byte) string {
+	if len(raw) >= 3 && raw[0] == 0x49 && raw[1] == 0x44 && raw[2] == 0x33 {
+		return "audio/mpeg"
+	}
+	if len(raw) >= 2 && raw[0] == 0xFF && (raw[1]&0xE0) == 0xE0 {
+		return "audio/mpeg"
+	}
+	if len(raw) >= 4 && raw[0] == 0x52 && raw[1] == 0x49 && raw[2] == 0x46 && raw[3] == 0x46 {
+		return "audio/wav"
+	}
+	if len(raw) >= 4 && raw[0] == 0x4F && raw[1] == 0x67 && raw[2] == 0x67 && raw[3] == 0x53 {
+		return "audio/ogg"
+	}
+	if len(raw) >= 4 && raw[0] == 0x66 && raw[1] == 0x4C && raw[2] == 0x61 && raw[3] == 0x43 {
+		return "audio/flac"
+	}
+	return ""
+}
+
 func isLocalhostOrigin(origin string) bool {
 	u, err := url.Parse(origin)
 	if err != nil || u.Host == "" {
@@ -138,6 +157,7 @@ func NewPetChannel(cfg config.PetConfig, msgBus *bus.MessageBus, workspacePath s
 			CheckOrigin:     checkOrigin,
 			ReadBufferSize:  1024,
 			WriteBufferSize: 1024,
+			Subprotocols:    []string{""}, // Accept any subprotocol (e.g., token.xxx) from client
 		},
 		connections: make(map[string]*petConn),
 		ctx:         ctx,
@@ -422,7 +442,7 @@ func (c *PetChannel) handleWebSocket(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	sessionID := r.URL.Query().Get("session")
+	sessionID := r.URL.Query().Get("sessionId")
 	if sessionID == "" {
 		sessionID = "default"
 	}
@@ -635,19 +655,6 @@ func (s *petStreamer) Update(ctx context.Context, content string) error {
 	// 语音关闭：使用原来的流式文本逻辑
 	s.voiceEnabled = false
 
-	sendVoice := func() {
-		if s.voiceSynthesizer != nil {
-			emotion := ""
-			if char := s.channel.service.CharManager().GetCurrent(); char != nil {
-				emotion, _ = char.GetEmotionEngine().GetDominantEmotion()
-			}
-			rawText := s.textVoiceBuffer.String()
-			parsedText := parsePureText(rawText)
-			go s.voiceSynthesizer.ParseAndSynthesize(s.sessionID, s.chatID, parsedText, emotion)
-		}
-		s.textVoiceBuffer.Reset()
-	}
-
 	sendPending := func() {
 		if len(s.buffer) > 0 {
 			textToSend := s.buffer
@@ -663,7 +670,6 @@ func (s *petStreamer) Update(ctx context.Context, content string) error {
 				s.inTextTag = false
 				i := strings.Index(s.buffer, "]")
 				s.buffer = s.buffer[:i]
-				sendVoice()
 			}
 			sendPending()
 		} else if strings.Contains(s.buffer, "[text:") {
@@ -890,7 +896,7 @@ func (c *PetChannel) sendStreamChunk(sessionID string, chatID int64, contentType
 		if pc.sessionID == sessionID || sessionID == "broadcast" {
 			pc.writeJSON(PetStreamResponse{
 				Type:      "push",
-				PushType:  "ai_chat",
+				PushType:  pet.PushTypeAIChat,
 				Data:      dataBytes,
 				IsFinal:   isFinal,
 				Timestamp: time.Now().Unix(),
@@ -1196,26 +1202,62 @@ func (s *petStreamer) sendAudioSegmentAsync(seg *voice.AudioSegment, isFinal boo
 			"error": seg.Error,
 		})
 		data := map[string]any{
-			"seq":      seg.Seq,
-			"text":     seg.Text,
-			"audio":    "",
-			"duration": 0,
-			"is_final": isFinal,
-			"error":    seg.Error,
+			"seq":        seg.Seq,
+			"text":       seg.Text,
+			"audio":      "",
+			"audio_mime": "audio/mpeg",
+			"duration":   0,
+			"is_final":   isFinal,
+			"error":      seg.Error,
+			"emotion":    "",
 		}
 		_ = s.channel.sendVoicePush(s.sessionID, "audio_and_voice", data)
 		return
 	}
 
 	// Base64编码音频
+	if len(seg.AudioData) == 0 {
+		logger.WarnCF("pet", "sendAudioSegmentAsync: empty audio payload", map[string]any{
+			"seq":  seg.Seq,
+			"text": seg.Text,
+		})
+		data := map[string]any{
+			"seq":        seg.Seq,
+			"text":       seg.Text,
+			"audio":      "",
+			"audio_mime": "audio/mpeg",
+			"duration":   0,
+			"is_final":   isFinal,
+			"error":      "empty audio payload",
+			"emotion":    "",
+		}
+		_ = s.channel.sendVoicePush(s.sessionID, "audio_and_voice", data)
+		return
+	}
 	encoded := base64.StdEncoding.EncodeToString(seg.AudioData)
+	mimeType := inferAudioMimeFromBytes(seg.AudioData)
+	if mimeType == "" {
+		logger.WarnCF("pet", "sendAudioSegmentAsync: unknown audio signature", map[string]any{
+			"seq":         seg.Seq,
+			"audio_bytes": len(seg.AudioData),
+		})
+		mimeType = "audio/mpeg"
+	}
+
+	// 获取当前情绪
+	emotion := ""
+	if char := s.channel.service.CharManager().GetCurrent(); char != nil {
+		emotion, _ = char.GetEmotionEngine().GetDominantEmotion()
+	}
 
 	data := map[string]any{
-		"seq":      seg.Seq,
-		"text":     seg.Text,
-		"audio":    encoded,
-		"duration": seg.Duration,
-		"is_final": isFinal,
+		"seq":        seg.Seq,
+		"text":       seg.Text,
+		"audio":      encoded,
+		"audio_mime": mimeType,
+		"duration":   seg.Duration,
+		"is_final":   isFinal,
+		"emotion":    emotion,
 	}
 
 	logger.DebugCF("pet", "sendAudioSegmentAsync", map[string]any{

@@ -11,6 +11,11 @@ type Character struct {
 	Name        string // 角色名称
 	Persona     string // 性格描述
 	PersonaType string // 性格类型（如gentle/playful）
+	SpeechTone  string // 说话风格
+	Catchphrase string // 口头禅
+	Hobbies     string // 兴趣爱好
+	Background  string // 背景设定
+	Preferences string // 偏好
 	Avatar      string // 头像/模型ID
 
 	EmotionEngine *emotion.EmotionEngine // 角色专属的情绪引擎
@@ -18,12 +23,17 @@ type Character struct {
 
 // NewCharacter 创建新角色实例
 // 所有新建角色都有默认的中性情绪和MBTI配置
-func NewCharacter(id, name, persona, personaType, avatar string) *Character {
+func NewCharacter(id, name, persona, personaType, speechTone, catchphrase, hobbies, background, preferences, avatar string) *Character {
 	return &Character{
 		ID:            id,
 		Name:          name,
 		Persona:       persona,
 		PersonaType:   personaType,
+		SpeechTone:    speechTone,
+		Catchphrase:   catchphrase,
+		Hobbies:       hobbies,
+		Background:    background,
+		Preferences:   preferences,
 		Avatar:        avatar,
 		EmotionEngine: emotion.NewEmotionEngine(""),
 	}
@@ -57,6 +67,11 @@ func (c *Character) Clone() *Character {
 		Name:          c.Name,
 		Persona:       c.Persona,
 		PersonaType:   c.PersonaType,
+		SpeechTone:    c.SpeechTone,
+		Catchphrase:   c.Catchphrase,
+		Hobbies:       c.Hobbies,
+		Background:    c.Background,
+		Preferences:   c.Preferences,
 		Avatar:        c.Avatar,
 		EmotionEngine: emotion.NewEmotionEngine(""),
 	}

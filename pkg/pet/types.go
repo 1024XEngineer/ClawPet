@@ -46,6 +46,14 @@ const (
 	ActionVoiceModelUpdate     = "voice_model_update"      // 更新语音模型配置
 	ActionVoiceModelSetDefault = "voice_model_set_default" // 设置默认语音模型
 	ActionVoiceModelGetVoices  = "voice_model_get_voices"  // 获取供应商可用音色
+	ActionSkillList            = "skill_list"              // 列出 skills
+	ActionSkillSearch          = "skill_search"            // 搜索 skills
+	ActionSkillInstall         = "skill_install"           // 安装 skill
+	ActionSkillRemove          = "skill_remove"            // 删除 skill
+	ActionSkillGet             = "skill_get"               // 获取 skill 内容
+	ActionCharacterCreate      = "character_create"        // 创建角色
+	ActionUserProfileGet       = "user_profile_get"        // 获取用户画像
+	ActionAudioFrame           = "audio_frame"             // 音频帧（语音输入）
 )
 
 // =============================================================================
@@ -62,6 +70,7 @@ const (
 	PushTypeHeartbeat       = "heartbeat"        // 心跳保活
 	PushTypeCharacterSwitch = "character_switch" // 角色切换
 	PushTypeAudio           = "audio"            // 音频播放
+	PushTypeTextAndAudio    = "text_and_audio"   // 文本和音频同时推送
 )
 
 // =============================================================================
@@ -144,11 +153,29 @@ type CharacterUpdateRequest struct {
 	PetName        string `json:"pet_name"`         // 桌宠名称
 	PetPersona     string `json:"pet_persona"`      // 性格描述
 	PetPersonaType string `json:"pet_persona_type"` // 性格类型
+	SpeechTone     string `json:"speech_tone"`      // 说话风格
+	Catchphrase    string `json:"catchphrase"`      // 口头禅
+	Hobbies        string `json:"hobbies"`          // 兴趣爱好
+	Background     string `json:"background"`       // 背景设定
+	Preferences    string `json:"preferences"`      // 偏好
 }
 
 // CharacterSwitchRequest 角色切换请求数据
 type CharacterSwitchRequest struct {
 	CharacterID string `json:"character_id"` // 目标角色ID
+}
+
+// CharacterCreateRequest 创建角色请求数据
+type CharacterCreateRequest struct {
+	PetName        string `json:"pet_name"`         // 桌宠名称
+	PetPersona     string `json:"pet_persona"`      // 性格描述
+	PetPersonaType string `json:"pet_persona_type"` // 性格类型
+	SpeechTone     string `json:"speech_tone"`      // 说话风格
+	Catchphrase    string `json:"catchphrase"`      // 口头禅
+	Hobbies        string `json:"hobbies"`          // 兴趣爱好
+	Background     string `json:"background"`       // 背景设定
+	Preferences    string `json:"preferences"`      // 偏好
+	Avatar         string `json:"avatar"`           // 头像/模型ID
 }
 
 // ConfigUpdateRequest 配置更新请求数据
@@ -194,15 +221,17 @@ type MemorySearchResponse struct {
 
 // ConversationListRequest 对话列表请求
 type ConversationListRequest struct {
-	CharacterID string `json:"character_id"`     // 角色ID，必填
-	Limit       int    `json:"limit,omitempty"`  // 返回条数限制
-	Offset      int    `json:"offset,omitempty"` // 翻页偏移
+	CharacterID string `json:"character_id"`         // 角色ID，必填
+	SessionID   string `json:"session_id,omitempty"` // 会话ID，可选
+	Limit       int    `json:"limit,omitempty"`      // 返回条数限制
+	Offset      int    `json:"offset,omitempty"`     // 翻页偏移
 }
 
 // ConversationItem 对话条目（用于响应）
 type ConversationItem struct {
 	ID         int64  `json:"id"`         // 对话ID
-	Role       string `json:"role"`       // 角色：user/pet
+	SessionID  string `json:"session_id"` // 会话ID
+	Role       string `json:"role"`       // 角色：user/assistant
 	Content    string `json:"content"`    // 对话内容
 	Timestamp  string `json:"timestamp"`  // 对话时间
 	Compressed bool   `json:"compressed"` // 是否已压缩
@@ -274,6 +303,51 @@ type CronAddResponse struct {
 }
 
 // =============================================================================
+// Skills 请求和响应定义
+// =============================================================================
+
+// SkillListRequest 列出 skills 请求数据
+type SkillListRequest struct {
+}
+
+// SkillSearchRequest 搜索 skills 请求数据
+type SkillSearchRequest struct {
+	Query string `json:"query"` // 搜索关键词
+	Limit int    `json:"limit"` // 返回条数限制
+}
+
+// SkillInstallRequest 安装 skill 请求数据
+type SkillInstallRequest struct {
+	Slug     string `json:"slug"`     // skill slug
+	Registry string `json:"registry"` // registry 名称
+	Version  string `json:"version"`  // 版本（可选）
+}
+
+// SkillRemoveRequest 删除 skill 请求数据
+type SkillRemoveRequest struct {
+	Name string `json:"name"` // skill 名称
+}
+
+// SkillGetRequest 获取 skill 内容请求数据
+type SkillGetRequest struct {
+	Name string `json:"name"` // skill 名称
+}
+
+// SkillInfo skill 信息
+type SkillInfo struct {
+	Name        string `json:"name"`
+	Description string `json:"description"`
+	Path        string `json:"path"`
+	Source      string `json:"source"`
+}
+
+// SkillDetailResponse skill 详情响应
+type SkillDetailResponse struct {
+	Name    string `json:"name"`
+	Content string `json:"content"`
+}
+
+// =============================================================================
 // 响应数据定义
 // =============================================================================
 
@@ -284,11 +358,32 @@ type OnboardingConfigResponse struct {
 
 // CharacterConfig 角色配置
 type CharacterConfig struct {
+	PetID          string `json:"pet_id"`                // 桌宠ID
+	PetName        string `json:"pet_name"`              // 桌宠名称
+	PetPersona     string `json:"pet_persona"`           // 性格描述
+	PetPersonaType string `json:"pet_persona_type"`      // 性格类型
+	SpeechTone     string `json:"speech_tone,omitempty"` // 说话风格
+	Catchphrase    string `json:"catchphrase,omitempty"` // 口头禅
+	Hobbies        string `json:"hobbies,omitempty"`     // 兴趣爱好
+	Background     string `json:"background,omitempty"`  // 背景设定
+	Preferences    string `json:"preferences,omitempty"` // 偏好
+	Avatar         string `json:"avatar,omitempty"`      // 头像/模型ID
+	CreatedAt      string `json:"created_at"`            // 创建时间
+	UpdatedAt      string `json:"updated_at"`            // 更新时间
+}
+
+// CharacterCreateResponse 创建角色响应数据
+type CharacterCreateResponse struct {
 	PetID          string `json:"pet_id"`           // 桌宠ID
 	PetName        string `json:"pet_name"`         // 桌宠名称
 	PetPersona     string `json:"pet_persona"`      // 性格描述
 	PetPersonaType string `json:"pet_persona_type"` // 性格类型
-	Avatar         string `json:"avatar,omitempty"` // 头像/模型ID
+	SpeechTone     string `json:"speech_tone"`      // 说话风格
+	Catchphrase    string `json:"catchphrase"`      // 口头禅
+	Hobbies        string `json:"hobbies"`          // 兴趣爱好
+	Background     string `json:"background"`       // 背景设定
+	Preferences    string `json:"preferences"`      // 偏好
+	Avatar         string `json:"avatar"`           // 头像/模型ID
 	CreatedAt      string `json:"created_at"`       // 创建时间
 	UpdatedAt      string `json:"updated_at"`       // 更新时间
 }
@@ -364,4 +459,15 @@ type StreamData struct {
 	Text    string `json:"text"`              // 文本内容
 	Emotion string `json:"emotion,omitempty"` // 当前情绪标签
 	Action  string `json:"action,omitempty"`  // 动作名称
+}
+
+// AudioFrameRequest 音频帧请求数据（语音输入）
+type AudioFrameRequest struct {
+	Audio      string `json:"audio"`       // base64 编码的 PCM 数据
+	Format     string `json:"format"`      // 音频格式，如 "pcm"
+	SampleRate int    `json:"sample_rate"` // 采样率
+	Channels   int    `json:"channels"`    // 声道数
+	Sequence   uint64 `json:"sequence"`    // 帧序号
+	Timestamp  uint32 `json:"timestamp"`   // 时间戳（毫秒）
+	SessionKey string `json:"session_key"` // 会话隔离标识，和文本聊天一样
 }

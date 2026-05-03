@@ -16,9 +16,12 @@ env:
   APP_NAME: clawpet
   BUILD_TAGS: goolm,stdjson
   BUILD_ENTRY: ./cmd/picoclaw
+  LAUNCHER_ENTRY: ./web/backend
+  NODE_VERSION: "22"
+  PNPM_VERSION: "9"
 
 jobs:
-  build:
+  build-linux-macos-freebsd:
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false
@@ -53,14 +56,6 @@ jobs:
             goarch: arm64
             file_os: Darwin
             file_arch: arm64
-          - goos: windows
-            goarch: amd64
-            file_os: Windows
-            file_arch: x86_64
-          - goos: windows
-            goarch: arm64
-            file_os: Windows
-            file_arch: arm64
           - goos: freebsd
             goarch: amd64
             file_os: Freebsd
@@ -79,25 +74,58 @@ jobs:
         with:
           go-version-file: go.mod
 
-      - name: Setup Node (Windows launcher build)
-        if: matrix.goos == 'windows'
+      - name: Setup Node (for launcher frontend build)
         uses: actions/setup-node@v4
         with:
           node-version: "22"
 
-      - name: Build launcher embedded frontend (Windows)
-        if: matrix.goos == 'windows'
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: ${{ env.PNPM_VERSION }}
+
+      - name: Build launcher embedded frontend
         shell: bash
         run: |
           set -euo pipefail
-          corepack enable
           cd web/frontend
           pnpm install --no-frozen-lockfile
           pnpm build:backend
 
       - name: Prepare onboard workspace
         shell: bash
-        run: go generate ./cmd/picoclaw/internal/onboard
+        run: |
+          # Create root workspace directory with default templates
+          # These files will be copied to onboard/workspace by go:generate
+          mkdir -p workspace/memory workspace/skills
+          
+          # Create default template files
+          cat > workspace/AGENT.md << 'EOF'
+          # Agent Instructions
+          
+          You are a helpful AI assistant.
+          EOF
+          
+          cat > workspace/SOUL.md << 'EOF'
+          # Soul
+          
+          Your personality and behavior guidelines.
+          EOF
+          
+          cat > workspace/USER.md << 'EOF'
+          # User Information
+          
+          Information about the user.
+          EOF
+          
+          cat > workspace/memory/MEMORY.md << 'EOF'
+          # Memory
+          
+          Long-term memory storage.
+          EOF
+          
+          # Run go generate to copy workspace to onboard directory
+          go generate ./cmd/picoclaw/internal/onboard
 
       - name: Build
         shell: bash
@@ -106,8 +134,10 @@ jobs:
           mkdir -p dist
 
           BIN="${APP_NAME}"
+          LAUNCHER_BIN="${APP_NAME}-web"
           if [[ "${{ matrix.goos }}" == "windows" ]]; then
             BIN="${BIN}.exe"
+            LAUNCHER_BIN="${LAUNCHER_BIN}.exe"
           fi
 
           VERSION="${GITHUB_REF_NAME}"
@@ -115,6 +145,7 @@ jobs:
           BUILD_TIME="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
           GOARM="${{ matrix.goarm || '' }}"
 
+          # Build Gateway (picoclaw)
           GOOS=${{ matrix.goos }} GOARCH=${{ matrix.goarch }} GOARM="${GOARM}" CGO_ENABLED=0 \
             go build \
               -trimpath \
@@ -123,15 +154,30 @@ jobs:
               -o "dist/${BIN}" \
               "${BUILD_ENTRY}"
 
-          if [[ "${{ matrix.goos }}" == "windows" ]]; then
-            GOOS=${{ matrix.goos }} GOARCH=${{ matrix.goarch }} GOARM="${GOARM}" CGO_ENABLED=0 \
-              go build \
-                -trimpath \
-                -tags "${BUILD_TAGS}" \
-                -ldflags "-s -w -X github.com/sipeed/picoclaw/pkg/config.Version=${VERSION} -X github.com/sipeed/picoclaw/pkg/config.GitCommit=${SHORT_SHA} -X github.com/sipeed/picoclaw/pkg/config.BuildTime=${BUILD_TIME}" \
-                -o "dist/${APP_NAME}-launcher.exe" \
-                ./web/backend
-          fi
+          # Build Launcher (picoclaw-web) - built for all platforms (embeds frontend via pnpm build:backend)
+          GOOS=${{ matrix.goos }} GOARCH=${{ matrix.goarch }} GOARM="${GOARM}" CGO_ENABLED=0 \
+            go build \
+              -trimpath \
+              -tags "${BUILD_TAGS}" \
+              -ldflags "-s -w" \
+              -o "dist/${LAUNCHER_BIN}" \
+              "${LAUNCHER_ENTRY}"
+
+      - name: Build ClawPet Electron App (Windows)
+        if: matrix.goos == 'windows'
+        shell: bash
+        run: |
+          set -euo pipefail
+          cd clawpet-frontend/clawpet
+          
+          # Use npm instead of pnpm to avoid symlink issues with electron-builder
+          # pnpm uses symlinks which electron-builder cannot properly package
+          npm install
+          
+          # Build Next.js
+          npm run build
+          
+          echo "Frontend build complete"
 
       - name: Package
         shell: bash
@@ -141,65 +187,224 @@ jobs:
 
           BASE="${APP_NAME}_${{ matrix.file_os }}_${{ matrix.file_arch }}"
           BIN="${APP_NAME}"
+          LAUNCHER_BIN="${APP_NAME}-web"
 
-          if [[ "${{ matrix.goos }}" == "windows" ]]; then
-            printf '%s\n' \
-              '@echo off' \
-              'setlocal' \
-              'set "SELF_DIR=%~dp0"' \
-              '"%SELF_DIR%clawpet.exe" gateway %*' \
-              'set "EXIT_CODE=%ERRORLEVEL%"' \
-              '' \
-              'if "%CLAWPET_NO_PAUSE%"=="1" (' \
-              '  exit /b %EXIT_CODE%' \
-              ')' \
-              '' \
-              'echo.' \
-              'echo clawpet gateway exited with code %EXIT_CODE%.' \
-              'echo Press any key to close...' \
-              'pause >nul' \
-              'exit /b %EXIT_CODE%' \
-              > "${BIN}-gateway.bat"
-            zip "${BASE}.zip" "${BIN}.exe" "${BIN}-launcher.exe" "${BIN}-gateway.bat"
-
-            ALL_BASE="${APP_NAME}_AllInOne_${{ matrix.file_os }}_${{ matrix.file_arch }}"
-            mkdir -p allinone/scripts
-            cp -f "${BIN}.exe" allinone/clawpet.exe
-            cp -f "${BIN}.exe" allinone/picoclaw.exe
-            cp -f "${BIN}-launcher.exe" allinone/clawpet-launcher.exe
-            cp -f "${BIN}-launcher.exe" allinone/picoclaw-launcher.exe
-            cp -f "${BIN}-gateway.bat" allinone/clawpet-gateway.bat
-            cp -f ../GoClaw-OneClickStart.bat allinone/GoClaw-OneClickStart.bat
-            cp -f ../GoClaw-OneClickStart.ps1 allinone/GoClaw-OneClickStart.ps1
-            cp -f ../scripts/run-goclaw-dev.ps1 allinone/scripts/run-goclaw-dev.ps1
-            cp -r ../clawpet allinone/clawpet
-            (
-              cd allinone
-              zip -r "../${ALL_BASE}.zip" .
-            )
-          else
-            printf '%s\n' \
-              '#!/usr/bin/env sh' \
-              'set -eu' \
-              'SCRIPT_DIR="$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)"' \
-              'exec "$SCRIPT_DIR/clawpet" gateway "$@"' \
-              > "${BIN}-gateway"
-            chmod +x "${BIN}-gateway"
-            tar -czf "${BASE}.tar.gz" "${BIN}" "${BIN}-gateway"
-          fi
+          # Linux/macOS/FreeBSD package (Gateway + Launcher + startup script)
+          printf '%s\n' \
+            '#!/usr/bin/env sh' \
+            'set -eu' \
+            'SCRIPT_DIR="$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)"' \
+            'exec "$SCRIPT_DIR/clawpet" gateway "$@"' \
+            > "${BIN}-gateway"
+          chmod +x "${BIN}-gateway"
+          tar -czf "${BASE}.tar.gz" "${BIN}" "${LAUNCHER_BIN}" "${BIN}-gateway"
 
       - name: Upload package artifact
         uses: actions/upload-artifact@v4
         with:
           name: release-${{ matrix.goos }}-${{ matrix.goarch }}${{ matrix.goarm && format('-arm{0}', matrix.goarm) || '' }}
+          path: dist/*.tar.gz
+          if-no-files-found: error
+
+  build-windows:
+    runs-on: windows-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - goos: windows
+            goarch: amd64
+            file_os: Windows
+            file_arch: x86_64
+          - goos: windows
+            goarch: arm64
+            file_os: Windows
+            file_arch: arm64
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+
+      - name: Setup Node (for Electron app)
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+
+      - name: Prepare onboard workspace
+        shell: bash
+        run: |
+          # Create root workspace directory with default templates
+          mkdir -p workspace/memory workspace/skills
+          
+          # Create default template files
+          cat > workspace/AGENT.md << 'EOF'
+          # Agent Instructions
+          
+          You are a helpful AI assistant.
+          EOF
+          
+          cat > workspace/SOUL.md << 'EOF'
+          # Soul
+          
+          Your personality and behavior guidelines.
+          EOF
+          
+          cat > workspace/USER.md << 'EOF'
+          # User Information
+          
+          Information about the user.
+          EOF
+          
+          cat > workspace/memory/MEMORY.md << 'EOF'
+          # Memory
+          
+          Long-term memory storage.
+          EOF
+          
+          # Run go generate to copy workspace to onboard directory
+          go generate ./cmd/picoclaw/internal/onboard
+
+      - name: Build Go Binaries
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p dist
+
+          BIN="${APP_NAME}.exe"
+          LAUNCHER_BIN="${APP_NAME}-web.exe"
+
+          VERSION="${GITHUB_REF_NAME}"
+          SHORT_SHA="${GITHUB_SHA::7}"
+          BUILD_TIME="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+
+          # Build Gateway (picoclaw)
+          GOOS=windows GOARCH=${{ matrix.goarch }} CGO_ENABLED=0 \
+            go build \
+              -trimpath \
+              -tags "${BUILD_TAGS}" \
+              -ldflags "-s -w -X github.com/sipeed/picoclaw/pkg/config.Version=${VERSION} -X github.com/sipeed/picoclaw/pkg/config.GitCommit=${SHORT_SHA} -X github.com/sipeed/picoclaw/pkg/config.BuildTime=${BUILD_TIME}" \
+              -o "dist/${BIN}" \
+              "${BUILD_ENTRY}"
+
+          # Build Launcher (picoclaw-web)
+          GOOS=windows GOARCH=${{ matrix.goarch }} CGO_ENABLED=0 \
+            go build \
+              -trimpath \
+              -tags "${BUILD_TAGS}" \
+              -ldflags "-s -w" \
+              -o "dist/${LAUNCHER_BIN}" \
+              "${LAUNCHER_ENTRY}"
+
+      - name: Build ClawPet Electron App
+        shell: bash
+        run: |
+          set -euo pipefail
+          cd clawpet-frontend/clawpet
+          
+          # Use npm instead of pnpm to avoid symlink issues with electron-builder
+          npm install
+          
+          # Build Next.js
+          npm run build
+          
+          echo "Frontend build complete"
+
+      - name: Package Windows
+        shell: pwsh
+        env:
+          CSC_IDENTITY_AUTO_DISCOVERY: "false"
+          CSC_LINK: ""
+          CSC_KEY_PASSWORD: ""
+          ELECTRON_BUILDER_ALLOW_UNRESOLVED_DEPENDENCIES: "true"
+        run: |
+          $ErrorActionPreference = "Stop"
+          Set-Location dist
+
+          $BASE = "${{ env.APP_NAME }}_${{ matrix.file_os }}_${{ matrix.file_arch }}"
+          $WIN_BIN = "${{ env.APP_NAME }}.exe"
+          $WIN_LAUNCHER_BIN = "${{ env.APP_NAME }}-web.exe"
+
+          # Create startup script
+          @'
+          @echo off
+          setlocal
+          set "SELF_DIR=%~dp0"
+          "%SELF_DIR%clawpet.exe" gateway %*
+          set "EXIT_CODE=%ERRORLEVEL%"
+
+          if "%CLAWPET_NO_PAUSE%"=="1" (
+            exit /b %EXIT_CODE%
+          )
+
+          echo.
+          echo clawpet gateway exited with code %EXIT_CODE%.
+          echo Press any key to close...
+          pause >nul
+          exit /b %EXIT_CODE%
+          '@ | Out-File -FilePath "${{ env.APP_NAME }}-gateway.bat" -Encoding ASCII
+
+          # Standard package using PowerShell Compress-Archive
+          $zipFiles = @($WIN_BIN, $WIN_LAUNCHER_BIN, "${{ env.APP_NAME }}-gateway.bat")
+          Compress-Archive -Path $zipFiles -DestinationPath "${BASE}.zip" -Force
+          Write-Host "✅ Standard package created: ${BASE}.zip"
+
+          # Copy Go binaries to Electron project
+          Copy-Item -Path $WIN_BIN -Destination "../clawpet-frontend/clawpet/picoclaw.exe" -Force
+          Copy-Item -Path $WIN_LAUNCHER_BIN -Destination "../clawpet-frontend/clawpet/picoclaw-web.exe" -Force
+          
+          # Build Electron app with electron-builder
+          Set-Location ../clawpet-frontend/clawpet
+          
+          if ("${{ matrix.file_arch }}" -eq "x86_64") {
+            npx electron-builder --win --x64 --publish never
+          } elseif ("${{ matrix.file_arch }}" -eq "arm64") {
+            npx electron-builder --win --arm64 --publish never
+          } else {
+            npx electron-builder --win --publish never
+          }
+          
+          # Copy built zip to release directory
+          Set-Location dist
+          Get-ChildItem
+          
+          # Copy zip archive
+          $zipFile = Get-ChildItem -Filter "*.zip" | Select-Object -First 1
+          if ($zipFile) {
+            $repoDist = "../../../dist"
+            New-Item -ItemType Directory -Force -Path $repoDist | Out-Null
+            Copy-Item -Path $zipFile.FullName -Destination "${repoDist}/${{ env.APP_NAME }}_${{ matrix.file_os }}_${{ matrix.file_arch }}.zip" -Force
+            Write-Host "✅ Zip archive: $($zipFile.Name)"
+          }
+          
+          # Copy win-unpacked directory for debugging
+          Set-Location ../..
+          if (Test-Path "clawpet-frontend/clawpet/dist/win-unpacked") {
+            # Ensure backend binaries are in win-unpacked
+            Copy-Item -Path "dist/${WIN_BIN}" -Destination "clawpet-frontend/clawpet/dist/win-unpacked/" -Force
+            Copy-Item -Path "dist/${WIN_LAUNCHER_BIN}" -Destination "clawpet-frontend/clawpet/dist/win-unpacked/" -Force
+            
+            # Package win-unpacked as zip
+            Set-Location clawpet-frontend/clawpet/dist
+            Compress-Archive -Path "win-unpacked" -DestinationPath "../../dist/${{ env.APP_NAME }}_win-unpacked_${{ matrix.file_os }}_${{ matrix.file_arch }}.zip" -Force
+            Write-Host "✅ Win-unpacked debug package created"
+          }
+
+      - name: Upload package artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: release-${{ matrix.goos }}-${{ matrix.goarch }}
           path: |
-            dist/*.tar.gz
             dist/*.zip
           if-no-files-found: error
 
   release:
     runs-on: ubuntu-latest
-    needs: build
+    needs: [build-linux-macos-freebsd, build-windows]
 
     steps:
       - name: Checkout

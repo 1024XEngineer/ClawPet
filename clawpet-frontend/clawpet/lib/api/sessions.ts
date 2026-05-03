@@ -65,7 +65,11 @@ export async function deleteSession(id: string): Promise<boolean> {
     const res = await sessionFetch(`/api/sessions/${encodeURIComponent(id)}`, {
       method: "DELETE",
     })
-    return res.ok
+    if (res.ok || res.status === 404) {
+      return true
+    }
+    console.warn("[petclaw] Failed to delete session:", id, res.status)
+    return false
   } catch (err) {
     console.warn("[petclaw] Delete session error:", id, err)
     return false

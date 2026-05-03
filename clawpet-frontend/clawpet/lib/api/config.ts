@@ -1,4 +1,4 @@
-const LOCAL_DEFAULT_ORIGIN = 'http://127.0.0.1:18790'
+const LOCAL_DEFAULT_ORIGIN = 'http://127.0.0.1:18800'
 const DIRECT_GATEWAY_ENV_ORIGIN = process.env.NEXT_PUBLIC_PICOCLAW_DIRECT_GATEWAY_URL || ''
 const LOCAL_DIRECT_GATEWAY_ORIGIN = 'http://127.0.0.1:18790'
 const DIRECT_GATEWAY_CACHE_KEY = 'petclaw.directGatewayBaseUrl'
@@ -59,13 +59,25 @@ export function getApiBaseUrl(): string {
   }
 
   if (typeof window !== 'undefined') {
-    const electronApiBase = window.electronAPI?.getBackendBaseUrl?.()
+    const electronApiBase = window.electronAPI?.getApiBaseUrl?.()
     if (electronApiBase && electronApiBase.trim()) {
       return electronApiBase.trim()
     }
+
+    const electronBackendBase = window.electronAPI?.getBackendBaseUrl?.()
+    if (electronBackendBase && electronBackendBase.trim()) {
+      return electronBackendBase.trim()
+    }
   }
 
+  // In Electron, always prefer electronAPI even if running on port 3000
+  // (Next.js dev server). Only fall back to LOCAL_DEFAULT_ORIGIN for
+  // pure browser environments.
   if (typeof window !== 'undefined' && window.location?.origin) {
+    // Check if running in Electron
+    if (window.electronAPI) {
+      return LOCAL_DEFAULT_ORIGIN // 18800 (Launcher) - /api/config and other REST APIs are on Launcher
+    }
     const port = window.location.port
     if (port === '3000' || port === '3001') {
       return LOCAL_DEFAULT_ORIGIN
@@ -161,6 +173,11 @@ export function resolveLauncherToken(): string {
   }
 
   if (typeof window !== 'undefined') {
+    const electronToken = window.electronAPI?.getLauncherToken?.()
+    if (electronToken && electronToken.trim()) {
+      return electronToken.trim()
+    }
+
     const token = new URLSearchParams(window.location.search).get('token')
     if (token && token.trim()) {
       const clean = token.trim()
@@ -211,7 +228,7 @@ export function getAuthRequestCredentials(input: string): RequestCredentials {
   if (!USE_CREDENTIALS) {
     return 'omit'
   }
-  if (resolveLauncherToken() && isCrossOriginRequest(input)) {
+  if (isCrossOriginRequest(input)) {
     return 'omit'
   }
   return 'include'

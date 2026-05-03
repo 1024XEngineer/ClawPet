@@ -1,10 +1,13 @@
 import {
+  API_ENDPOINTS,
   DIRECT_PICO_TOKEN_PATH,
   DIRECT_PICO_WS_PATH,
   DIRECT_PET_TOKEN_PATH,
   DIRECT_PET_WS_PATH,
+  getApiBaseUrl,
   getDirectGatewayBaseUrl,
   isDirectGatewayEnabled,
+  withLauncherAuthRequest,
 } from "./config"
 
 const CHAT_ACTION = "chat"
@@ -12,6 +15,7 @@ const CHAT_ACTION = "chat"
 const PUSH_TYPE_AI_CHAT = "ai_chat"
 const PUSH_TYPE_AUDIO = "audio"
 const PUSH_TYPE_AUDIO_AND_VOICE = "audio_and_voice"
+const PUSH_TYPE_TEXT_AND_AUDIO = "text_and_audio"
 const PUSH_TYPE_EMOTION_CHANGE = "emotion_change"
 const PUSH_TYPE_ACTION_TRIGGER = "action_trigger"
 
@@ -36,6 +40,49 @@ interface PetResponse {
   data?: Record<string, unknown>
   error?: string
   request_id?: string
+}
+
+export interface CharacterProfileData {
+  pet_id: string
+  pet_name: string
+  pet_persona: string
+  pet_persona_type: string
+  avatar?: string
+  created_at?: string
+  updated_at?: string
+}
+
+export interface PetConfigData {
+  emotion_enabled?: boolean
+  reminder_enabled?: boolean
+  proactive_care?: boolean
+  proactive_interval_minutes?: number
+  voice_enabled?: boolean
+  asr_enabled?: boolean
+  language?: string
+}
+
+export interface EmotionData {
+  pet_id: string
+  emotion: string
+  joy: number
+  anger: number
+  sadness: number
+  disgust: number
+  surprise: number
+  fear: number
+  description: string
+}
+
+export interface UserProfileUpdateData {
+  display_name?: string
+  role?: string
+  language?: string
+  chronotype?: string
+  personality_tone?: string
+  anxiety_level?: number
+  pressure_level?: string
+  extra?: Record<string, unknown>
 }
 
 interface PendingActionRequest {
@@ -64,11 +111,12 @@ interface TokenCandidate {
   baseUrl: string
   tokenPath: string
   wsPath: string
+  authMode: "launcher" | "direct"
 }
 
 type WSEventData = ChatMessage | string | Record<string, unknown>
 type WSMode = "pet" | "pico"
-type OutboundRequest = PetRequest
+type OutboundRequest = PetRequest | PicoWireMessage
 
 interface PicoWireMessage {
   type?: string
@@ -83,6 +131,7 @@ export type WSEventType =
   | "disconnected"
   | "message"
   | "audio"
+  | "tool_status"
   | "typing"
   | "error"
   | "reconnecting"
@@ -102,7 +151,7 @@ function normalizeIncomingText(text: string): string {
 
 export class PicoClawWebSocket {
   private ws: WebSocket | null = null
-  private sessionId = ""
+  private routeSessionId = ""
   private reconnectAttempts = 0
   private readonly maxReconnectAttempts = 5
   private readonly reconnectDelay = 1000
@@ -152,13 +201,13 @@ export class PicoClawWebSocket {
       }
 
       try {
-        if (!this.sessionId) {
-          this.sessionId = this.generateSessionId()
+        if (!this.routeSessionId) {
+          this.routeSessionId = this.generateSessionId()
         }
         const { token, wsPath, wsBaseUrl, mode } =
           await this.resolveTokenAndPath()
         this.wsMode = mode
-        const query = `session=${encodeURIComponent(this.sessionId)}&session_id=${encodeURIComponent(this.sessionId)}`
+        const query = `session=${encodeURIComponent(this.routeSessionId)}&session_id=${encodeURIComponent(this.routeSessionId)}`
         const url = `${wsBaseUrl}${wsPath}?${query}`
         this.connectWebSocket(url, token)
       } catch (err) {
@@ -170,27 +219,11 @@ export class PicoClawWebSocket {
     })
   }
 
-  ensureSessionId(): string {
-    if (!this.sessionId) {
-      this.sessionId = this.generateSessionId()
+  ensureRouteSessionId(): string {
+    if (!this.routeSessionId) {
+      this.routeSessionId = this.generateSessionId()
     }
-    return this.sessionId
-  }
-
-  startNewSession(): string {
-    this.disconnect()
-    this.sessionId = this.generateSessionId()
-    this.messageQueue = []
-    this.resetAssistantState()
-    return this.sessionId
-  }
-
-  useSession(sessionId: string): string {
-    this.disconnect()
-    this.sessionId = sessionId || this.generateSessionId()
-    this.messageQueue = []
-    this.resetAssistantState()
-    return this.sessionId
+    return this.routeSessionId
   }
 
   private resetAssistantState(): void {
@@ -207,6 +240,8 @@ export class PicoClawWebSocket {
     mode: WSMode
   }> {
     const candidates: TokenCandidate[] = []
+
+    // Priority 1: Direct Gateway (18790) - always try first
     const directGatewayBase = getDirectGatewayBaseUrl()
     if (isDirectGatewayEnabled() && directGatewayBase) {
       candidates.push(
@@ -214,11 +249,32 @@ export class PicoClawWebSocket {
           baseUrl: directGatewayBase,
           tokenPath: DIRECT_PET_TOKEN_PATH,
           wsPath: DIRECT_PET_WS_PATH,
+          authMode: "direct",
         },
         {
           baseUrl: directGatewayBase,
           tokenPath: DIRECT_PICO_TOKEN_PATH,
           wsPath: DIRECT_PICO_WS_PATH,
+          authMode: "direct",
+        },
+      )
+    }
+
+    // Priority 2: Launcher (18800) - fallback only
+    const launcherBase = getApiBaseUrl().trim()
+    if (launcherBase && launcherBase !== directGatewayBase) {
+      candidates.push(
+        {
+          baseUrl: launcherBase,
+          tokenPath: API_ENDPOINTS.PET.TOKEN,
+          wsPath: DIRECT_PET_WS_PATH,
+          authMode: "launcher",
+        },
+        {
+          baseUrl: launcherBase,
+          tokenPath: API_ENDPOINTS.PICO.TOKEN,
+          wsPath: DIRECT_PICO_WS_PATH,
+          authMode: "launcher",
         },
       )
     }
@@ -226,10 +282,12 @@ export class PicoClawWebSocket {
     let lastError = "PET channel not available"
 
     for (const candidate of candidates) {
-      const res = await fetch(`${candidate.baseUrl}${candidate.tokenPath}`, {
-        method: "GET",
-        credentials: "omit",
-      }).catch(() => null)
+      const endpoint = `${candidate.baseUrl}${candidate.tokenPath}`
+      const requestInit: RequestInit =
+        candidate.authMode === "launcher"
+          ? withLauncherAuthRequest(endpoint, { method: "GET" })
+          : { method: "GET", credentials: "omit" }
+      const res = await fetch(endpoint, requestInit).catch(() => null)
 
       if (!res) {
         lastError = `Token endpoint failed (${candidate.tokenPath}): network error`
@@ -405,6 +463,7 @@ export class PicoClawWebSocket {
         break
       case PUSH_TYPE_AUDIO:
       case PUSH_TYPE_AUDIO_AND_VOICE:
+      case PUSH_TYPE_TEXT_AND_AUDIO:
         this.handleAudioPush(data, Boolean(push.is_final))
         break
       case PUSH_TYPE_EMOTION_CHANGE:
@@ -489,14 +548,16 @@ export class PicoClawWebSocket {
         return
       }
       this.emit({
-        type: "message",
+        type: "tool_status",
         data: {
-          id: `tool-${timestamp}-${Math.random().toString(36).slice(2, 8)}`,
-          role: "assistant",
-          content: text,
+          status: /执行完成|completed|done/i.test(text)
+            ? "done"
+            : /失败|error|failed/i.test(text)
+              ? "error"
+              : "busy",
+          text,
           timestamp,
-          streaming: false,
-        } satisfies ChatMessage,
+        },
       })
       return
     }
@@ -580,6 +641,7 @@ export class PicoClawWebSocket {
     if (typeof data === "string") {
       try {
         const payload = JSON.parse(data) as Record<string, unknown>
+        this.projectAudioTextChunk(payload)
         if (forcedFinal && payload.is_final === undefined) {
           payload.is_final = true
         }
@@ -587,6 +649,7 @@ export class PicoClawWebSocket {
         return
       } catch {
         const payload: Record<string, unknown> = { text: data }
+        this.projectAudioTextChunk(payload)
         if (forcedFinal) {
           payload.is_final = true
         }
@@ -596,10 +659,33 @@ export class PicoClawWebSocket {
     }
 
     const payload = { ...((data || {}) as Record<string, unknown>) }
+    this.projectAudioTextChunk(payload)
     if (forcedFinal && payload.is_final === undefined) {
       payload.is_final = true
     }
     this.emit({ type: "audio", data: payload })
+  }
+
+  private projectAudioTextChunk(payload: Record<string, unknown>): void {
+    const text =
+      (typeof payload.text === "string" && payload.text) ||
+      (typeof payload.Text === "string" && payload.Text) ||
+      ""
+    if (!text) {
+      return
+    }
+
+    const textPayload: Record<string, unknown> = {
+      type: "text",
+      text,
+    }
+
+    const chatId = payload.chat_id ?? payload.chatId
+    if (chatId !== undefined) {
+      textPayload.chat_id = chatId
+    }
+
+    this.handleAIChatPush(textPayload, false)
   }
 
   private handleEmotionChangePush(data: Record<string, unknown>): void {
@@ -778,14 +864,15 @@ export class PicoClawWebSocket {
     this.reconnectAttempts = 0
   }
 
-  send(content: string): void {
+  send(content: string, sessionKey?: string): void {
     this.resetAssistantState()
+    const resolvedSessionKey = sessionKey?.trim() || this.generateSessionId()
     if (this.wsMode === "pico") {
       const requestId = `req-${++this.msgIdCounter}-${Date.now()}`
       const msg: PicoWireMessage = {
         type: "message.send",
         id: requestId,
-        session_id: this.ensureSessionId(),
+        session_id: resolvedSessionKey,
         timestamp: Date.now(),
         payload: {
           content,
@@ -795,7 +882,7 @@ export class PicoClawWebSocket {
         this.sendRaw(msg)
         return
       }
-      this.messageQueue.push(msg as OutboundRequest)
+      this.messageQueue.push(msg)
       this.connect().catch(() => {
         this.emit({ type: "error", data: "Connection failed" })
       })
@@ -804,7 +891,7 @@ export class PicoClawWebSocket {
 
     this.sendAction(CHAT_ACTION, {
       text: content,
-      session_key: this.ensureSessionId(),
+      session_key: resolvedSessionKey,
     })
   }
 
@@ -871,6 +958,47 @@ export class PicoClawWebSocket {
     return this.requestAction<VoiceModelListData>("voice_model_list_get")
   }
 
+  async getCharacter(): Promise<PetResponse & { data?: CharacterProfileData }> {
+    return this.requestAction<CharacterProfileData>("character_get", {})
+  }
+
+  async updateCharacter(data: {
+    pet_id?: string
+    pet_name?: string
+    pet_persona?: string
+    pet_persona_type?: string
+  }): Promise<PetResponse & { data?: CharacterProfileData }> {
+    return this.requestAction<CharacterProfileData>("character_update", data)
+  }
+
+  async switchCharacter(characterId: string): Promise<PetResponse> {
+    return this.requestAction("character_switch", { character_id: characterId })
+  }
+
+  async getPetConfig(): Promise<PetResponse & { data?: PetConfigData }> {
+    return this.requestAction<PetConfigData>("config_get", {})
+  }
+
+  async updatePetConfig(data: PetConfigData): Promise<PetResponse & { data?: PetConfigData }> {
+    return this.requestAction<PetConfigData>("config_update", data)
+  }
+
+  async getEmotion(): Promise<PetResponse & { data?: EmotionData }> {
+    return this.requestAction<EmotionData>("emotion_get", {})
+  }
+
+  async updateUserProfile(data: UserProfileUpdateData): Promise<PetResponse> {
+    return this.requestAction("user_profile_update", data)
+  }
+
+  async submitOnboardingConfig(data: {
+    pet_name: string
+    pet_persona: string
+    pet_persona_type: string
+  }): Promise<PetResponse> {
+    return this.requestAction("onboarding_config", data)
+  }
+
   async getVoiceModel(name: string): Promise<PetResponse & { data?: VoiceModelData }> {
     return this.requestAction<VoiceModelData>("voice_model_get", { name })
   }
@@ -898,6 +1026,26 @@ export class PicoClawWebSocket {
     secret_key?: string
   }): Promise<PetResponse & { data?: VoiceModelVoicesData }> {
     return this.requestAction<VoiceModelVoicesData>("voice_model_get_voices", data)
+  }
+
+  async getModelList(): Promise<PetResponse & { data?: ModelListData }> {
+    return this.requestAction<ModelListData>("model_list_get")
+  }
+
+  async addModel(data: AddModelRequest): Promise<PetResponse> {
+    return this.requestAction("model_add", data)
+  }
+
+  async updateModel(data: UpdateModelRequest): Promise<PetResponse> {
+    return this.requestAction("model_update", data)
+  }
+
+  async deleteModel(modelName: string): Promise<PetResponse> {
+    return this.requestAction("model_delete", { model_name: modelName })
+  }
+
+  async setDefaultModel(modelName: string): Promise<PetResponse> {
+    return this.requestAction("model_set_default", { model_name: modelName })
   }
 }
 
@@ -931,6 +1079,64 @@ export interface VoiceModelVoice {
   Description: string
   Language: string
   Emotion: string
+}
+
+export interface ModelInfo {
+  index: number
+  model_name: string
+  model: string
+  api_base?: string
+  api_key: string
+  proxy?: string
+  auth_method?: string
+  connect_mode?: string
+  workspace?: string
+  rpm?: number
+  max_tokens_field?: string
+  request_timeout?: number
+  thinking_level?: string
+  extra_body?: Record<string, unknown>
+  enabled: boolean
+  is_default: boolean
+  is_virtual: boolean
+}
+
+export interface ModelListData {
+  models: ModelInfo[]
+  total: number
+  default_model: string
+}
+
+export interface AddModelRequest {
+  model_name: string
+  model: string
+  api_key?: string
+  api_base?: string
+  proxy?: string
+  auth_method?: string
+  connect_mode?: string
+  workspace?: string
+  rpm?: number
+  max_tokens_field?: string
+  request_timeout?: number
+  thinking_level?: string
+  extra_body?: Record<string, unknown>
+}
+
+export interface UpdateModelRequest {
+  model_name: string
+  new_model?: string
+  api_key?: string
+  api_base?: string | null
+  proxy?: string | null
+  auth_method?: string
+  connect_mode?: string
+  workspace?: string
+  rpm?: number
+  max_tokens_field?: string
+  request_timeout?: number
+  thinking_level?: string | null
+  extra_body?: Record<string, unknown>
 }
 
 let wsInstance: PicoClawWebSocket | null = null

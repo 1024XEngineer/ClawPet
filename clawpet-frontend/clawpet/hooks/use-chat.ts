@@ -8,10 +8,15 @@ import {
   type ChatMessage,
   type WSEvent,
 } from "@/lib/api"
-import { getSessionHistory } from "@/lib/api/sessions"
+import {
+  deleteSession as deleteSessionOnServer,
+  getSessionHistory,
+} from "@/lib/api/sessions"
 
 const SESSIONS_STORAGE_KEY = "petclaw_sessions"
 const ACTIVE_SESSION_KEY = "petclaw_active_session"
+const PPT_SKILL_NAME = "student-ppt-pet"
+const PPT_TRIGGER_RE = /(\bppt\b|PPT|幻灯片|答辩|汇报|开题|课件)/i
 
 export interface UseChatOptions {
   onMessage?: (message: ChatMessage) => void
@@ -37,10 +42,14 @@ export interface UseChatResult {
   activeSessionId: string
   isConnected: boolean
   isTyping: boolean
+  isTurnActive: boolean
+  toolStatus: "idle" | "busy" | "done" | "error"
   error: string | null
   sendMessage: (content: string) => void
+  terminateTurn: () => void
   newChat: () => Promise<void>
   switchSession: (sessionId: string) => Promise<void>
+  deleteSession: (sessionId: string) => Promise<void>
   loadSessionHistory: (sessionId: string) => Promise<void>
   reconnect: () => void
   clearError: () => void
@@ -51,6 +60,7 @@ interface AudioPushData {
   type?: string
   text?: string
   audio?: string
+  audio_mime?: string
   duration?: number
   seq?: number
   error?: string
@@ -62,10 +72,26 @@ interface AudioSegmentItem {
   seq: number
   text: string
   audioBase64: string
+  audioMime?: string
   durationMs: number
 }
 
+interface ResolvedAudioChunkPayload {
+  audioBase64: string
+  audioMime?: string
+}
+
+interface ToolStatusEventData {
+  status?: "busy" | "done" | "error"
+  text?: string
+}
+
 const EMPTY_SESSION_TITLE = "新对话"
+
+function generateChatSessionKey(): string {
+  return `session-${Date.now()}-${Math.random().toString(36).substring(2, 11)}`
+}
+
 function normalizeTimestamp(value: number | string): number {
   const numeric = typeof value === "number" ? value : Number(value)
   return Number.isFinite(numeric) ? numeric : Date.now()
@@ -179,10 +205,30 @@ function mergeMessage(
   return [...messages, message]
 }
 
+function buildOutgoingMessage(raw: string): string {
+  const text = raw.trim()
+  if (text.startsWith("/")) {
+    return text
+  }
+  if (!PPT_TRIGGER_RE.test(text)) {
+    return text
+  }
+  return `/use ${PPT_SKILL_NAME} ${text}`
+}
+
 function decodeBase64Chunk(value: string): Uint8Array | null {
-  const base64 = value
+  let base64 = value
     .replace(/^data:audio\/[^;]+;base64,/, "")
     .replace(/\s+/g, "")
+
+  // Accept URL-safe base64 payloads.
+  base64 = base64.replace(/-/g, "+").replace(/_/g, "/")
+  const mod = base64.length % 4
+  if (mod === 2) {
+    base64 += "=="
+  } else if (mod === 3) {
+    base64 += "="
+  }
 
   if (!base64) {
     return new Uint8Array()
@@ -201,6 +247,92 @@ function decodeBase64Chunk(value: string): Uint8Array | null {
   }
 }
 
+function inferAudioMimeType(bytes: Uint8Array | null): string {
+  if (!bytes || bytes.length < 4) {
+    return "audio/mpeg"
+  }
+
+  // ID3 tag (MP3)
+  if (bytes[0] === 0x49 && bytes[1] === 0x44 && bytes[2] === 0x33) {
+    return "audio/mpeg"
+  }
+  // MP3 frame sync
+  if (bytes[0] === 0xff && (bytes[1] & 0xe0) === 0xe0) {
+    return "audio/mpeg"
+  }
+  // WAV
+  if (
+    bytes[0] === 0x52 &&
+    bytes[1] === 0x49 &&
+    bytes[2] === 0x46 &&
+    bytes[3] === 0x46
+  ) {
+    return "audio/wav"
+  }
+  // OGG
+  if (
+    bytes[0] === 0x4f &&
+    bytes[1] === 0x67 &&
+    bytes[2] === 0x67 &&
+    bytes[3] === 0x53
+  ) {
+    return "audio/ogg"
+  }
+  // FLAC
+  if (
+    bytes[0] === 0x66 &&
+    bytes[1] === 0x4c &&
+    bytes[2] === 0x61 &&
+    bytes[3] === 0x43
+  ) {
+    return "audio/flac"
+  }
+
+  return "audio/mpeg"
+}
+
+function normalizeAudioMimeType(mime?: string): string | undefined {
+  if (!mime) {
+    return undefined
+  }
+  const normalized = mime.trim().toLowerCase()
+  if (!normalized) {
+    return undefined
+  }
+  switch (normalized) {
+    case "audio/mp3":
+    case "audio/mpeg3":
+      return "audio/mpeg"
+    case "audio/mpeg":
+    case "audio/wav":
+    case "audio/x-wav":
+    case "audio/ogg":
+    case "audio/flac":
+      return normalized === "audio/x-wav" ? "audio/wav" : normalized
+    default:
+      return undefined
+  }
+}
+
+function parseDataAudioURL(value: string): { format: string; data: string } | null {
+  if (!value.startsWith("data:audio/")) {
+    return null
+  }
+  const payload = value.slice("data:audio/".length)
+  const commaIndex = payload.indexOf(",")
+  if (commaIndex < 0) {
+    return null
+  }
+  const meta = payload.slice(0, commaIndex).trim()
+  const data = payload.slice(commaIndex + 1).trim()
+  const semicolonIndex = meta.indexOf(";")
+  const format = (semicolonIndex >= 0 ? meta.slice(0, semicolonIndex) : meta).trim()
+  if (!format || !data) {
+    return null
+  }
+  return { format, data }
+}
+
 function isLikelyBase64Audio(value: string): boolean {
   const normalized = value.replace(/^data:audio\/[^;]+;base64,/, "").replace(/\s+/g, "")
   if (normalized.length < 64) {
@@ -212,26 +344,58 @@ function isLikelyBase64Audio(value: string): boolean {
   return /^[A-Za-z0-9+/=]+$/.test(normalized)
 }
 
-function resolveAudioChunkPayload(data: AudioPushData): string {
+function resolveAudioChunkPayload(data: AudioPushData): ResolvedAudioChunkPayload | null {
+  const explicitMime = normalizeAudioMimeType(data.audio_mime)
+
   if (typeof data.audio === "string" && data.audio.trim()) {
-    return data.audio
+    const audioValue = data.audio.trim()
+    const parsed = parseDataAudioURL(audioValue)
+    if (parsed) {
+      return {
+        audioBase64: parsed.data,
+        audioMime: explicitMime || normalizeAudioMimeType(`audio/${parsed.format}`),
+      }
+    }
+    return {
+      audioBase64: audioValue,
+      audioMime: explicitMime,
+    }
   }
-  if (data.type === "audio" && typeof data.text === "string") {
-    return data.text
+
+  if (data.type === "audio" && typeof data.text === "string" && data.text.trim()) {
+    const textValue = data.text.trim()
+    const parsed = parseDataAudioURL(textValue)
+    if (parsed) {
+      return {
+        audioBase64: parsed.data,
+        audioMime: explicitMime || normalizeAudioMimeType(`audio/${parsed.format}`),
+      }
+    }
+    return {
+      audioBase64: textValue,
+      audioMime: explicitMime,
+    }
   }
+
   if (typeof data.text === "string" && isLikelyBase64Audio(data.text)) {
-    return data.text
+    return {
+      audioBase64: data.text,
+      audioMime: explicitMime,
+    }
   }
-  return ""
+
+  return null
 }
 
 export function useChat(options: UseChatOptions = {}): UseChatResult {
   const [isConnected, setIsConnected] = useState(false)
   const [isTyping, setIsTyping] = useState(false)
+  const [isTurnActive, setIsTurnActive] = useState(false)
+  const [toolStatus, setToolStatus] = useState<"idle" | "busy" | "done" | "error">("idle")
   const [error, setError] = useState<string | null>(null)
   const wsRef = useRef(getWebSocketInstance())
   const optionsRef = useRef(options)
-  const initialSessionIdRef = useRef(wsRef.current.ensureSessionId())
+  const initialSessionIdRef = useRef(generateChatSessionKey())
 
   // 尝试从 localStorage 加载会话
   const storedSessions = loadSessionsFromStorage()
@@ -244,20 +408,27 @@ export function useChat(options: UseChatOptions = {}): UseChatResult {
   const activeSessionIdRef = useRef(activeSessionId)
   const audioQueueRef = useRef<AudioSegmentItem[]>([])
   const audioExpectedSeqRef = useRef<number | null>(null)
+  const audioArrivalSeqRef = useRef(0)
   const audioActiveChatIdRef = useRef<number | null>(null)
   const audioIsPlayingRef = useRef(false)
   const audioSeenSeqRef = useRef<Set<string>>(new Set())
   const currentAudioRef = useRef<HTMLAudioElement | null>(null)
   const currentAudioUrlRef = useRef<string | null>(null)
   const audioAdvanceTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+  const pendingBubbleTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   const lastQueuedSegmentRef = useRef<{ chatId: number | null; seq: number | null }>({
     chatId: null,
     seq: null,
   })
   const lastAssistantTextRef = useRef("")
+  const assistantTurnActiveRef = useRef(false)
   const lastEmotionRef = useRef("neutral")
   const lastPlayedAudioRef = useRef<{ value: string; at: number }>({
     value: "",
+    at: 0,
+  })
+  const lastBubbleTextRef = useRef<{ text: string; at: number }>({
+    text: "",
     at: 0,
   })
 
@@ -357,13 +528,21 @@ export function useChat(options: UseChatOptions = {}): UseChatResult {
     }
   }, [])
 
-  const showBubble = useCallback((text: string | null, audio?: string) => {
-    window.electronAPI?.showBubble?.({
-      text,
-      emotion: lastEmotionRef.current,
-      audio,
-    })
-  }, [])
+  const showBubble = useCallback(
+    (text: string | null, audio?: string, durationMs?: number) => {
+      lastBubbleTextRef.current = {
+        text: text?.trim() || "",
+        at: Date.now(),
+      }
+      window.electronAPI?.showBubble?.({
+        text,
+        emotion: lastEmotionRef.current,
+        audio,
+        duration_ms: typeof durationMs === "number" ? durationMs : undefined,
+      })
+    },
+    [],
+  )
 
   const clearAudioAdvanceTimer = useCallback(() => {
     if (audioAdvanceTimerRef.current) {
@@ -372,10 +551,41 @@ export function useChat(options: UseChatOptions = {}): UseChatResult {
     }
   }, [])
 
+  const clearPendingBubbleTimer = useCallback(() => {
+    if (pendingBubbleTimerRef.current) {
+      clearTimeout(pendingBubbleTimerRef.current)
+      pendingBubbleTimerRef.current = null
+    }
+  }, [])
+
+  const scheduleAssistantBubble = useCallback(
+    (text: string) => {
+      const bubbleText = text.trim()
+      if (!bubbleText || !window.electronAPI?.showBubble) {
+        return
+      }
+
+      clearPendingBubbleTimer()
+      pendingBubbleTimerRef.current = setTimeout(() => {
+        const now = Date.now()
+        if (
+          lastBubbleTextRef.current.text !== bubbleText ||
+          now - lastBubbleTextRef.current.at > 1800
+        ) {
+          showBubble(bubbleText)
+        }
+        pendingBubbleTimerRef.current = null
+      }, 1200)
+    },
+    [clearPendingBubbleTimer, showBubble],
+  )
+
   const playAudioBase64 = useCallback(
     (
       audioBase64: string,
       bubbleText?: string | null,
+      audioMimeHint?: string,
+      seq?: number,
       durationMs?: number,
       onSettled?: () => void,
     ) => {
@@ -397,66 +607,136 @@ export function useChat(options: UseChatOptions = {}): UseChatResult {
         at: Date.now(),
       }
 
+      clearPendingBubbleTimer()
+
       if (window.electronAPI?.showBubble) {
-        showBubble(bubbleText ?? (lastAssistantTextRef.current || null), audioBase64)
-        const fallbackDelay = Math.min(
-          Math.max((bubbleText?.trim().length ?? 0) * 120, 900),
-          8_000,
-        )
-        const resolvedDurationMs =
-          typeof durationMs === "number" && durationMs > 0
-            ? durationMs
-            : fallbackDelay
-        const advanceDelay = Math.max(resolvedDurationMs, 200)
-        clearAudioAdvanceTimer()
-        audioAdvanceTimerRef.current = setTimeout(() => {
-          audioAdvanceTimerRef.current = null
-          onSettled?.()
-        }, advanceDelay)
-        return
+        // Keep bubble text sync, but always play audio via HTMLAudio to ensure
+        // deterministic ordered playback in chat runtime.
+        showBubble(bubbleText ?? (lastAssistantTextRef.current || null), undefined, durationMs)
       }
 
       const decoded = decodeBase64Chunk(audioBase64)
-      let audioUrl = `data:audio/mp3;base64,${audioBase64}`
+      const mimeType = normalizeAudioMimeType(audioMimeHint) || inferAudioMimeType(decoded)
+      if (!decoded || decoded.length === 0) {
+        console.error("[petclaw] audio decode failed", {
+          seq,
+          mimeType,
+          base64Length: audioBase64.length,
+          audioPrefix: audioBase64.slice(0, 64),
+        })
+        onSettled?.()
+        return
+      }
+      const byteHead = Array.from(decoded.slice(0, 12)).map((v) =>
+        v.toString(16).padStart(2, "0"),
+      )
+      const rawCandidates = Array.from(
+        new Set(
+          [
+            normalizeAudioMimeType(audioMimeHint),
+            mimeType,
+            "audio/mpeg",
+            "audio/ogg",
+            "audio/wav",
+          ].filter((v): v is string => Boolean(v)),
+        ),
+      )
+      const probeAudio = document.createElement("audio")
+      const supportedCandidates = rawCandidates.filter(
+        (candidate) => probeAudio.canPlayType(candidate) !== "",
+      )
+      const mimeCandidates =
+        supportedCandidates.length > 0 ? supportedCandidates : rawCandidates
 
       if (currentAudioUrlRef.current) {
         URL.revokeObjectURL(currentAudioUrlRef.current)
         currentAudioUrlRef.current = null
       }
-
-      if (decoded && decoded.length > 0) {
-        const blob = new Blob([decoded], { type: "audio/mpeg" })
-        audioUrl = URL.createObjectURL(blob)
-        currentAudioUrlRef.current = audioUrl
-      }
-
       if (currentAudioRef.current) {
         currentAudioRef.current.pause()
       }
-      currentAudioRef.current = new Audio(audioUrl)
-      currentAudioRef.current.onended = () => {
-        if (currentAudioUrlRef.current) {
-          URL.revokeObjectURL(currentAudioUrlRef.current)
-          currentAudioUrlRef.current = null
+
+      let settled = false
+      const settleOnce = () => {
+        if (!settled) {
+          settled = true
+          onSettled?.()
         }
-        onSettled?.()
       }
-      currentAudioRef.current.onerror = (errorEvent) => {
-        console.warn("[petclaw] audio element error", errorEvent)
-        onSettled?.()
+
+      const tryPlayWithMime = (index: number) => {
+        if (index >= mimeCandidates.length) {
+          console.error("[petclaw] exhausted audio mime candidates", {
+            seq,
+            mimeHint: audioMimeHint,
+            inferredMime: mimeType,
+            mimeCandidates,
+            base64Length: audioBase64.length,
+            byteHead,
+          })
+          settleOnce()
+          return
+        }
+
+        const attemptMime = mimeCandidates[index]
+        const blob = new Blob([decoded], { type: attemptMime })
+        const audioUrl = URL.createObjectURL(blob)
+        currentAudioUrlRef.current = audioUrl
+        const audio = new Audio(audioUrl)
+        currentAudioRef.current = audio
+
+        audio.onended = () => {
+          if (currentAudioUrlRef.current) {
+            URL.revokeObjectURL(currentAudioUrlRef.current)
+            currentAudioUrlRef.current = null
+          }
+          settleOnce()
+        }
+
+        audio.onerror = (errorEvent) => {
+          const mediaError = audio.error
+          console.warn("[petclaw] audio element error", {
+            errorEvent,
+            seq,
+            attemptMime,
+            base64Length: audioBase64.length,
+            mediaErrorCode: mediaError?.code,
+            mediaErrorMessage: mediaError?.message,
+            byteHead,
+          })
+          if (currentAudioUrlRef.current) {
+            URL.revokeObjectURL(currentAudioUrlRef.current)
+            currentAudioUrlRef.current = null
+          }
+          tryPlayWithMime(index + 1)
+        }
+
+        void audio.play().catch((playbackError) => {
+          console.warn("[petclaw] failed to play audio", {
+            playbackError,
+            seq,
+            attemptMime,
+            base64Length: audioBase64.length,
+            byteHead,
+          })
+          if (currentAudioUrlRef.current) {
+            URL.revokeObjectURL(currentAudioUrlRef.current)
+            currentAudioUrlRef.current = null
+          }
+          tryPlayWithMime(index + 1)
+        })
       }
-      void currentAudioRef.current.play().catch((playbackError) => {
-        console.warn("[petclaw] failed to play audio", playbackError)
-        onSettled?.()
-      })
+
+      tryPlayWithMime(0)
     },
-    [clearAudioAdvanceTimer, showBubble],
+    [clearAudioAdvanceTimer, clearPendingBubbleTimer, showBubble],
   )
 
   const resetAudioQueue = useCallback(() => {
     clearAudioAdvanceTimer()
     audioQueueRef.current = []
     audioExpectedSeqRef.current = null
+    audioArrivalSeqRef.current = 0
     audioActiveChatIdRef.current = null
     audioSeenSeqRef.current = new Set()
     audioIsPlayingRef.current = false
@@ -493,6 +773,8 @@ export function useChat(options: UseChatOptions = {}): UseChatResult {
     playAudioBase64(
       nextSegment.audioBase64,
       nextSegment.text || null,
+      nextSegment.audioMime,
+      nextSegment.seq,
       nextSegment.durationMs,
       () => {
         audioIsPlayingRef.current = false
@@ -504,7 +786,8 @@ export function useChat(options: UseChatOptions = {}): UseChatResult {
 
   const enqueueAudioSegment = useCallback(
     (segment: AudioSegmentItem) => {
-      const seqKey = `${segment.chatId ?? "na"}:${segment.seq}`
+      const audioFingerprint = segment.audioBase64.slice(0, 24)
+      const seqKey = `${segment.chatId ?? "na"}:${segment.seq}:${audioFingerprint}`
       if (audioSeenSeqRef.current.has(seqKey)) {
         return
       }
@@ -525,6 +808,8 @@ export function useChat(options: UseChatOptions = {}): UseChatResult {
   const connectWithBootstrap = useCallback(async () => {
     setError(null)
     setIsTyping(false)
+    setIsTurnActive(false)
+    setToolStatus("idle")
 
     const bootstrap = await ensureBackendReadyForChat()
     if (!bootstrap.ok) {
@@ -557,6 +842,36 @@ export function useChat(options: UseChatOptions = {}): UseChatResult {
   useEffect(() => {
     const ws = wsRef.current
 
+    const finalizeStreamingAssistantMessages = () => {
+      updateSessionMessages(activeSessionIdRef.current, (prev) => {
+        let changed = false
+        const next = prev.map((msg) => {
+          if (msg.role === "assistant" && msg.streaming) {
+            changed = true
+            return {
+              ...msg,
+              streaming: false,
+            }
+          }
+          return msg
+        })
+        return changed ? next : prev
+      })
+    }
+
+    const endAssistantTurn = () => {
+      assistantTurnActiveRef.current = false
+      setIsTyping(false)
+      setIsTurnActive(false)
+      setToolStatus("idle")
+    }
+
+    const beginOrKeepAssistantTurn = () => {
+      assistantTurnActiveRef.current = true
+      setIsTyping(true)
+      setIsTurnActive(true)
+    }
+
     const handleEvent = (event: WSEvent) => {
       switch (event.type) {
         case "connected":
@@ -567,7 +882,8 @@ export function useChat(options: UseChatOptions = {}): UseChatResult {
 
         case "disconnected":
           setIsConnected(false)
-          setIsTyping(false)
+          finalizeStreamingAssistantMessages()
+          endAssistantTurn()
           optionsRef.current.onConnectionChange?.(false)
           break
 
@@ -577,9 +893,14 @@ export function useChat(options: UseChatOptions = {}): UseChatResult {
             updateSessionMessages(activeSessionIdRef.current, (prev) =>
               mergeMessage(prev, message),
             )
-            setIsTyping(message.streaming ?? false)
+            if (message.role === "assistant" && message.streaming) {
+              beginOrKeepAssistantTurn()
+            } else if (message.role === "assistant" && !message.streaming) {
+              endAssistantTurn()
+            }
             if (message.role === "assistant" && !message.streaming) {
               lastAssistantTextRef.current = message.content
+              scheduleAssistantBubble(message.content)
             }
             optionsRef.current.onMessage?.(message)
           }
@@ -612,41 +933,78 @@ export function useChat(options: UseChatOptions = {}): UseChatResult {
 
           const audioChunkPayload = resolveAudioChunkPayload(data)
           const parsedSeq = Number(data.seq)
-          const seq = Number.isFinite(parsedSeq) ? parsedSeq : -1
+          const seq = Number.isFinite(parsedSeq)
+            ? parsedSeq
+            : ++audioArrivalSeqRef.current
           const parsedDuration = Number(data.duration)
           const durationMs = Number.isFinite(parsedDuration) ? parsedDuration : 0
 
-          if (audioChunkPayload && seq >= 0) {
+          if (audioChunkPayload) {
             enqueueAudioSegment({
               chatId: incomingChatId,
               seq,
               text: typeof data.text === "string" ? data.text : "",
-              audioBase64: audioChunkPayload,
+              audioBase64: audioChunkPayload.audioBase64,
+              audioMime: audioChunkPayload.audioMime,
               durationMs,
             })
+          } else {
+            console.warn("[petclaw] audio payload unresolved", {
+              seq,
+              type: data.type,
+              hasAudio: Boolean(typeof data.audio === "string" && data.audio.trim()),
+              hasText: Boolean(typeof data.text === "string" && data.text.trim()),
+              audioMime: data.audio_mime,
+            })
+          }
+
+          // Some turns may finish via audio final marker without explicit typing=false.
+          // Treat this as a definitive end-of-turn signal to avoid stuck "thinking" state.
+          if (data.is_final) {
+            finalizeStreamingAssistantMessages()
+            endAssistantTurn()
           }
 
           break
         }
 
         case "typing":
-          setIsTyping(
-            typeof event.data === "string" ? event.data === "true" : true,
-          )
+          {
+            const typing =
+              typeof event.data === "string" ? event.data === "true" : true
+            if (typing) {
+              beginOrKeepAssistantTurn()
+            } else {
+              finalizeStreamingAssistantMessages()
+              endAssistantTurn()
+            }
+          }
           break
+
+        case "tool_status": {
+          const data = (event.data || {}) as ToolStatusEventData
+          const status = data.status || "busy"
+          if (status === "busy" || status === "done" || status === "error") {
+            beginOrKeepAssistantTurn()
+            setToolStatus(status)
+          }
+          break
+        }
 
         case "error": {
           const errorMsg =
             typeof event.data === "string" ? event.data : "Unknown error"
           setError(errorMsg)
-          setIsTyping(false)
+          finalizeStreamingAssistantMessages()
+          endAssistantTurn()
           optionsRef.current.onError?.(errorMsg)
           break
         }
 
         case "reconnecting":
           setError("正在重新连接...")
-          setIsTyping(false)
+          finalizeStreamingAssistantMessages()
+          endAssistantTurn()
           break
 
         case "emotion_change":
@@ -670,6 +1028,7 @@ export function useChat(options: UseChatOptions = {}): UseChatResult {
     })
 
     return () => {
+      assistantTurnActiveRef.current = false
       unsubscribe()
       ws.disconnect()
       resetAudioQueue()
@@ -678,12 +1037,14 @@ export function useChat(options: UseChatOptions = {}): UseChatResult {
         currentAudioRef.current = null
       }
       clearAudioAdvanceTimer()
+      clearPendingBubbleTimer()
       if (currentAudioUrlRef.current) {
         URL.revokeObjectURL(currentAudioUrlRef.current)
         currentAudioUrlRef.current = null
       }
       lastAssistantTextRef.current = ""
       lastPlayedAudioRef.current = { value: "", at: 0 }
+      lastBubbleTextRef.current = { text: "", at: 0 }
     }
   }, [
     connectWithBootstrap,
@@ -691,13 +1052,21 @@ export function useChat(options: UseChatOptions = {}): UseChatResult {
     enqueueAudioSegment,
     playAudioBase64,
     resetAudioQueue,
+    scheduleAssistantBubble,
+    showBubble,
     updateSessionMessages,
     clearAudioAdvanceTimer,
+    clearPendingBubbleTimer,
   ])
 
   const sendMessage = useCallback(
     (content: string) => {
       if (!content.trim()) {
+        return
+      }
+
+      const outbound = buildOutgoingMessage(content)
+      if (!outbound) {
         return
       }
 
@@ -717,25 +1086,34 @@ export function useChat(options: UseChatOptions = {}): UseChatResult {
         ...prev,
         userMessage,
       ])
+      clearPendingBubbleTimer()
+      assistantTurnActiveRef.current = true
       setIsTyping(true)
+      setIsTurnActive(true)
+      setToolStatus("idle")
       setError(null)
 
-      wsRef.current.send(content.trim())
+      wsRef.current.send(outbound, activeSessionIdRef.current)
     },
-    [updateSessionMessages],
+    [clearPendingBubbleTimer, updateSessionMessages],
   )
 
   const newChat = useCallback(async () => {
-    const nextSessionId = wsRef.current.startNewSession()
+    const nextSessionId = generateChatSessionKey()
     const nextSession = createSessionState(nextSessionId)
+    wsRef.current.disconnect()
 
     if (currentAudioRef.current) {
       currentAudioRef.current.pause()
     }
     resetAudioQueue()
+    clearPendingBubbleTimer()
     lastPlayedAudioRef.current = { value: "", at: 0 }
     lastAssistantTextRef.current = ""
+    lastBubbleTextRef.current = { text: "", at: 0 }
     setIsTyping(false)
+    setIsTurnActive(false)
+    setToolStatus("idle")
     setError(null)
 
     setSessionsState((prev) => {
@@ -756,7 +1134,7 @@ export function useChat(options: UseChatOptions = {}): UseChatResult {
     setActiveSessionId(nextSessionId)
 
     await connectWithBootstrap()
-  }, [connectWithBootstrap, resetAudioQueue])
+  }, [clearPendingBubbleTimer, connectWithBootstrap, resetAudioQueue])
 
   const switchSession = useCallback(
     async (sessionId: string) => {
@@ -770,36 +1148,122 @@ export function useChat(options: UseChatOptions = {}): UseChatResult {
       // Load session history from backend
       await loadSessionHistory(sessionId)
 
-      wsRef.current.useSession(sessionId)
+      wsRef.current.disconnect()
       if (currentAudioRef.current) {
         currentAudioRef.current.pause()
       }
       resetAudioQueue()
+      clearPendingBubbleTimer()
       lastPlayedAudioRef.current = { value: "", at: 0 }
       lastAssistantTextRef.current = ""
+      lastBubbleTextRef.current = { text: "", at: 0 }
       setIsTyping(false)
+      setIsTurnActive(false)
+      setToolStatus("idle")
       setError(null)
       setActiveSessionId(sessionId)
 
       await connectWithBootstrap()
     },
-    [connectWithBootstrap, loadSessionHistory, resetAudioQueue, sessionsState],
+    [
+      clearPendingBubbleTimer,
+      connectWithBootstrap,
+      loadSessionHistory,
+      resetAudioQueue,
+      sessionsState,
+    ],
+  )
+
+  const deleteSession = useCallback(
+    async (sessionId: string) => {
+      if (!sessionId) {
+        return
+      }
+
+      const remaining = sessionsState.filter((session) => session.id !== sessionId)
+
+      if (remaining.length === sessionsState.length) {
+        return
+      }
+
+      const deleted = await deleteSessionOnServer(sessionId)
+      if (!deleted) {
+        setError("删除会话失败，请稍后重试")
+        return
+      }
+
+      let nextActiveId = activeSessionIdRef.current
+      if (sessionId === activeSessionIdRef.current) {
+        nextActiveId = remaining[0]?.id ?? generateChatSessionKey()
+      }
+
+      const nextSessions =
+        remaining.length > 0
+          ? remaining
+          : [createSessionState(nextActiveId)]
+
+      setSessionsState(nextSessions)
+      setActiveSessionId(nextActiveId)
+      saveSessionsToStorage(nextSessions, nextActiveId)
+
+      if (sessionId === activeSessionIdRef.current) {
+        wsRef.current.disconnect()
+        if (currentAudioRef.current) {
+          currentAudioRef.current.pause()
+        }
+        resetAudioQueue()
+        clearPendingBubbleTimer()
+        lastPlayedAudioRef.current = { value: "", at: 0 }
+        lastAssistantTextRef.current = ""
+        lastBubbleTextRef.current = { text: "", at: 0 }
+        setIsTyping(false)
+        setIsTurnActive(false)
+        setToolStatus("idle")
+        setError(null)
+        await connectWithBootstrap()
+      }
+    },
+    [clearPendingBubbleTimer, connectWithBootstrap, resetAudioQueue, sessionsState],
   )
 
   const reconnect = useCallback(() => {
     setError(null)
     setIsTyping(false)
+    setIsTurnActive(false)
+    setToolStatus("idle")
+    clearPendingBubbleTimer()
     wsRef.current.disconnect()
 
     void connectWithBootstrap().catch((err) => {
       setError("重新连接失败")
       console.error("Reconnection failed:", err)
     })
-  }, [connectWithBootstrap])
+  }, [clearPendingBubbleTimer, connectWithBootstrap])
 
   const clearError = useCallback(() => {
     setError(null)
   }, [])
+
+  const terminateTurn = useCallback(() => {
+    if (!assistantTurnActiveRef.current) {
+      return
+    }
+    assistantTurnActiveRef.current = false
+    setIsTyping(false)
+    setIsTurnActive(false)
+    setToolStatus("idle")
+    clearPendingBubbleTimer()
+    if (currentAudioRef.current) {
+      currentAudioRef.current.pause()
+      currentAudioRef.current = null
+    }
+    resetAudioQueue()
+    wsRef.current.disconnect()
+    void connectWithBootstrap().catch((err) => {
+      setError("终止后重连失败")
+      console.error("Reconnect after terminate failed:", err)
+    })
+  }, [clearPendingBubbleTimer, connectWithBootstrap, resetAudioQueue])
 
   useEffect(() => {
     const unlisten = window.electronAPI?.onForceStopMedia?.(() => {
@@ -812,10 +1276,14 @@ export function useChat(options: UseChatOptions = {}): UseChatResult {
         currentAudioUrlRef.current = null
       }
       resetAudioQueue()
+      clearPendingBubbleTimer()
       wsRef.current.disconnect()
       lastAssistantTextRef.current = ""
       lastPlayedAudioRef.current = { value: "", at: 0 }
+      lastBubbleTextRef.current = { text: "", at: 0 }
       setIsTyping(false)
+      setIsTurnActive(false)
+      setToolStatus("idle")
       setError(null)
     })
 
@@ -838,10 +1306,14 @@ export function useChat(options: UseChatOptions = {}): UseChatResult {
     activeSessionId,
     isConnected,
     isTyping,
+    isTurnActive,
+    toolStatus,
     error,
     sendMessage,
+    terminateTurn,
     newChat,
     switchSession,
+    deleteSession,
     loadSessionHistory,
     reconnect,
     clearError,

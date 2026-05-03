@@ -177,7 +177,13 @@ func (h *PetHook) BeforeLLM(ctx context.Context, req *agent.LLMHookRequest) (*ag
 性格描述：
 %s
 
-回复风格应体现以上人格特征，现在你作为一位桌宠角色，正在和用户聊天，聊天需要语言简单，就几个字好，在其他事情上就可以正常回答十几个字。`, char.Name, char.PersonaType, char.Persona)
+说话风格：%s
+口头禅：%s
+兴趣爱好：%s
+背景设定：%s
+偏好：%s
+
+回复风格应体现以上人格特征，现在你作为一位桌宠角色，正在和用户聊天，聊天需要语言简单，就几个字好，在其他事情上就可以正常回答十几个字。`, char.Name, char.PersonaType, char.Persona, char.SpeechTone, char.Catchphrase, char.Hobbies, char.Background, char.Preferences)
 
 	// 情绪动作prompt
 	emotionPrompt := fmt.Sprintf(`【你必须按以下要求输出回复】
@@ -366,17 +372,25 @@ func (h *PetHook) AfterLLM(ctx context.Context, resp *agent.LLMHookResponse) (*a
 		}
 	}
 
+	sessionKey := resp.Meta.SessionKey // "agent:main:pet:pet_003:test-1"
+	// 解析出 session_key
+	parts := strings.Split(sessionKey, ":")
+	if len(parts) < 2 {
+		logger.WarnCF("pet", "PetHook: 无效的会话键格式", nil)
+		return resp, agent.HookDecision{Action: agent.HookActionContinue}, nil
+	}
+	sessionID := parts[len(parts)-1] // "test-1"
 	// 7. 记录对话到会话存储（用于后续压缩）
-	if h.conversationStore != nil {
+	if h.conversationStore != nil && sessionID != "" {
 		char := h.charManager.GetCurrent()
 		if char != nil {
 			if h.lastUserMessage != "" {
-				if err := h.conversationStore.Add(char.ID, "user", h.lastUserMessage); err != nil {
+				if err := h.conversationStore.Add(char.ID, sessionID, "user", h.lastUserMessage); err != nil {
 					logger.Warnf("pet: failed to add user message to conversation store: %v", err)
 				}
 			}
 			if parseText != "" {
-				if err := h.conversationStore.Add(char.ID, "pet", parseText); err != nil {
+				if err := h.conversationStore.Add(char.ID, sessionID, "assistant", parseText); err != nil {
 					logger.Warnf("pet: failed to add pet message to conversation store: %v", err)
 				}
 			}
@@ -452,7 +466,7 @@ func (h *PetHook) pushActionTrigger(act *action.Action) {
 
 	h.petService.Push(Push{
 		Type:     "push",
-		PushType: "action_trigger",
+		PushType: PushTypeActionTrigger,
 		Data:     data,
 	})
 }
@@ -482,7 +496,7 @@ func (h *PetHook) pushEmotionChange(push emotion.EmotionPush) {
 
 	h.petService.Push(Push{
 		Type:     "push",
-		PushType: "emotion_change",
+		PushType: PushTypeEmotionChange,
 		Data:     data,
 	})
 }

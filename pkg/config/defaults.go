@@ -143,6 +143,10 @@ func DefaultConfig() *Config {
 				MaxConnections: 100,
 				AllowFrom:      FlexibleStringSlice{},
 			},
+			Pet: PetConfig{ // ✅ 添加这个
+				Enabled:   true, // ✅ 默认启用
+				AllowFrom: FlexibleStringSlice{},
+			},
 		},
 		Hooks: HooksConfig{
 			Enabled: true,

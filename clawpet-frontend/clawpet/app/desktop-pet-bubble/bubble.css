@@ -1,0 +1,39 @@
+.bubble-app {
+  width: 100%;
+  height: 100%;
+  background: transparent;
+  pointer-events: none;
+  user-select: none;
+}
+
+.bubble-root {
+  position: fixed;
+  inset: 0;
+  display: flex;
+  align-items: flex-end;
+  justify-content: center;
+  opacity: 0;
+  transform: translateY(8px);
+  transition: opacity 120ms ease, transform 120ms ease;
+}
+
+.bubble-root--visible {
+  opacity: 1;
+  transform: translateY(0);
+}
+
+.bubble-card {
+  max-width: min(290px, calc(100vw - 20px));
+  margin-bottom: 8px;
+  padding: 10px 14px;
+  border-radius: 14px;
+  border: 1px solid rgba(199, 134, 73, 0.45);
+  background: rgba(255, 251, 245, 0.96);
+  box-shadow: 0 8px 20px rgba(89, 55, 20, 0.18);
+  color: #5b3920;
+  font-size: 13px;
+  line-height: 1.4;
+  text-align: center;
+  white-space: pre-wrap;
+  word-break: break-word;
+}

@@ -477,11 +477,22 @@ export function OnboardingWizard({ onFinish }: OnboardingWizardProps) {
       let directGatewayMode = false
 
       setSetupTasks((prev) => withStatus(prev, "env", "running"))
-      const authRes = await fetchWithAuthRetry(`${baseUrl}${API_ENDPOINTS.AUTH.STATUS}`, { credentials: "include" }, false)
-      if (authRes.status === 404) {
+      let authStatusCode = 0
+      try {
+        const authRes = await fetchWithAuthRetry(
+          `${baseUrl}${API_ENDPOINTS.AUTH.STATUS}`,
+          { credentials: "include" },
+          false,
+        )
+        authStatusCode = authRes.status
+      } catch {
+        // Launcher API may be unavailable; fall back to direct gateway mode.
         directGatewayMode = true
-      } else if (![200, 401].includes(authRes.status)) {
-        throw new Error(`环境检查失败（${authRes.status}）`)
+      }
+      if (authStatusCode === 404) {
+        directGatewayMode = true
+      } else if (authStatusCode !== 0 && ![200, 401].includes(authStatusCode)) {
+        throw new Error(`环境检查失败（${authStatusCode}）`)
       }
 
       setSetupTasks((prev) => withStatus(withStatus(prev, "env", "done"), "gateway", "running"))

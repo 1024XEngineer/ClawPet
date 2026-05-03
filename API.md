@@ -1,116 +1,163 @@
-# ClawPet API Notes
+# ClawPet 桌面端 API 文档
 
-This document describes the interface shape currently used by the beige `petclaw` frontend and the desktop pet.
+本文档描述 **clawpet-frontend 桌面端**（Electron 应用）使用的核心接口。
 
-Current facts:
+## 典型调用时序
 
-- the canonical console is `petclaw`
-- the primary chat transport is the `pet` websocket
-- chat sessions use frontend-generated `session_id`
-- voice playback relies on backend `audio` push
-- browser local TTS fallback is disabled
-
-## Base Addresses
-
-- launcher: `http://127.0.0.1:18800`
-- gateway: `http://127.0.0.1:18790`
-- petclaw console: `http://127.0.0.1:3000`
-- desktop renderer: `http://127.0.0.1:5173`
-
-## Frontend Boot Flow
-
-Typical `petclaw` boot flow:
-
-1. validate launcher auth session
-2. check gateway status
-3. run `/api/pet/setup` when needed
-4. fetch token + `ws_url`
-5. connect `pet` websocket
-6. send `chat`
-7. consume `init_status`, `ai_chat`, `audio`, `emotion_change`, etc.
-
-## HTTP Endpoints
-
-### Direct gateway token
-
-- Method: `GET`
-- Path: `/pet/token`
-- Host: gateway `127.0.0.1:18790`
-- Purpose: return `ws_url` and protocol data for websocket connection
-
-Example response:
-
-```json
-{
-  "enabled": true,
-  "token": "",
-  "ws_url": "ws://127.0.0.1:18790/pet/ws",
-  "protocol": "pet"
-}
+```
+前端启动
+  ↓
+获取 Pet Token (18800)
+  ↓
+连接 WebSocket (18790)
+  ↓
+接收 init_status (18790)
+  ↓
+需要 Onboarding? ── Yes ──→ 发送 onboarding_config (18790)
+  ↓                                    ↓
+  No                          推送 character_switch (18790)
+  ↓                                    ↓
+发送 chat action (18790) ←─────────────┘
+  ↓
+流式推送 ai_chat (18790)
+  ├─ type: "text" (多次)
+  └─ type: "final" (is_final: true)
+  ↓
+推送 audio (18790) [如果启用语音]
+  ↓
+推送 emotion_change (18790)
+  ↓
+推送 action_trigger (18790)
 ```
 
-### Launcher auth status
+## 架构概览
 
-- Method: `GET`
-- Path: `/api/auth/status`
-- Host: launcher `127.0.0.1:18800`
-- Purpose: `petclaw` uses this before chat bootstrap
+```
+┌─────────────────────────────────────────┐
+│   ClawPet Desktop (Electron + Next.js)  │
+│   端口: 3000                            │
+└──────────────┬──────────────────────────┘
+               │
+        ┌──────┴──────┐
+        │             │
+   HTTP API      WebSocket
+   (18800)       (18790)
+        │             │
+   ┌────┴────┐   ┌────┴────┐
+   │Launcher │   │Gateway  │
+   │18800    │   │18790    │
+   └─────────┘   └─────────┘
+```
 
-### Gateway status
+## 端口职责
 
-- Method: `GET`
-- Path: `/api/gateway/status`
-- Host: launcher `127.0.0.1:18800`
+### 18800 - Launcher API
+提供配置管理、设备控制等 REST API
 
-### Start gateway
+### 18790 - Gateway
+提供 WebSocket 聊天、情感推送等实时通信
 
-- Method: `POST`
-- Path: `/api/gateway/start`
-- Host: launcher `127.0.0.1:18800`
+---
 
-### Gateway logs
+## 核心接口
 
-- Method: `GET`
-- Path: `/api/gateway/logs`
-- Host: launcher `127.0.0.1:18800`
+### 1. 认证 API（18800）
 
-### Pet setup
+桌面端启动时需要验证 Launcher 认证状态。
 
-- Method: `POST`
-- Path: `/api/pet/setup`
-- Host: launcher `127.0.0.1:18800`
+#### 认证状态检查
 
-Notes:
+```
+GET /api/auth/status
+端口: 18800
+响应: { authenticated: boolean, expires?: string }
+状态: ✅ 已对接
+```
 
-- if `/api/pet/setup` is unavailable, the frontend may try `/api/pico/setup`
+#### 登录
 
-### Pet token via launcher proxy
+```
+POST /api/auth/login
+端口: 18800
+请求: { token: string }
+响应: { success: boolean }
+状态: ✅ 已对接
+```
 
-- Method: `GET`
-- Path: `/api/pet/token`
-- Host: launcher `127.0.0.1:18800`
+---
 
-Notes:
+### 2. Pet/设备管理 API（18800）
 
-- if `/api/pet/token` is unavailable, the frontend may try `/api/pico/token`
+管理桌宠设备的配置和初始化。
 
-## WebSocket
+#### 获取 Pet Token
 
-### Connection URL
+```
+GET /api/pet/token
+端口: 18800
+说明: 获取 WebSocket 连接所需的 token 和 ws_url
+响应: {
+  enabled: boolean,
+  token: string,
+  ws_url: string,  // ws://127.0.0.1:18790/pet/ws
+  protocol: string
+}
+状态: ✅ 已对接
+```
 
-- URL: `ws://127.0.0.1:18790/pet/ws`
-- Source: `ws_url` returned from `/pet/token`
+#### Pet 初始化设置
 
-The frontend attaches both:
+```
+POST /api/pet/setup
+端口: 18800
+说明: 初始化设备配置
+状态: ⚠️ 待确认
+```
 
-- `session`
-- `session_id`
+#### Onboarding 状态
 
-using the same frontend-generated local session id.
+```
+GET /api/pet/onboarding
+端口: 18800
+响应: OnboardingStatusData
+状态: ✅ 已对接
+```
 
-### Client request format
+#### 保存 Onboarding 草稿
 
-Current chat request shape:
+```
+PUT /api/pet/onboarding
+端口: 18800
+请求: OnboardingPayloadV1
+响应: { code?: string, data?: { saved: boolean, draftUpdatedAt?: string } }
+状态: ✅ 已对接
+```
+
+#### 完成 Onboarding
+
+```
+POST /api/pet/onboarding
+端口: 18800
+请求: { schemaVersion: 1, onboardingId: string }
+响应: { code?: string, data?: { completed: boolean, completedAt?: string } }
+状态: ✅ 已对接
+```
+
+---
+
+### 3. WebSocket 聊天接口（18790）
+
+桌面端的核心聊天功能通过 WebSocket 实现。
+
+#### 连接地址
+
+```
+URL: ws://127.0.0.1:18790/pet/ws
+参数: ?session=xxx&session_id=xxx
+状态: ✅ 已对接
+```
+
+#### 客户端发送消息格式
 
 ```json
 {
@@ -123,16 +170,14 @@ Current chat request shape:
 }
 ```
 
-Actions currently used or expected:
+**支持的 Action：**
+- `chat` - 发送聊天消息 ✅
+- `onboarding_config` - 提交 onboarding 配置 ✅
+- `emotion_get` - 获取当前情感状态 ✅
 
-- `chat`
-- `onboarding_config`
-- `emotion_get`
+#### Action 响应格式
 
-### Action response format
-
-Success example:
-
+**成功：**
 ```json
 {
   "status": "ok",
@@ -144,8 +189,7 @@ Success example:
 }
 ```
 
-Error examples:
-
+**失败：**
 ```json
 {
   "status": "error",
@@ -154,21 +198,13 @@ Error examples:
 }
 ```
 
-or:
+---
 
-```json
-{
-  "status": "error",
-  "action": "chat",
-  "data": {
-    "error": "LLM call failed"
-  }
-}
-```
+### 4. WebSocket 推送消息（18790）
 
-## Push Messages
+Gateway 主动推送给前端的消息类型。
 
-### Envelope
+#### 消息信封格式
 
 ```json
 {
@@ -180,73 +216,26 @@ or:
 }
 ```
 
-### `init_status`
+#### 推送类型
 
-Purpose:
+##### `init_status` - 初始化状态 ✅
+- 用途：会话初始状态，决定是否显示 onboarding
 
-- initial session state
-- used to decide whether onboarding should be shown
+##### `ai_chat` - AI 聊天消息 ✅
+- 用途：助手流式回复、最终回复、工具调用提示
 
-### `ai_chat`
+**data 格式支持 3 种：**
+1. 对象：`{ text: string, emotion?: string, type: string }`
+2. JSON 字符串
+3. 原始文本字符串
 
-Purpose:
+**type 值：**
+- `"text"` - 流式文本
+- `"final"` - 最终回复
+- `"tool"` - 工具调用提示
 
-- assistant streaming text
-- assistant final text
-- tool text blocks
-
-The frontend now accepts `data` in 3 forms:
-
-1. object
-2. JSON string
-3. raw text string
-
-Example object payload:
-
-```json
-{
-  "text": "你好呀",
-  "emotion": "joy",
-  "type": "text"
-}
-```
-
-Final block:
-
-```json
-{
-  "text": "完整回复",
-  "type": "final"
-}
-```
-
-Tool block:
-
-```json
-{
-  "text": "正在查询日历",
-  "type": "tool"
-}
-```
-
-Notes:
-
-- `petclaw` strips `{...}` noise fragments from assistant text
-- long replies previously appeared missing because early parsing only assumed object payloads; string and JSON-string forms are now handled
-
-### `audio`
-
-Purpose:
-
-- backend TTS audio chunks
-
-Accepted frontend payload shapes:
-
-1. object
-2. JSON string
-3. raw base64 string
-
-Typical object payload:
+##### `audio` - 语音播放 ✅
+- 用途：TTS 音频块推送
 
 ```json
 {
@@ -257,228 +246,389 @@ Typical object payload:
 }
 ```
 
-Final block:
+##### `emotion_change` - 情感变化 ✅
+- 用途：更新桌宠情感状态和动画
 
-```json
-{
-  "chat_id": 1,
-  "type": "audio",
-  "text": "<base64-audio>",
-  "is_final": true
-}
-```
+##### `action_trigger` - 动作触发 ✅
+- 用途：触发桌宠特定动作或 UI 提示
 
-Error block:
-
-```json
-{
-  "chat_id": 1,
-  "type": "error",
-  "text": "tts failed"
-}
-```
-
-Frontend behavior:
-
-- aggregate chunks by `chat_id`
-- merge on `is_final=true`
-- play the merged audio
-- no automatic browser TTS fallback
-
-### `emotion_change`
-
-Purpose:
-
-- update pet emotion state
-
-### `action_trigger`
-
-Purpose:
-
-- trigger pet action or UI hints
-
-### `heartbeat`
-
-Purpose:
-
-- connection keepalive
-
-## Onboarding Flow
-
-Current onboarding flow:
-
-1. frontend connects the `pet` websocket
-2. backend pushes `init_status`
-3. if `need_config=true`, frontend shows onboarding
-4. user submits `onboarding_config`
-5. frontend sends `emotion_get`
-6. onboarding closes and chat starts
-
-Current validation rules:
-
-- `pet_name`: `2-24`
-- `pet_persona`: `8-300`
-- `pet_persona_type`: `gentle | playful | cool`
-- onboarding submit is blocked when backend is unavailable
-
-## Sessions And History
-
-Current `petclaw` session behavior:
-
-- each chat session uses a frontend-generated local session id
-- `New Chat` generates a fresh session id and reconnects websocket
-- left-side history shows only the first user message from each session
-- this is not a server-persisted history API yet
-
-## Troubleshooting Checklist
-
-1. `GET http://127.0.0.1:18800/api/gateway/status` returns successfully
-2. `GET http://127.0.0.1:18790/health` returns `200`
-3. `GET http://127.0.0.1:18790/pet/token` returns `200`
-4. DevTools shows `ws://127.0.0.1:18790/pet/ws?...session_id=...`
-5. if there is text but no voice, check whether `push_type=audio` was actually sent
-6. if long replies appear missing, inspect the raw `ai_chat` payload shape in WS frames
+##### `heartbeat` - 心跳 ✅
+- 用途：连接保活
 
 ---
 
-## Skills Marketplace API
+### 5. 渠道管理 API（18800）
 
-Base URL: `http://127.0.0.1:18800`
+管理消息平台渠道。
 
-### `GET /api/skills`
+#### 渠道目录
 
-List installed skills from builtin/global/workspace sources.
-
-```json
-{
-  "skills": [
-    {
-      "name": "github",
-      "path": "D:/workspace/skills/github/SKILL.md",
-      "source": "workspace",
-      "description": "GitHub integration",
-      "origin_kind": "third_party",
-      "registry_name": "clawhub",
-      "registry_url": "https://clawhub.ai/skills/github",
-      "installed_version": "1.2.3",
-      "installed_at": 1770000000000
-    }
-  ]
-}
+```
+GET /api/channels/catalog
+端口: 18800
+响应: { catalog: Array<{ type, name, description, configSchema }> }
+状态: ⚠️ 待确认是否使用
 ```
 
-Notes:
+#### 渠道列表
 
-- `source`: `builtin | global | workspace`
-- `origin_kind`: `builtin | manual | third_party`
-
-### `GET /api/skills/{name}`
-
-Return detail for one skill. Response fields are the same as list item plus:
-
-- `content` (the markdown body with frontmatter stripped)
-
-### `GET /api/skills/search`
-
-Search registry-backed market skills.
-
-Query params:
-
-- `q` (optional string; empty returns empty result list)
-- `limit` (optional int, default `20`, valid range `1..50`)
-- `offset` (optional int, default `0`)
-
-Example:
-
-`/api/skills/search?q=github&limit=20&offset=0`
-
-```json
-{
-  "results": [
-    {
-      "score": 0.95,
-      "slug": "github",
-      "display_name": "GitHub",
-      "summary": "GitHub integration skill",
-      "version": "1.2.3",
-      "registry_name": "clawhub",
-      "url": "https://clawhub.ai/skills/github",
-      "installed": true,
-      "installed_name": "github"
-    }
-  ],
-  "limit": 20,
-  "offset": 0,
-  "next_offset": 20,
-  "has_more": true
-}
+```
+GET /api/channels
+端口: 18800
+响应: { channels: Channel[] }
+状态: ⚠️ 待确认
 ```
 
-### `POST /api/skills/install`
+#### 渠道状态
 
-Install a skill from a registry.
-
-Request JSON:
-
-```json
-{
-  "slug": "github",
-  "registry": "clawhub",
-  "version": "1.2.3",
-  "force": false
-}
+```
+GET /api/channels/{id}/status
+端口: 18800
+响应: { connected: boolean, error?: string }
+状态: ⚠️ 待确认
 ```
 
-Response JSON:
+#### 启用/禁用渠道
 
-```json
-{
-  "status": "ok",
-  "slug": "github",
-  "registry": "clawhub",
-  "version": "1.2.3",
-  "summary": "GitHub integration skill",
-  "is_suspicious": false,
-  "skill": {
-    "name": "github",
-    "path": "D:/workspace/skills/github/SKILL.md",
-    "source": "workspace",
-    "description": "GitHub integration skill",
-    "origin_kind": "third_party",
-    "registry_name": "clawhub",
-    "registry_url": "https://clawhub.ai/skills/github",
-    "installed_version": "1.2.3",
-    "installed_at": 1770000000000
-  }
-}
+```
+POST /api/channels/{id}/enable   // 启用
+POST /api/channels/{id}/disable  // 禁用
+端口: 18800
+响应: { success: boolean }
+状态: ⚠️ 待确认
 ```
 
-### `POST /api/skills/import`
+#### 更新渠道配置
 
-Import local skill file.
-
-- Content-Type: `multipart/form-data`
-- Form field: `file`
-- Accepted: `.md` / `.zip`
-- Current size limit: `1MB`
-
-Response: imported skill object (same shape as `skill` in install response).
-
-### `DELETE /api/skills/{name}`
-
-Delete one installed skill by name.
-
-```json
-{
-  "status": "ok"
-}
+```
+PUT /api/channels/{id}/config
+端口: 18800
+请求: Record<string, unknown>
+响应: { success: boolean }
+状态: ⚠️ 待确认
 ```
 
-Only workspace skills can be deleted.
+---
 
-### Skills API Error Notes
+### 6. 技能市场 API（18800）
 
-- `400`: invalid request or related skills tools disabled
-- `404`: skill not found
-- `409`: import/install target already exists
-- `502`: upstream registry call failed
+桌宠技能插件管理。
+
+#### 技能列表
+
+```
+GET /api/skills
+端口: 18800
+响应: { skills: Skill[] }
+状态: ⚠️ 待确认
+```
+
+#### 搜索技能
+
+```
+GET /api/skills/search?q={query}&limit={limit}&offset={offset}
+端口: 18800
+响应: SkillSearchResponse
+状态: ⚠️ 待确认
+```
+
+#### 安装技能
+
+```
+POST /api/skills/install
+端口: 18800
+请求: { slug: string, registry: string, version?: string, force?: boolean }
+响应: { status: string, skill?: Skill }
+状态: ⚠️ 待确认
+```
+
+#### 导入技能
+
+```
+POST /api/skills/import
+端口: 18800
+Content-Type: multipart/form-data
+表单: file (.md / .zip, 最大 1MB)
+响应: Skill
+状态: ⚠️ 待确认
+```
+
+#### 删除技能
+
+```
+DELETE /api/skills/{name}
+端口: 18800
+响应: { status: string }
+状态: ⚠️ 待确认
+```
+
+---
+
+### 7. 工具管理 API（18800）
+
+管理桌宠可用的工具。
+
+#### 工具列表
+
+```
+GET /api/tools
+端口: 18800
+响应: { tools: Tool[] }
+状态: ⚠️ 待确认
+```
+
+#### 更新工具状态
+
+```
+PUT /api/tools/{name}/state
+端口: 18800
+请求: { enabled: boolean }
+响应: { success: boolean }
+状态: ⚠️ 待确认
+```
+
+---
+
+### 8. 定时任务 API（18800）
+
+桌宠提醒和定时任务。
+
+#### 任务列表
+
+```
+GET /api/cron
+端口: 18800
+响应: { jobs: CronJob[] }
+状态: ⚠️ 待确认
+```
+
+#### 创建任务
+
+```
+POST /api/cron
+端口: 18800
+请求: CronJobInput
+响应: { job: CronJob }
+状态: ⚠️ 待确认
+```
+
+#### 更新任务
+
+```
+PUT /api/cron/{id}
+端口: 18800
+请求: Partial<CronJobInput>
+响应: { job: CronJob }
+状态: ⚠️ 待确认
+```
+
+#### 删除任务
+
+```
+DELETE /api/cron/{id}
+端口: 18800
+响应: { success: boolean }
+状态: ⚠️ 待确认
+```
+
+#### 切换任务状态
+
+```
+POST /api/cron/{id}/toggle
+端口: 18800
+请求: { enabled: boolean }
+响应: { success: boolean, job: CronJob }
+状态: ⚠️ 待确认
+```
+
+---
+
+### 9. 配置 API（18800）
+
+获取和更新系统配置。
+
+#### 获取配置
+
+```
+GET /api/config
+端口: 18800
+响应: { config: Config }
+状态: ⚠️ 待确认
+```
+
+#### 更新配置
+
+```
+PUT /api/config
+端口: 18800
+请求: Partial<Config>
+响应: { success: boolean }
+状态: ⚠️ 待确认
+```
+
+---
+
+### 10. 日志 API（18800）
+
+查看系统日志。
+
+#### 获取日志
+
+```
+GET /api/logs
+端口: 18800
+响应: { logs: string[] }
+状态: ⚠️ 待确认
+```
+
+#### 清除日志
+
+```
+POST /api/logs/clear
+端口: 18800
+响应: { success: boolean }
+状态: ⚠️ 待确认
+```
+
+---
+
+### 11. 会话历史 API（18800）
+
+聊天会话历史记录。
+
+#### 会话列表
+
+```
+GET /api/sessions?offset={offset}&limit={limit}
+端口: 18800
+响应: SessionListItem[]
+状态: ⚠️ 待确认
+```
+
+#### 会话详情
+
+```
+GET /api/sessions/{id}
+端口: 18800
+响应: SessionDetail
+状态: ⚠️ 待确认
+```
+
+#### 删除会话
+
+```
+DELETE /api/sessions/{id}
+端口: 18800
+响应: 200 或 404
+状态: ⚠️ 待确认
+```
+
+---
+
+### 12. Gateway 管理 API（18800）
+
+控制 Gateway 服务。
+
+#### Gateway 状态
+
+```
+GET /api/gateway/status
+端口: 18800
+响应: GatewayStatus
+状态: ⚠️ 待确认
+```
+
+#### 启动/停止/重启 Gateway
+
+```
+POST /api/gateway/start    // 启动
+POST /api/gateway/stop     // 停止
+POST /api/gateway/restart  // 重启
+端口: 18800
+响应: { success: boolean }
+状态: ⚠️ 待确认
+```
+
+#### 获取日志
+
+```
+GET /api/gateway/logs
+端口: 18800
+响应: { logs: string }
+状态: ⚠️ 待确认
+```
+
+---
+
+## 前端启动流程
+
+1. **认证检查** → `GET /api/auth/status` (18800) ✅
+2. **获取设备 Token** → `GET /api/pet/token` (18800) ✅
+3. **连接 WebSocket** → `ws://127.0.0.1:18790/pet/ws` (18790) ✅
+4. **接收初始状态** → `init_status` 推送 (18790) ✅
+5. **如需 Onboarding** → 显示引导流程 (18800 + 18790) ✅
+6. **开始聊天** → 发送 `chat` action (18790) ✅
+7. **接收消息** → `ai_chat`、`audio`、`emotion_change` 推送 (18790) ✅
+
+---
+
+## 错误处理
+
+### HTTP 错误码
+- `400` - 请求无效
+- `401` - 未认证
+- `404` - 资源不存在
+- `409` - 冲突（如技能已安装）
+- `502` - 上游服务错误
+
+### WebSocket 错误
+- Action 返回 `status: "error"`
+- 连接断开需重连
+- Token 过期需重新获取
+
+---
+
+## 认证说明
+
+所有 18800 端口的 API 请求需要在 Header 中携带 Launcher Token：
+
+```
+Authorization: Bearer {launcher_token}
+```
+
+Token 获取方式：
+1. 环境变量 `NEXT_PUBLIC_PICOCLAW_LAUNCHER_TOKEN`
+2. Electron API: `window.electronAPI.getLauncherToken()`
+3. URL 参数: `?token=xxx`
+4. SessionStorage: `petclaw.launcher.token`
+
+---
+
+## 环境变量
+
+前端通过环境变量配置连接地址：
+
+```bash
+# Launcher API 地址
+NEXT_PUBLIC_PICOCLAW_API_URL=http://127.0.0.1:18800
+
+# WebSocket 地址
+NEXT_PUBLIC_PICOCLAW_WS_URL=ws://127.0.0.1:18790
+
+# Gateway 直接访问地址
+NEXT_PUBLIC_PICOCLAW_DIRECT_GATEWAY_URL=http://127.0.0.1:18790
+
+# Launcher Token
+NEXT_PUBLIC_PICOCLAW_LAUNCHER_TOKEN=goclaw-local-token
+
+# 是否使用 credentials
+NEXT_PUBLIC_PICOCLAW_USE_CREDENTIALS=false
+```
+
+---
+
+## 接口对接状态说明
+
+- ✅ **已对接** - 前端已实现并在使用
+- ⚠️ **待确认** - 后端已实现，需确认前端是否使用
+- ❌ **未对接** - 后端未实现或前端未使用

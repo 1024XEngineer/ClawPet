@@ -43,7 +43,7 @@ func NewManager(cfg []*config.CharacterConfig, configManager *config.Manager) (*
 
 	// 初始化所有角色
 	for _, cc := range cfg {
-		char := NewCharacter(cc.ID, cc.Name, cc.Persona, cc.PersonaType, cc.Avatar)
+		char := NewCharacter(cc.ID, cc.Name, cc.Persona, cc.PersonaType, cc.SpeechTone, cc.Catchphrase, cc.Hobbies, cc.Background, cc.Preferences, cc.Avatar)
 
 		// 尝试加载私有配置获取情绪状态和MBTI
 		if configManager != nil {
@@ -205,7 +205,7 @@ func (m *Manager) Remove(id string) error {
 }
 
 // UpdateCharacter 更新角色公开信息
-func (m *Manager) UpdateCharacter(id string, name, persona, personaType string) {
+func (m *Manager) UpdateCharacter(id string, name, persona, personaType, speechTone, catchphrase, hobbies, background, preferences string) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
@@ -219,6 +219,21 @@ func (m *Manager) UpdateCharacter(id string, name, persona, personaType string) 
 		if personaType != "" {
 			char.PersonaType = personaType
 		}
+		if speechTone != "" {
+			char.SpeechTone = speechTone
+		}
+		if catchphrase != "" {
+			char.Catchphrase = catchphrase
+		}
+		if hobbies != "" {
+			char.Hobbies = hobbies
+		}
+		if background != "" {
+			char.Background = background
+		}
+		if preferences != "" {
+			char.Preferences = preferences
+		}
 
 		// 同步到 configManager
 		if m.configManager != nil {
@@ -227,6 +242,11 @@ func (m *Manager) UpdateCharacter(id string, name, persona, personaType string) 
 				Name:        char.Name,
 				Persona:     char.Persona,
 				PersonaType: char.PersonaType,
+				SpeechTone:  char.SpeechTone,
+				Catchphrase: char.Catchphrase,
+				Hobbies:     char.Hobbies,
+				Background:  char.Background,
+				Preferences: char.Preferences,
 				Avatar:      char.Avatar,
 			}
 			m.configManager.SaveCharacterById(id, charCfg)
@@ -289,6 +309,11 @@ func (m *Manager) ToPublicConfig() []*config.CharacterConfig {
 			Name:        c.Name,
 			Persona:     c.Persona,
 			PersonaType: c.PersonaType,
+			SpeechTone:  c.SpeechTone,
+			Catchphrase: c.Catchphrase,
+			Hobbies:     c.Hobbies,
+			Background:  c.Background,
+			Preferences: c.Preferences,
 			Avatar:      c.Avatar,
 		})
 	}

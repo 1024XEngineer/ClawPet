@@ -70,12 +70,12 @@ export async function ensureBackendReadyForChat(): Promise<BackendBootstrapResul
 
   const healthy = await isDirectGatewayHealthy()
   if (!healthy) {
-    return { ok: false, reason: 'gateway not reachable on 18790' }
+    return { ok: false, reason: 'gateway not reachable' }
   }
 
   const channelReady = await isDirectPetChannelReady()
   if (!channelReady) {
-    return { ok: false, reason: 'pet channel token unavailable on 18790' }
+    return { ok: false, reason: 'pet channel token unavailable' }
   }
 
   return { ok: true }

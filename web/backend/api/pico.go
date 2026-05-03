@@ -42,6 +42,11 @@ func (h *Handler) createWsProxy(origProtocol string, token string) *httputil.Rev
 		Rewrite: func(r *httputil.ProxyRequest) {
 			target := h.gatewayProxyURL()
 			r.SetURL(target)
+			// Gateway only guarantees /pico/ws. Keep /pet/ws as an alias on launcher
+			// by rewriting upstream path to /pico/ws.
+			if r.In != nil && strings.HasPrefix(r.In.URL.Path, "/pet/ws") {
+				r.Out.URL.Path = strings.Replace(r.In.URL.Path, "/pet/ws", "/pico/ws", 1)
+			}
 			r.Out.Header.Set(protocolKey, tokenPrefix+token)
 		},
 		ModifyResponse: func(r *http.Response) error {

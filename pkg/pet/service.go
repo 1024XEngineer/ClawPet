@@ -2,6 +2,7 @@ package pet
 
 import (
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"path/filepath"
@@ -18,6 +19,7 @@ import (
 	petconfig "github.com/sipeed/picoclaw/pkg/pet/config"
 	"github.com/sipeed/picoclaw/pkg/pet/memory"
 	"github.com/sipeed/picoclaw/pkg/pet/modelconfig"
+	"github.com/sipeed/picoclaw/pkg/pet/skills"
 	"github.com/sipeed/picoclaw/pkg/pet/userprofile"
 	"github.com/sipeed/picoclaw/pkg/pet/voice"
 	"github.com/sipeed/picoclaw/pkg/providers"
@@ -41,6 +43,7 @@ type PetService struct {
 	modelConfigManager *modelconfig.Manager
 	cronService        *cron.CronService
 	userProfileManager *userprofile.Manager
+	skillsMgr          *skills.Manager
 
 	connSessions map[string]string
 
@@ -59,29 +62,31 @@ type PetServiceConfig struct {
 
 func NewPetService(msgBus *bus.MessageBus, cfg PetServiceConfig) (*PetService, error) {
 	ctx, cancel := context.WithCancel(context.Background())
+	homePath := config.GetHome()
 	s := &PetService{
-		msgBus:        msgBus,
-		config:        cfg,
-		actionManager: action.NewActionManager(cfg.WorkspacePath),
-		connSessions:  make(map[string]string),
-		ctx:           ctx,
-		cancel:        cancel,
+		msgBus:       msgBus,
+		config:       cfg,
+		connSessions: make(map[string]string),
+		ctx:          ctx,
+		cancel:       cancel,
 	}
 	workspacePath := cfg.WorkspacePath
-	if workspacePath != "" {
-		logger.Debugf("pet: workspacePath=%s", workspacePath)
-		s.configManager = petconfig.NewManager(workspacePath)
+	if homePath != "" {
+		// 优先使用 homePath 配置
+		logger.Debugf("pet: homePath=%s", homePath)
+		// 创建配置管理器
+		s.configManager = petconfig.NewManager(homePath)
 		if s.configManager == nil {
 			return nil, fmt.Errorf("failed to create config manager")
 		}
-
+		// 创建角色管理器
 		var err error
 		s.charManager, err = characters.NewManager(s.configManager.GetCharacters(), s.configManager)
 		if err != nil {
 			fmt.Printf("pet: failed to create character manager: %v\n", err)
 			return nil, err
 		}
-
+		// 创建语音加载器
 		s.voiceLoader = voice.NewLoader(s.configManager.GetVoice())
 		if err := s.voiceLoader.Load(); err != nil {
 			fmt.Printf("pet: failed to load voice: %v\n", err)
@@ -92,7 +97,11 @@ func NewPetService(msgBus *bus.MessageBus, cfg PetServiceConfig) (*PetService, e
 			fmt.Println("pet: voice provider is nil after loading")
 		}
 
-		s.memoryStore, err = memory.NewStore(cfg.WorkspacePath)
+		// 创建动作管理器
+		s.actionManager = action.NewActionManager(homePath)
+
+		// 创建记忆内存存储
+		s.memoryStore, err = memory.NewStore(homePath)
 		if err != nil {
 			fmt.Printf("pet: failed to create memory store: %v\n", err)
 		}
@@ -101,11 +110,7 @@ func NewPetService(msgBus *bus.MessageBus, cfg PetServiceConfig) (*PetService, e
 			fmt.Printf("pet: failed to load actions: %v\n", err)
 		}
 
-		defaultModelName := ""
-		if cfg.Config != nil {
-			defaultModelName = cfg.Config.Agents.Defaults.GetModelName()
-		}
-
+		// 创建对话存储
 		if s.memoryStore != nil {
 			// 获取压缩配置
 			compressionConfig := s.configManager.GetCompression()
@@ -126,7 +131,7 @@ func NewPetService(msgBus *bus.MessageBus, cfg PetServiceConfig) (*PetService, e
 			}
 
 			// 创建对话存储（使用 SQLite 持久化）
-			s.conversationStore, err = compression.NewConversationStore(cfg.WorkspacePath, threshold, callback)
+			s.conversationStore, err = compression.NewConversationStore(homePath, threshold, callback)
 			if err != nil {
 				logger.Warnf("pet: failed to create conversation store: %v", err)
 			}
@@ -135,7 +140,7 @@ func NewPetService(msgBus *bus.MessageBus, cfg PetServiceConfig) (*PetService, e
 			var provider providers.LLMProvider
 			var modelCfg *config.ModelConfig
 			if cfg.Config != nil {
-				rawModel := defaultModelName
+				rawModel := cfg.Config.Agents.Defaults.GetModelName()
 				for _, m := range cfg.Config.ModelList {
 					if m.Model == rawModel {
 						modelCfg = m
@@ -159,31 +164,46 @@ func NewPetService(msgBus *bus.MessageBus, cfg PetServiceConfig) (*PetService, e
 
 			// 创建用户画像管理器
 			s.userProfileManager = userprofile.NewManager(
-				workspacePath,
+				homePath,
 				s.memoryStore,
 				s.charManager,
 				provider,
-				defaultModelName,
+				cfg.Config.Agents.Defaults.GetModelName(),
 			)
 		}
+		// 创建用户画像管理器
 		if s.userProfileManager == nil {
 			s.userProfileManager = userprofile.NewManager(
-				workspacePath,
+				homePath,
 				s.memoryStore,
 				s.charManager,
 				nil,
-				defaultModelName,
+				cfg.Config.Agents.Defaults.GetModelName(),
 			)
 		}
-		if cfg.ConfigPath != "" {
-			s.modelConfigManager = modelconfig.NewManager(cfg.ConfigPath)
-		}
+	}
+
+	if cfg.ConfigPath != "" {
+		s.modelConfigManager = modelconfig.NewManager(cfg.ConfigPath)
+	}
+
+	if workspacePath != "" {
 		// 初始化 cron 服务
 		cronStorePath := filepath.Join(workspacePath, "cron", "jobs.json")
 		s.cronService = cron.NewCronService(cronStorePath, nil)
 		logger.DebugCF("pet", "PetService: cron service initialized, store=", map[string]any{
 			"store_path": cronStorePath,
 		})
+		// 初始化 skills 管理器
+		if cfg.Config != nil {
+			var err error
+			s.skillsMgr, err = skills.NewManager(cfg.Config)
+			if err != nil {
+				logger.WarnCF("pet", "PetService: failed to create skills manager", map[string]any{"error": err.Error()})
+			} else {
+				logger.DebugCF("pet", "PetService: skills manager initialized", nil)
+			}
+		}
 	}
 
 	return s, nil
@@ -426,6 +446,10 @@ func (s *PetService) HandleRequest(connID string, req Request) error {
 		return s.handleCharacterUpdate(sessionID, req)
 	case ActionCharacterSwitch:
 		return s.handleCharacterSwitch(sessionID, req)
+	case ActionCharacterCreate:
+		return s.handleCharacterCreate(sessionID, req)
+	case ActionUserProfileGet:
+		return s.handleUserProfileGet(sessionID, req)
 	case ActionConfigGet:
 		return s.handleConfigGet(sessionID, req)
 	case ActionConfigUpdate:
@@ -468,6 +492,18 @@ func (s *PetService) HandleRequest(connID string, req Request) error {
 		return s.handleVoiceModelSetDefault(sessionID, req)
 	case ActionVoiceModelGetVoices:
 		return s.handleVoiceModelGetVoices(sessionID, req)
+	case ActionSkillList:
+		return s.handleSkillList(sessionID, req)
+	case ActionSkillSearch:
+		return s.handleSkillSearch(sessionID, req)
+	case ActionSkillInstall:
+		return s.handleSkillInstall(sessionID, req)
+	case ActionSkillRemove:
+		return s.handleSkillRemove(sessionID, req)
+	case ActionSkillGet:
+		return s.handleSkillGet(sessionID, req)
+	case ActionAudioFrame:
+		return s.handleAudioFrame(sessionID, req)
 	default:
 		return s.sendError(sessionID, req.Action, fmt.Sprintf("unknown action: %s", req.Action))
 	}
@@ -479,9 +515,19 @@ func (s *PetService) handleChat(sessionID string, req Request) error {
 		return s.sendError(sessionID, req.Action, "invalid chat data")
 	}
 
+	char := s.charManager.GetCurrent()
+	if char == nil {
+		return s.sendError(sessionID, req.Action, "no active character")
+	}
+
 	inbound := bus.InboundMessage{
-		Channel:  "pet",
-		ChatID:   sessionID,
+		Channel:    "pet",
+		ChatID:     sessionID,
+		SessionKey: chatReq.SessionKey,
+		Peer: bus.Peer{
+			Kind: char.ID,
+			ID:   chatReq.SessionKey,
+		},
 		Content:  chatReq.Text,
 		Metadata: map[string]string{"type": "chat", "conn_id": req.RequestID},
 	}
@@ -504,7 +550,7 @@ func (s *PetService) handleOnboardingConfig(sessionID string, req Request) error
 		char.Name = data.PetName
 		char.Persona = data.PetPersona
 		char.PersonaType = data.PetPersonaType
-		s.charManager.UpdateCharacter(char.ID, data.PetName, data.PetPersona, data.PetPersonaType)
+		s.charManager.UpdateCharacter(char.ID, data.PetName, data.PetPersona, data.PetPersonaType, "", "", "", "", "")
 		// 保存会在 shutdown 时统一进行
 	}
 
@@ -512,9 +558,22 @@ func (s *PetService) handleOnboardingConfig(sessionID string, req Request) error
 }
 
 func (s *PetService) handleCharacterGet(sessionID string, req Request) error {
-	char := s.charManager.GetCurrent()
-	if char == nil {
-		return s.sendError(sessionID, req.Action, "no active character")
+	var data CharacterGetRequest
+	if err := json.Unmarshal(req.Data, &data); err != nil {
+		data = CharacterGetRequest{}
+	}
+
+	var char *characters.Character
+	if data.PetID != "" {
+		char = s.charManager.Get(data.PetID)
+		if char == nil {
+			return s.sendError(sessionID, req.Action, "character not found")
+		}
+	} else {
+		char = s.charManager.GetCurrent()
+		if char == nil {
+			return s.sendError(sessionID, req.Action, "no active character")
+		}
 	}
 
 	charConfig := CharacterConfig{
@@ -522,6 +581,11 @@ func (s *PetService) handleCharacterGet(sessionID string, req Request) error {
 		PetName:        char.Name,
 		PetPersona:     char.Persona,
 		PetPersonaType: char.PersonaType,
+		SpeechTone:     char.SpeechTone,
+		Catchphrase:    char.Catchphrase,
+		Hobbies:        char.Hobbies,
+		Background:     char.Background,
+		Preferences:    char.Preferences,
 		Avatar:         char.Avatar,
 	}
 	return s.sendResponse(sessionID, req.Action, charConfig)
@@ -544,11 +608,127 @@ func (s *PetService) handleCharacterUpdate(sessionID string, req Request) error 
 		if data.PetPersonaType != "" {
 			char.PersonaType = data.PetPersonaType
 		}
-		s.charManager.UpdateCharacter(char.ID, data.PetName, data.PetPersona, data.PetPersonaType)
+		if data.SpeechTone != "" {
+			char.SpeechTone = data.SpeechTone
+		}
+		if data.Catchphrase != "" {
+			char.Catchphrase = data.Catchphrase
+		}
+		if data.Hobbies != "" {
+			char.Hobbies = data.Hobbies
+		}
+		if data.Background != "" {
+			char.Background = data.Background
+		}
+		if data.Preferences != "" {
+			char.Preferences = data.Preferences
+		}
+		s.charManager.UpdateCharacter(char.ID, data.PetName, data.PetPersona, data.PetPersonaType, data.SpeechTone, data.Catchphrase, data.Hobbies, data.Background, data.Preferences)
 		data.PetID = char.ID
 	}
 
 	return s.sendResponse(sessionID, req.Action, data)
+}
+
+func (s *PetService) handleCharacterCreate(sessionID string, req Request) error {
+	var data CharacterCreateRequest
+	if err := json.Unmarshal(req.Data, &data); err != nil {
+		return s.sendError(sessionID, req.Action, "invalid character create data")
+	}
+
+	if data.PetName == "" {
+		return s.sendError(sessionID, req.Action, "pet_name is required")
+	}
+
+	if s.charManager == nil || s.configManager == nil {
+		return s.sendError(sessionID, req.Action, "character manager not available")
+	}
+
+	existingChars := s.charManager.List()
+	var maxID int
+	for _, c := range existingChars {
+		var idNum int
+		fmt.Sscanf(c.ID, "pet_%d", &idNum)
+		if idNum > maxID {
+			maxID = idNum
+		}
+	}
+	newIDNum := maxID + 1
+	newID := fmt.Sprintf("pet_%03d", newIDNum)
+
+	avatar := data.Avatar
+	if avatar == "" {
+		avatar = "cute_cat"
+	}
+
+	newChar := characters.NewCharacter(
+		newID,
+		data.PetName,
+		data.PetPersona,
+		data.PetPersonaType,
+		data.SpeechTone,
+		data.Catchphrase,
+		data.Hobbies,
+		data.Background,
+		data.Preferences,
+		avatar,
+	)
+
+	s.charManager.Add(newChar)
+
+	charCfg := &petconfig.CharacterConfig{
+		ID:          newID,
+		Name:        data.PetName,
+		Persona:     data.PetPersona,
+		PersonaType: data.PetPersonaType,
+		SpeechTone:  data.SpeechTone,
+		Catchphrase: data.Catchphrase,
+		Hobbies:     data.Hobbies,
+		Background:  data.Background,
+		Preferences: data.Preferences,
+		Avatar:      avatar,
+	}
+	s.configManager.AppendCharacter(charCfg)
+	s.configManager.Save()
+
+	now := time.Now().Format(time.RFC3339)
+	resp := CharacterCreateResponse{
+		PetID:          newID,
+		PetName:        data.PetName,
+		PetPersona:     data.PetPersona,
+		PetPersonaType: data.PetPersonaType,
+		SpeechTone:     data.SpeechTone,
+		Catchphrase:    data.Catchphrase,
+		Hobbies:        data.Hobbies,
+		Background:     data.Background,
+		Preferences:    data.Preferences,
+		Avatar:         avatar,
+		CreatedAt:      now,
+		UpdatedAt:      now,
+	}
+
+	return s.sendResponse(sessionID, req.Action, resp)
+}
+
+func (s *PetService) handleUserProfileGet(sessionID string, req Request) error {
+	if s.userProfileManager == nil {
+		return s.sendError(sessionID, req.Action, "user profile manager not available")
+	}
+
+	profile := s.userProfileManager.LoadProfile()
+
+	resp := map[string]interface{}{
+		"display_name":     profile.DisplayName,
+		"role":             profile.Role,
+		"language":         profile.Language,
+		"chronotype":       profile.Chronotype,
+		"personality_tone": profile.PersonalityTone,
+		"anxiety_level":    profile.AnxietyLevel,
+		"pressure_level":   profile.PressureLevel,
+		"extra":            profile.Extra,
+	}
+
+	return s.sendResponse(sessionID, req.Action, resp)
 }
 
 func (s *PetService) handleCharacterSwitch(sessionID string, req Request) error {
@@ -709,6 +889,13 @@ func (s *PetService) AppConfig() *petconfig.AppConfig {
 	return s.configManager.GetApp()
 }
 
+func (s *PetService) WorkspacePath() string {
+	if s == nil {
+		return ""
+	}
+	return s.config.WorkspacePath
+}
+
 // handleMemorySearch 处理记忆搜索请求
 // 支持按关键词、类型、最低权重过滤，按权重排序
 func (s *PetService) handleMemorySearch(sessionID string, req Request) error {
@@ -817,14 +1004,14 @@ func (s *PetService) handleConversationList(sessionID string, req Request) error
 	}
 
 	// 获取所有对话用于统计总数
-	allConversations, err := s.conversationStore.GetAll(listReq.CharacterID, 10000)
+	allConversations, err := s.conversationStore.GetAll(listReq.CharacterID, listReq.SessionID, 10000)
 	if err != nil {
 		return s.sendError(sessionID, req.Action, fmt.Sprintf("failed to get conversations: %v", err))
 	}
 	total := len(allConversations)
 
 	// 分页获取
-	pageConversations, err := s.conversationStore.GetAll(listReq.CharacterID, limit+offset)
+	pageConversations, err := s.conversationStore.GetAll(listReq.CharacterID, listReq.SessionID, limit+offset)
 	if err != nil {
 		return s.sendError(sessionID, req.Action, fmt.Sprintf("failed to get conversations: %v", err))
 	}
@@ -844,6 +1031,7 @@ func (s *PetService) handleConversationList(sessionID string, req Request) error
 	for _, c := range pageConversations {
 		conversationItems = append(conversationItems, ConversationItem{
 			ID:         c.ID,
+			SessionID:  c.SessionID,
 			Role:       c.Role,
 			Content:    c.Content,
 			Timestamp:  c.Timestamp.Format("2006-01-02T15:04:05Z"),
@@ -1393,4 +1581,188 @@ func (s *PetService) handleVoiceModelGetVoices(sessionID string, req Request) er
 	}
 
 	return s.sendResponse(sessionID, req.Action, result)
+}
+
+func (s *PetService) handleSkillList(sessionID string, req Request) error {
+	if s.skillsMgr == nil {
+		return s.sendError(sessionID, req.Action, "skills manager not initialized")
+	}
+
+	skillsList := s.skillsMgr.ListSkills()
+	return s.sendResponse(sessionID, req.Action, map[string]interface{}{
+		"skills": skillsList,
+	})
+}
+
+func (s *PetService) handleSkillSearch(sessionID string, req Request) error {
+	if s.skillsMgr == nil {
+		return s.sendError(sessionID, req.Action, "skills manager not initialized")
+	}
+
+	var data struct {
+		Query string `json:"query"`
+		Limit int    `json:"limit"`
+	}
+	if err := json.Unmarshal(req.Data, &data); err != nil {
+		return s.sendError(sessionID, req.Action, "invalid request data")
+	}
+
+	if data.Query == "" {
+		return s.sendError(sessionID, req.Action, "query is required")
+	}
+
+	if data.Limit <= 0 {
+		data.Limit = 10
+	}
+
+	results, err := s.skillsMgr.SearchSkills(s.ctx, data.Query, data.Limit)
+	if err != nil {
+		return s.sendError(sessionID, req.Action, err.Error())
+	}
+
+	return s.sendResponse(sessionID, req.Action, map[string]interface{}{
+		"results": results,
+	})
+}
+
+func (s *PetService) handleSkillInstall(sessionID string, req Request) error {
+	if s.skillsMgr == nil {
+		return s.sendError(sessionID, req.Action, "skills manager not initialized")
+	}
+
+	var data struct {
+		Slug     string `json:"slug"`
+		Registry string `json:"registry"`
+		Version  string `json:"version"`
+	}
+	if err := json.Unmarshal(req.Data, &data); err != nil {
+		return s.sendError(sessionID, req.Action, "invalid request data")
+	}
+
+	if data.Slug == "" {
+		return s.sendError(sessionID, req.Action, "slug is required")
+	}
+	if data.Registry == "" {
+		data.Registry = "clawhub"
+	}
+
+	result, err := s.skillsMgr.InstallSkill(s.ctx, data.Slug, data.Registry, data.Version)
+	if err != nil {
+		return s.sendError(sessionID, req.Action, err.Error())
+	}
+
+	return s.sendResponse(sessionID, req.Action, result)
+}
+
+func (s *PetService) handleSkillRemove(sessionID string, req Request) error {
+	if s.skillsMgr == nil {
+		return s.sendError(sessionID, req.Action, "skills manager not initialized")
+	}
+
+	var data struct {
+		Name string `json:"name"`
+	}
+	if err := json.Unmarshal(req.Data, &data); err != nil {
+		return s.sendError(sessionID, req.Action, "invalid request data")
+	}
+
+	if data.Name == "" {
+		return s.sendError(sessionID, req.Action, "name is required")
+	}
+
+	if err := s.skillsMgr.RemoveSkill(data.Name); err != nil {
+		return s.sendError(sessionID, req.Action, err.Error())
+	}
+
+	return s.sendResponse(sessionID, req.Action, map[string]string{"name": data.Name})
+}
+
+func (s *PetService) handleSkillGet(sessionID string, req Request) error {
+	if s.skillsMgr == nil {
+		return s.sendError(sessionID, req.Action, "skills manager not initialized")
+	}
+
+	var data struct {
+		Name string `json:"name"`
+	}
+	if err := json.Unmarshal(req.Data, &data); err != nil {
+		return s.sendError(sessionID, req.Action, "invalid request data")
+	}
+
+	if data.Name == "" {
+		return s.sendError(sessionID, req.Action, "name is required")
+	}
+
+	content, ok := s.skillsMgr.GetSkillContent(data.Name)
+	if !ok {
+		return s.sendError(sessionID, req.Action, "skill not found")
+	}
+
+	return s.sendResponse(sessionID, req.Action, map[string]interface{}{
+		"name":    data.Name,
+		"content": content,
+	})
+}
+
+func (s *PetService) handleAudioFrame(sessionID string, req Request) error {
+	var data AudioFrameRequest
+	if err := json.Unmarshal(req.Data, &data); err != nil {
+		return s.sendError(sessionID, req.Action, "invalid audio frame data")
+	}
+
+	if data.Audio == "" {
+		return s.sendError(sessionID, req.Action, "audio data is empty")
+	}
+
+	if data.SessionKey == "" {
+		return s.sendError(sessionID, req.Action, "session_key is required for voice input")
+	}
+
+	if data.Format != "" && data.Format != "pcm" {
+		return s.sendError(sessionID, req.Action, "only pcm format is supported")
+	}
+
+	char := s.charManager.GetCurrent()
+	if char == nil {
+		return s.sendError(sessionID, req.Action, "no active character")
+	}
+
+	pcmData, err := base64.StdEncoding.DecodeString(data.Audio)
+	if err != nil {
+		return s.sendError(sessionID, req.Action, "failed to decode audio data")
+	}
+
+	sampleRate := data.SampleRate
+	if sampleRate <= 0 {
+		sampleRate = 16000
+	}
+	channels := data.Channels
+	if channels <= 0 {
+		channels = 1
+	}
+
+	chunk := bus.AudioChunk{
+		SessionID:  sessionID,
+		SessionKey: data.SessionKey,
+		CharID:     char.ID,
+		SpeakerID:  "pet_user",
+		ChatID:     sessionID,
+		Channel:    "pet",
+		Sequence:   data.Sequence,
+		Timestamp:  data.Timestamp,
+		SampleRate: sampleRate,
+		Channels:   channels,
+		Format:     "pcm",
+		Data:       pcmData,
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 100*time.Millisecond)
+	err = s.msgBus.PublishAudioChunk(ctx, chunk)
+	cancel()
+	if err != nil {
+		logger.ErrorCF("pet", "Failed to publish audio chunk", map[string]any{"error": err.Error()})
+		return s.sendError(sessionID, req.Action, "语音识别失败，请重试")
+	}
+
+	return s.sendResponse(sessionID, req.Action, map[string]bool{"received": true})
 }

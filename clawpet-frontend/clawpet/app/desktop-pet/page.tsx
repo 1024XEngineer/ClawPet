@@ -22,6 +22,26 @@ interface BubbleData {
   animation?: string
   animationHints?: string[]
   audio?: string
+  audio_mime?: string
+  duration_ms?: number
+}
+
+function normalizeAudioMimeType(mime?: string): string | null {
+  if (!mime) return null
+  const normalized = mime.trim().toLowerCase()
+  switch (normalized) {
+    case "audio/mp3":
+    case "audio/mpeg3":
+      return "audio/mpeg"
+    case "audio/mpeg":
+    case "audio/wav":
+    case "audio/x-wav":
+    case "audio/ogg":
+    case "audio/flac":
+      return normalized === "audio/x-wav" ? "audio/wav" : normalized
+    default:
+      return null
+  }
 }
 
 function decodeBase64Audio(value: string): Uint8Array | null {
@@ -139,13 +159,14 @@ export default function DesktopPetPage() {
   const [currentImage, setCurrentImage] = useState("/pets/standby1.gif")
   const [bubble, setBubble] = useState("")
   const [showControls, setShowControls] = useState(false)
-
   const stackRef = useRef<HTMLDivElement | null>(null)
   const controlsVisibleRef = useRef(false)
   const currentImageRef = useRef(currentImage)
   const audioRef = useRef<HTMLAudioElement | null>(null)
   const audioObjectUrlRef = useRef<string | null>(null)
   const bubbleTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+  const bubbleRef = useRef<HTMLDivElement | null>(null)
+  const currentAudioIdRef = useRef<number>(0)
 
   currentImageRef.current = currentImage
 
@@ -163,10 +184,23 @@ export default function DesktopPetPage() {
 
   useEffect(() => {
     const handleBubbleShow = (data: BubbleData) => {
+      const bubbleId = ++currentAudioIdRef.current
+
       if (bubbleTimerRef.current) {
         clearTimeout(bubbleTimerRef.current)
         bubbleTimerRef.current = null
       }
+      if (audioRef.current) {
+        audioRef.current.pause()
+        audioRef.current = null
+      }
+
+      console.log('[petclaw] handleBubbleShow:', {
+        bubbleId,
+        text: data.text,
+        hasAudio: !!data.audio,
+        timestamp: Date.now()
+      })
 
       if (data.text !== null) {
         setBubble(data.text || "")
@@ -177,6 +211,10 @@ export default function DesktopPetPage() {
       if (data.audio) {
         const rawAudio = data.audio.trim()
         const bytes = decodeBase64Audio(rawAudio)
+        const mimeType = normalizeAudioMimeType(data.audio_mime) || "audio/mpeg"
+        const byteHead = bytes
+          ? Array.from(bytes.slice(0, 12)).map((v) => v.toString(16).padStart(2, "0"))
+          : []
         let audioUrl = rawAudio
 
         if (audioObjectUrlRef.current) {
@@ -184,36 +222,119 @@ export default function DesktopPetPage() {
           audioObjectUrlRef.current = null
         }
 
-        if (bytes && bytes.length > 0) {
-          const blob = new Blob([bytes], { type: "audio/mpeg" })
-          audioUrl = URL.createObjectURL(blob)
-          audioObjectUrlRef.current = audioUrl
-        } else if (!audioUrl.startsWith("data:") && !audioUrl.startsWith("http")) {
-          audioUrl = `data:audio/mp3;base64,${audioUrl}`
+        if (!bytes || bytes.length === 0) {
+          console.error("[petclaw] desktop audio decode failed", {
+            mimeType,
+            audioLength: rawAudio.length,
+            audioPrefix: rawAudio.slice(0, 64),
+          })
+          if (bubbleId === currentAudioIdRef.current) {
+            setBubble("")
+            transitionTo("standby")
+          }
+          return
+        }
+
+        if (!audioUrl.startsWith("data:") && !audioUrl.startsWith("http")) {
+          audioUrl = `data:${mimeType};base64,${audioUrl}`
         }
 
         if (audioRef.current) {
           audioRef.current.pause()
+          audioRef.current.onended = null
         }
-        audioRef.current = new Audio(audioUrl)
-        audioRef.current.onerror = (errorEvent) => {
-          console.warn("[petclaw] desktop audio element error", errorEvent)
+        const rawCandidates = Array.from(
+          new Set([mimeType, "audio/mpeg", "audio/ogg", "audio/wav"]),
+        )
+        const probeAudio = document.createElement("audio")
+        const supportedCandidates = rawCandidates.filter(
+          (candidate) => probeAudio.canPlayType(candidate) !== "",
+        )
+        const mimeCandidates =
+          supportedCandidates.length > 0 ? supportedCandidates : rawCandidates
+
+        const tryPlayWithMime = (index: number) => {
+          if (bubbleId !== currentAudioIdRef.current) {
+            return
+          }
+          if (index >= mimeCandidates.length) {
+            console.error("[petclaw] desktop exhausted audio mime candidates", {
+              mimeCandidates,
+              byteHead,
+              audioLength: rawAudio.length,
+            })
+            if (bubbleId === currentAudioIdRef.current) {
+              setBubble("")
+              transitionTo("standby")
+            }
+            return
+          }
+          const attemptMime = mimeCandidates[index]
+          const blob = new Blob([bytes], { type: attemptMime })
+          audioUrl = URL.createObjectURL(blob)
+          audioObjectUrlRef.current = audioUrl
+
+          const audio = new Audio(audioUrl)
+          audioRef.current = audio
+          audio.onended = () => {
+            console.log('[petclaw] audio.onended:', {
+              bubbleId,
+              currentAudioId: currentAudioIdRef.current
+            })
+            if (bubbleId === currentAudioIdRef.current) {
+              setBubble("")
+              transitionTo("standby")
+            }
+          }
+          audio.onerror = (errorEvent) => {
+            if (bubbleId !== currentAudioIdRef.current) {
+              return
+            }
+            const mediaError = audio.error
+            console.warn("[petclaw] desktop audio element error", {
+              errorEvent,
+              attemptMime,
+              mediaErrorCode: mediaError?.code,
+              mediaErrorMessage: mediaError?.message,
+              byteHead,
+            })
+            if (audioObjectUrlRef.current) {
+              URL.revokeObjectURL(audioObjectUrlRef.current)
+              audioObjectUrlRef.current = null
+            }
+            tryPlayWithMime(index + 1)
+          }
+          audio.play().catch((playbackError) => {
+            if (bubbleId !== currentAudioIdRef.current) {
+              return
+            }
+            console.warn("[petclaw] desktop failed to play audio", {
+              playbackError,
+              attemptMime,
+              byteHead,
+            })
+            if (audioObjectUrlRef.current) {
+              URL.revokeObjectURL(audioObjectUrlRef.current)
+              audioObjectUrlRef.current = null
+            }
+            tryPlayWithMime(index + 1)
+          })
         }
-        audioRef.current.onended = () => {
-          setBubble("")
-          transitionTo("standby")
-        }
-        audioRef.current.play().catch((playbackError) => {
-          console.warn("[petclaw] desktop failed to play audio", playbackError)
-          setBubble("")
-        })
+
+        tryPlayWithMime(0)
       } else {
+        const hintedDuration = Number(data.duration_ms)
+        const fallbackMs = Number.isFinite(hintedDuration) && hintedDuration > 0
+          ? Math.min(Math.max(hintedDuration + 300, 1200), 20000)
+          : 10000
         bubbleTimerRef.current = setTimeout(() => {
-          setBubble("")
-          transitionTo("standby")
-        }, 10000)
+          if (bubbleId === currentAudioIdRef.current) {
+            setBubble("")
+            transitionTo("standby")
+          }
+        }, fallbackMs)
       }
-    }
+}
 
     window.electronAPI?.onBubbleShow?.(handleBubbleShow)
     window.electronAPI?.onSettingsUpdate?.(() => {})
@@ -230,7 +351,7 @@ export default function DesktopPetPage() {
         URL.revokeObjectURL(audioObjectUrlRef.current)
         audioObjectUrlRef.current = null
       }
-    }
+}
   }, [transitionTo])
 
   useEffect(() => {
@@ -334,9 +455,15 @@ export default function DesktopPetPage() {
             <img className="desktop-pet-image" src={currentImage} alt="Pet" />
             <span className="desktop-pet-state">{petState}</span>
           </div>
+          {bubble ? (
+          <div
+            ref={bubbleRef}
+            className="desktop-pet-bubble"
+          >
+            <span>{bubble}</span>
+          </div>
+        ) : null}
         </div>
-
-        {bubble ? <div className="desktop-pet-bubble">{bubble}</div> : null}
       </div>
     </div>
   )

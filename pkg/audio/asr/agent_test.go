@@ -67,7 +67,7 @@ func TestAgentHandleChunkCreatesSession(t *testing.T) {
 
 	agent.handleChunk(chunk)
 
-	key := "sess_speaker"
+	key := "sess__speaker"
 	agent.mu.Lock()
 	acc, ok := agent.sessions[key]
 	agent.mu.Unlock()
@@ -87,7 +87,7 @@ func TestAgentHandleChunkIgnoresUnsupportedFormat(t *testing.T) {
 
 	agent := NewAgent(mb, &fakeTranscriber{})
 
-	chunk := bus.AudioChunk{Format: "pcm"}
+	chunk := bus.AudioChunk{Format: "mp3"} // mp3 is not supported
 	agent.handleChunk(chunk)
 
 	agent.mu.Lock()
@@ -162,7 +162,7 @@ func TestAgentCheckSilencePublishesInboundAndCleansUp(t *testing.T) {
 	}
 
 	acc := &speechAccumulator{
-		writer:      writer,
+		writer:      &rtpWriter{w: writer},
 		file:        filePath,
 		lastAudioAt: time.Now().Add(-2 * time.Second),
 		chatID:      "chat",

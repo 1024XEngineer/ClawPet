@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"github.com/sipeed/picoclaw/pkg/pet/config"
 	"os"
 	"path/filepath"
 	"strings"
@@ -53,7 +54,7 @@ func (m *Manager) profilePath() string {
 }
 
 func (m *Manager) statePath(charID string) string {
-	return filepath.Join(m.dataDir, charID, StateFileName)
+	return filepath.Join(m.dataDir, config.WorkspacePath, charID, StateFileName)
 }
 
 func (m *Manager) ensureUserDataDir() error {

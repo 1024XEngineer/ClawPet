@@ -1,10 +1,16 @@
 param(
-  [string]$DashboardUrl = "http://127.0.0.1:3000",
+  [string]$DashboardUrl = "",
   [switch]$Restart,
   [ValidateSet("prod", "dev")]
   [string]$PetclawMode = "prod",
   [switch]$ForceFrontendBuild,
+  [string]$BackendHost = "127.0.0.1",
+  [int]$GatewayPort = 18790,
+  [int]$LauncherPort = 18800,
+  [int]$FrontendPort = 3000,
   [string]$GatewayConfigPath = "",
+  [string]$LauncherBin = "",
+  [string]$GatewayBin = "",
   [switch]$NoTerminalWindows,
   [switch]$ShowTerminalWindows
 )
@@ -27,6 +33,14 @@ if ($ShowTerminalWindows) {
 if ([string]::IsNullOrWhiteSpace($GatewayConfigPath)) {
   $GatewayConfigPath = Join-Path $repoRoot ".goclaw-runtime\config.json"
 }
+
+if ([string]::IsNullOrWhiteSpace($DashboardUrl)) {
+  $DashboardUrl = "http://127.0.0.1:$FrontendPort"
+}
+
+$launcherBaseUrl = "http://127.0.0.1:$LauncherPort"
+$gatewayBaseUrl = "http://${BackendHost}:$GatewayPort"
+
 $LauncherConfigPath = $GatewayConfigPath
 if (-not (Test-Path $gatewayHomeDir)) {
   New-Item -ItemType Directory -Path $gatewayHomeDir -Force | Out-Null
@@ -38,10 +52,28 @@ $launcherCandidates = @(
   (Join-Path $repoRoot "picoclaw-launcher.exe"),
   (Join-Path $repoRoot "build\picoclaw-launcher.exe")
 )
+
+if (-not [string]::IsNullOrWhiteSpace($LauncherBin)) {
+  $launcherCandidates = @($LauncherBin) + $launcherCandidates
+}
+
 $resolvedLauncherBin = $null
 foreach ($candidate in $launcherCandidates) {
   if (Test-Path $candidate) {
     $resolvedLauncherBin = $candidate
+    break
+  }
+}
+
+$gatewayCandidates = @($mainBinary)
+if (-not [string]::IsNullOrWhiteSpace($GatewayBin)) {
+  $gatewayCandidates = @($GatewayBin) + $gatewayCandidates
+}
+
+$resolvedGatewayBin = $null
+foreach ($candidate in $gatewayCandidates) {
+  if (Test-Path $candidate) {
+    $resolvedGatewayBin = $candidate
     break
   }
 }
@@ -101,15 +133,25 @@ function Write-Step([string]$message) {
 function Invoke-Npm {
   param(
     [string]$WorkingDir,
-    [string]$Arguments
+    [string[]]$Arguments
   )
+
+  if (-not (Test-Path $WorkingDir)) {
+    throw "Working directory not found: $WorkingDir"
+  }
+
+  $npmCmd = Get-Command npm -ErrorAction SilentlyContinue
+  if (-not $npmCmd) {
+    throw "npm command not found. Please install Node.js and ensure it is in PATH."
+  }
 
   $old = Get-Location
   try {
-    Set-Location $WorkingDir
-    & npm $Arguments.Split(" ")
+    Set-Location -LiteralPath $WorkingDir
+    & npm @Arguments
     if (-not $?) {
-      throw "npm $Arguments failed in $WorkingDir"
+      $argString = $Arguments -join " "
+      throw "npm $argString failed in $WorkingDir (exit code: $LASTEXITCODE)"
     }
   } finally {
     Set-Location $old
@@ -155,7 +197,7 @@ function Invoke-LauncherApi {
     $Body = $null
   )
 
-  $uri = "http://127.0.0.1:18800$Path"
+  $uri = "$launcherBaseUrl$Path"
   $headers = @{ Authorization = "Bearer $LauncherToken" }
 
   try {
@@ -229,15 +271,25 @@ function Start-DetachedPowerShell {
 function Invoke-Npm {
   param(
     [string]$WorkingDir,
-    [string]$Arguments
+    [string[]]$Arguments
   )
+
+  if (-not (Test-Path $WorkingDir)) {
+    throw "Working directory not found: $WorkingDir"
+  }
+
+  $npmCmd = Get-Command npm -ErrorAction SilentlyContinue
+  if (-not $npmCmd) {
+    throw "npm command not found. Please install Node.js and ensure it is in PATH."
+  }
 
   $old = Get-Location
   try {
-    Set-Location $WorkingDir
-    & npm $Arguments.Split(" ")
+    Set-Location -LiteralPath $WorkingDir
+    & npm @Arguments
     if (-not $?) {
-      throw "npm $Arguments failed in $WorkingDir"
+      $argString = $Arguments -join " "
+      throw "npm $argString failed in $WorkingDir (exit code: $LASTEXITCODE)"
     }
   } finally {
     Set-Location $old
@@ -322,7 +374,35 @@ function Ensure-NpmDeps {
   }
 
   Write-Step "Installing npm dependencies for $DisplayName (first run)..."
-  Invoke-Npm -WorkingDir $ProjectDir -Arguments "install"
+  Invoke-Npm -WorkingDir $ProjectDir -Arguments @("install")
+}
+
+$resolvedGoCmd = $null
+
+function Ensure-GoCommand {
+  if (-not [string]::IsNullOrWhiteSpace($resolvedGoCmd)) {
+    return $resolvedGoCmd
+  }
+
+  $goCommand = Get-Command go -ErrorAction SilentlyContinue
+  if ($goCommand -and $goCommand.Source) {
+    $resolvedGoCmd = $goCommand.Source
+    return $resolvedGoCmd
+  }
+
+  $fallbacks = @(
+    "C:\Program Files\Go\bin\go.exe",
+    "C:\Program Files (x86)\Go\bin\go.exe"
+  )
+
+  foreach ($candidate in $fallbacks) {
+    if (Test-Path $candidate) {
+      $resolvedGoCmd = $candidate
+      return $resolvedGoCmd
+    }
+  }
+
+  throw "Go command not found. Install Go or provide prebuilt binaries (picoclaw.exe / picoclaw-web.exe)."
 }
 
 if (-not (Test-Path $frontendRoot)) {
@@ -345,9 +425,10 @@ function Find-FreeTcpPort {
 }
 
 function Ensure-GatewayPortAvailable {
-  param([string]$ConfigPath)
-
-  $fixedGatewayPort = 18790
+  param(
+    [string]$ConfigPath,
+    [int]$DesiredPort
+  )
 
   if (-not (Test-Path $ConfigPath)) {
     return
@@ -363,13 +444,17 @@ function Ensure-GatewayPortAvailable {
   }
 
   if ($null -eq $cfg.gateway) {
-    $cfg | Add-Member -MemberType NoteProperty -Name gateway -Value @{ host = "127.0.0.1"; port = 18790 }
+    $cfg | Add-Member -MemberType NoteProperty -Name gateway -Value @{ host = $BackendHost; port = $DesiredPort }
+  }
+
+  if ([string]::IsNullOrWhiteSpace("$($cfg.gateway.host)")) {
+    $cfg.gateway.host = $BackendHost
   }
 
   $targetPort = [int]$cfg.gateway.port
-  if ($targetPort -ne $fixedGatewayPort) {
-    Write-Warning "Gateway port in config is $targetPort; forcing fixed port $fixedGatewayPort to keep integration stable."
-    $targetPort = $fixedGatewayPort
+  if ($targetPort -ne $DesiredPort) {
+    Write-Warning "Gateway port in config is $targetPort; updating to requested port $DesiredPort."
+    $targetPort = $DesiredPort
     $cfg.gateway.port = $targetPort
     $json = $cfg | ConvertTo-Json -Depth 30
     Write-JsonNoBom -Path $ConfigPath -Json $json
@@ -389,20 +474,20 @@ function Ensure-GatewayPortAvailable {
   }
 
   $holderPid = Get-FirstListeningPidOnPort -Port $targetPort
-  throw "Port $targetPort is still occupied by PID $holderPid. Fixed gateway port mode is enabled; please stop that process and retry."
+  throw "Port $targetPort is still occupied by PID $holderPid. Please stop that process or choose another -GatewayPort."
 }
 
 function Get-GatewayPortFromConfig {
   param([string]$ConfigPath)
 
   if (-not (Test-Path $ConfigPath)) {
-    return 18790
+    return $GatewayPort
   }
 
   $raw = [System.IO.File]::ReadAllText($ConfigPath, [System.Text.Encoding]::UTF8)
   $cfg = ($raw | ConvertFrom-Json)
   if ($null -eq $cfg.gateway -or [int]$cfg.gateway.port -le 0) {
-    return 18790
+    return $GatewayPort
   }
   return [int]$cfg.gateway.port
 }
@@ -438,14 +523,25 @@ if (-not (Test-Path $petclawDir)) {
 if (-not (Test-Path $electronEntry)) {
   throw "electron entry not found: $electronEntry"
 }
-if (-not (Test-Path $mainBinary)) {
-  throw "gateway binary not found: $mainBinary"
+
+$gatewayStartMode = "binary"
+if ([string]::IsNullOrWhiteSpace($resolvedGatewayBin)) {
+  $gatewayStartMode = "go-run"
+  $null = Ensure-GoCommand
+  Write-Warning "Gateway binary not found. Falling back to 'go run ./cmd/picoclaw gateway -E'."
+}
+
+$launcherStartMode = "binary"
+if ([string]::IsNullOrWhiteSpace($resolvedLauncherBin)) {
+  $launcherStartMode = "go-run"
+  $null = Ensure-GoCommand
+  Write-Warning "Launcher binary not found. Falling back to 'go run ./web/backend'."
 }
 
 Write-Step "Pre-cleaning old GoClaw processes..."
-Stop-PidsOnPort -Port 18790
-Stop-PidsOnPort -Port 18800
-Stop-PidsOnPort -Port 3000
+Stop-PidsOnPort -Port $GatewayPort
+Stop-PidsOnPort -Port $LauncherPort
+Stop-PidsOnPort -Port $FrontendPort
 Stop-PidsOnPort -Port 3002
 Stop-PidsOnPort -Port 5173
 Stop-ProcessesByName -Names @("electron", "picoclaw", "picoclaw-web", "picoclaw-launcher")
@@ -456,42 +552,91 @@ if ($Restart) {
   Start-Sleep -Milliseconds 400
 }
 
-if (-not [string]::IsNullOrWhiteSpace($resolvedLauncherBin)) {
-  if ((Test-HttpReady -Url "http://127.0.0.1:18800" -TimeoutSeconds 2) -or (Test-PortListening -Port 18800)) {
-    Write-Step "PicoClaw launcher already running on :18800"
-  } else {
-    Write-Step "Starting PicoClaw launcher..."
-    $configDir = Split-Path -Parent $LauncherConfigPath
-    if (-not [string]::IsNullOrWhiteSpace($configDir) -and -not (Test-Path $configDir)) {
-      New-Item -ItemType Directory -Path $configDir -Force | Out-Null
-    }
-
-    $escapedLauncherToken = $LauncherToken.Replace("'", "''")
-    $escapedLauncherConfigPath = $LauncherConfigPath.Replace("'", "''")
-    $escapedConfigDir = $configDir.Replace("'", "''")
-    $escapedMainBinary = $mainBinary.Replace("'", "''")
-    $launcherCmd = "`$env:PICOCLAW_BINARY='$escapedMainBinary'; `$env:PICOCLAW_LAUNCHER_TOKEN='$escapedLauncherToken'; `$env:PICOCLAW_HOME='$escapedConfigDir'; `$env:PICOCLAW_CONFIG='$escapedLauncherConfigPath'; & '$resolvedLauncherBin' -no-browser '$escapedLauncherConfigPath'"
-    Start-DetachedPowerShell -Title "GoClaw - Launcher" -Command $launcherCmd
-
-    if (-not (Wait-HttpReady -Url "http://127.0.0.1:18800" -TimeoutSeconds 25)) {
-      throw "Launcher did not become ready on http://127.0.0.1:18800. Please check launcher window logs."
-    } else {
-      Write-Step "Launcher is ready at http://127.0.0.1:18800"
-    }
-  }
+if ((Test-HttpReady -Url $launcherBaseUrl -TimeoutSeconds 2) -or (Test-PortListening -Port $LauncherPort)) {
+  Write-Step "PicoClaw launcher already running on :$LauncherPort"
 } else {
-  if (-not (Test-HttpReady -Url "http://127.0.0.1:18800" -TimeoutSeconds 2)) {
-    throw "Launcher binary not found and http://127.0.0.1:18800 is unavailable. Please pass -LauncherBin <path>."
+  Write-Step "Starting PicoClaw launcher..."
+  $configDir = Split-Path -Parent $LauncherConfigPath
+  if (-not [string]::IsNullOrWhiteSpace($configDir) -and -not (Test-Path $configDir)) {
+    New-Item -ItemType Directory -Path $configDir -Force | Out-Null
   }
-  Write-Warning "Launcher binary not found, but detected existing launcher on :18800."
+
+  $escapedLauncherToken = $LauncherToken.Replace("'", "''")
+  $escapedLauncherConfigPath = $LauncherConfigPath.Replace("'", "''")
+  $escapedConfigDir = $configDir.Replace("'", "''")
+
+  if ($launcherStartMode -eq "binary") {
+    $escapedGatewayBinaryForLauncher = ""
+    if (-not [string]::IsNullOrWhiteSpace($resolvedGatewayBin)) {
+      $escapedGatewayBinaryForLauncher = $resolvedGatewayBin.Replace("'", "''")
+    }
+
+    $launcherCmd = "`$env:PICOCLAW_LAUNCHER_TOKEN='$escapedLauncherToken'; `$env:PICOCLAW_HOME='$escapedConfigDir'; `$env:PICOCLAW_CONFIG='$escapedLauncherConfigPath'; "
+    if (-not [string]::IsNullOrWhiteSpace($escapedGatewayBinaryForLauncher)) {
+      $launcherCmd += "`$env:PICOCLAW_BINARY='$escapedGatewayBinaryForLauncher'; "
+    }
+    $launcherCmd += "& '$resolvedLauncherBin' -no-browser -port '$LauncherPort' '$escapedLauncherConfigPath'"
+    Start-DetachedPowerShell -Title "GoClaw - Launcher" -Command $launcherCmd
+  } else {
+    $goCmd = Ensure-GoCommand
+    $escapedGoCmd = $goCmd.Replace("'", "''")
+    $escapedRepoRoot = $repoRoot.Replace("'", "''")
+    $launcherCmd = "`$env:PICOCLAW_LAUNCHER_TOKEN='$escapedLauncherToken'; `$env:PICOCLAW_HOME='$escapedConfigDir'; `$env:PICOCLAW_CONFIG='$escapedLauncherConfigPath'; Set-Location '$escapedRepoRoot'; & '$escapedGoCmd' run -tags 'goolm,stdjson' ./web/backend -no-browser -console -port '$LauncherPort' '$escapedLauncherConfigPath'"
+    Start-DetachedPowerShell -Title "GoClaw - Launcher (go run)" -Command $launcherCmd
+  }
+
+  if (-not (Wait-HttpReady -Url $launcherBaseUrl -TimeoutSeconds 35)) {
+    throw "Launcher did not become ready on $launcherBaseUrl."
+  }
+  Write-Step "Launcher is ready at $launcherBaseUrl"
 }
 
-Write-Step "Ensuring gateway is running before opening UI..."
+# Gateway preflight - 非阻塞检查，允许 UI 先启动
+Write-Step "Checking gateway status (non-blocking)..."
+
+# 预检查：确保配置目录和文件存在
+Write-Step "Verifying PicoClaw configuration..."
+$gatewayConfigDir = Split-Path -Parent $GatewayConfigPath
+if (-not (Test-Path $gatewayConfigDir)) {
+  Write-Step "Creating gateway config directory: $gatewayConfigDir"
+  try {
+    New-Item -ItemType Directory -Path $gatewayConfigDir -Force | Out-Null
+    Write-Step "Config directory created."
+  } catch {
+    Write-Warning "Failed to create config directory: $($_.Exception.Message). UI will open for configuration."
+    $gatewayPreconditionBlocked = $true
+  }
+}
+
+if (-not (Test-Path $GatewayConfigPath)) {
+  Write-Step "Config file not found: $GatewayConfigPath"
+  if ($null -ne $resolvedGatewayBin) {
+    Write-Step "Attempting to initialize config with onboard..."
+    try {
+      # 使用环境变量调用 onboard，确保配置写入正确路径
+      $onboardCmd = "`$env:PICOCLAW_HOME='$gatewayHomeDir'; `$env:PICOCLAW_CONFIG='$GatewayConfigPath'; & '$resolvedGatewayBin' onboard"
+      Invoke-Expression $onboardCmd
+      if ($LASTEXITCODE -eq 0) {
+        Write-Step "Config initialized successfully."
+      } else {
+        Write-Warning "Onboard failed (exit code: $LASTEXITCODE). UI will open for manual configuration."
+        $gatewayPreconditionBlocked = $true
+      }
+    } catch {
+      Write-Warning "Onboard command failed: $($_.Exception.Message). UI will open for configuration."
+      $gatewayPreconditionBlocked = $true
+    }
+  } else {
+    Write-Warning "Gateway binary not available for onboard. UI will open for manual configuration."
+    $gatewayPreconditionBlocked = $true
+  }
+}
+
+$gatewayReady = $false
+$gatewayPreconditionBlocked = $false
 try {
-  $gatewayReady = $false
-  $gatewayPreconditionBlocked = $false
   for ($attempt = 1; $attempt -le 2; $attempt++) {
-    Ensure-GatewayPortAvailable -ConfigPath $LauncherConfigPath
+    Ensure-GatewayPortAvailable -ConfigPath $LauncherConfigPath -DesiredPort $GatewayPort
 
     $gatewayStatus = Invoke-LauncherApi -Method GET -Path "/api/gateway/status" -LauncherToken $LauncherToken
     if ($gatewayStatus.gateway_status -eq "stopped" -or $gatewayStatus.gateway_status -eq "error") {
@@ -507,11 +652,13 @@ try {
           if ([string]::IsNullOrWhiteSpace($reason)) {
             $reason = "gateway start preconditions are not met yet"
           }
-          Write-Warning "Gateway not started yet: $reason. Continuing startup so onboarding/UI can open."
+          Write-Warning "Gateway not started yet: $reason. UI will open for onboarding/model setup."
           $gatewayPreconditionBlocked = $true
           break
         }
-        throw
+        Write-Warning "Gateway start failed: $($_.Exception.Message). UI will open for configuration."
+        $gatewayPreconditionBlocked = $true
+        break
       }
     }
 
@@ -532,7 +679,7 @@ try {
     $bindError = $joinedLogs -match "listen tcp .*:${currentPort}: bind"
 
     if ($attempt -lt 2 -and ($bindError -or $portConflict)) {
-      Write-Warning "Gateway failed on fixed port $currentPort; retrying once after cleanup..."
+      Write-Warning "Gateway failed on configured port $currentPort; retrying once after cleanup..."
       Stop-PidsOnPort -Port $currentPort
       Start-Sleep -Milliseconds 300
       continue
@@ -542,20 +689,19 @@ try {
     if ($latest.gateway_start_reason) {
       $reason = " reason: $($latest.gateway_start_reason)"
     }
-    throw "Gateway is not running after startup.$reason"
-  }
-
-  if (-not $gatewayReady -and -not $gatewayPreconditionBlocked) {
-    throw "Gateway is not running after startup."
+    Write-Warning "Gateway is not running after startup.$reason UI will open for configuration."
+    $gatewayPreconditionBlocked = $true
+    break
   }
 
   if ($gatewayReady) {
     Write-Step "Gateway is running."
   } else {
-    Write-Step "Gateway is not running yet (waiting for onboarding/model setup)."
+    Write-Step "Gateway is not running yet (will start after UI configuration)."
   }
 } catch {
-  throw "Gateway preflight failed: $($_.Exception.Message)"
+  Write-Warning "Gateway preflight check failed: $($_.Exception.Message). UI will open for configuration."
+  $gatewayPreconditionBlocked = $true
 }
 
 $currentGatewayPort = Get-GatewayPortFromConfig -ConfigPath $LauncherConfigPath
@@ -570,23 +716,35 @@ if ($existingElectron.Count -gt 0) {
   Write-Step "Electron desktop pet already running."
 } else {
   Write-Step "Starting electron desktop pet process (startup page mode)..."
-  $electronCmd = "`$env:GOCLAW_BACKEND_URL='http://127.0.0.1:18790'; `$env:GOCLAW_DASHBOARD_URL='$escapedDashboard'; `$env:GOCLAW_LAUNCHER_TOKEN='$escapedElectronLauncherToken'; `$env:PICOCLAW_LAUNCHER_TOKEN='$escapedElectronLauncherToken'; `$env:GOCLAW_PET_RENDERER_PATH='/desktop-pet'; `$env:GOCLAW_OPEN_PANEL_ON_READY='1'; `$env:GOCLAW_SHOW_STARTUP='1'; Set-Location '$petclawDir'; npx electron electron/main.js"
+  $escapedGatewayBaseUrl = $gatewayBaseUrl.Replace("'", "''")
+  $escapedLauncherBaseUrl = $launcherBaseUrl.Replace("'", "''")
+  $electronCmd = "`$env:GOCLAW_BACKEND_URL='$escapedGatewayBaseUrl'; `$env:GOCLAW_API_URL='$escapedLauncherBaseUrl'; `$env:GOCLAW_LAUNCHER_URL='$escapedLauncherBaseUrl'; `$env:GOCLAW_DASHBOARD_URL='$escapedDashboard'; `$env:GOCLAW_LAUNCHER_TOKEN='$escapedElectronLauncherToken'; `$env:PICOCLAW_LAUNCHER_TOKEN='$escapedElectronLauncherToken'; `$env:GOCLAW_PET_RENDERER_PATH='/desktop-pet'; `$env:GOCLAW_OPEN_PANEL_ON_READY='1'; `$env:GOCLAW_SHOW_STARTUP='1'; Set-Location '$petclawDir'; npx electron electron/main.js"
   Start-DetachedPowerShell -Title "GoClaw - Electron" -Command $electronCmd
 }
 
 if ($gatewayReady) {
   Write-Step "Gateway is already running (launcher-managed), skip direct start."
 } else {
-  Write-Step "Starting gateway on 127.0.0.1:18790..."
+  Write-Step "Starting gateway on $gatewayBaseUrl..."
   $escapedGatewayConfigPath = $GatewayConfigPath.Replace("'", "''")
   $escapedGatewayHomeDir = $gatewayHomeDir.Replace("'", "''")
-  $gatewayCmd = "`$env:PICOCLAW_HOME='$escapedGatewayHomeDir'; `$env:PICOCLAW_CONFIG='$escapedGatewayConfigPath'; Set-Location '$repoRoot'; & '$mainBinary' gateway -E"
+  $escapedRepoRoot = $repoRoot.Replace("'", "''")
+  if (-not [string]::IsNullOrWhiteSpace($resolvedGatewayBin)) {
+    $escapedGatewayBinary = $resolvedGatewayBin.Replace("'", "''")
+    $gatewayCmd = "`$env:PICOCLAW_HOME='$escapedGatewayHomeDir'; `$env:PICOCLAW_CONFIG='$escapedGatewayConfigPath'; Set-Location '$escapedRepoRoot'; & '$escapedGatewayBinary' gateway -E"
+  } else {
+    $goCmd = Ensure-GoCommand
+    $escapedGoCmd = $goCmd.Replace("'", "''")
+    $gatewayCmd = "`$env:PICOCLAW_HOME='$escapedGatewayHomeDir'; `$env:PICOCLAW_CONFIG='$escapedGatewayConfigPath'; Set-Location '$escapedRepoRoot'; & '$escapedGoCmd' run -tags 'goolm,stdjson' ./cmd/picoclaw gateway -E"
+  }
   Start-DetachedPowerShell -Title "GoClaw - Gateway" -Command $gatewayCmd
 
-  if (-not (Wait-HttpReady -Url "http://127.0.0.1:18790/health" -TimeoutSeconds 35)) {
-    throw "Gateway did not become ready on http://127.0.0.1:18790"
+  # 非阻塞等待：Gateway 启动失败不影响 UI 启动
+  if (-not (Wait-HttpReady -Url "$gatewayBaseUrl/health" -TimeoutSeconds 35)) {
+    Write-Warning "Gateway did not become ready on $gatewayBaseUrl within 35 seconds. UI will continue for configuration."
+  } else {
+    Write-Step "Gateway is ready at $gatewayBaseUrl"
   }
-  Write-Step "Gateway is ready at http://127.0.0.1:18790"
 }
 
 if ((Test-HttpReady -Url $DashboardUrl -TimeoutSeconds 2)) {
@@ -597,16 +755,24 @@ if ((Test-HttpReady -Url $DashboardUrl -TimeoutSeconds 2)) {
     $shouldBuild = $ForceFrontendBuild -or -not (Test-Path $buildIdPath)
     if ($shouldBuild) {
       Write-Step "Building petclaw dashboard (prod mode)..."
-      Invoke-Npm -WorkingDir $petclawDir -Arguments "run build"
+      Invoke-Npm -WorkingDir $petclawDir -Arguments @("run", "build")
     } else {
       Write-Step "Using existing petclaw production build (.next/BUILD_ID detected)."
     }
 
     Write-Step "Starting petclaw dashboard (prod mode)..."
-    $petclawCmd = "`$env:NEXT_PUBLIC_PICOCLAW_API_URL='http://127.0.0.1:18790'; `$env:NEXT_PUBLIC_PICOCLAW_WS_URL='ws://127.0.0.1:18790'; `$env:NEXT_PUBLIC_PICOCLAW_DIRECT_GATEWAY_URL='http://127.0.0.1:18790'; `$env:NEXT_PUBLIC_PICOCLAW_USE_CREDENTIALS='false'; Set-Location '$petclawDir'; npm run start -- --hostname 127.0.0.1 --port 3000"
+    $gatewayWsBaseUrl = $gatewayBaseUrl -replace '^http:', 'ws:' -replace '^https:', 'wss:'
+    $escapedGatewayWsBaseUrl = $gatewayWsBaseUrl.Replace("'", "''")
+    $escapedGatewayBaseUrl = $gatewayBaseUrl.Replace("'", "''")
+    $escapedLauncherBaseUrl = $launcherBaseUrl.Replace("'", "''")
+    $petclawCmd = "`$env:NEXT_PUBLIC_PICOCLAW_API_URL='$escapedLauncherBaseUrl'; `$env:NEXT_PUBLIC_PICOCLAW_WS_URL='$escapedGatewayWsBaseUrl'; `$env:NEXT_PUBLIC_PICOCLAW_DIRECT_GATEWAY_URL='$escapedGatewayBaseUrl'; `$env:NEXT_PUBLIC_PICOCLAW_USE_CREDENTIALS='false'; Set-Location '$petclawDir'; npm run start -- --hostname 127.0.0.1 --port $FrontendPort"
   } else {
     Write-Step "Starting petclaw dashboard (dev mode)..."
-    $petclawCmd = "`$env:NEXT_PUBLIC_PICOCLAW_API_URL='http://127.0.0.1:18790'; `$env:NEXT_PUBLIC_PICOCLAW_WS_URL='ws://127.0.0.1:18790'; `$env:NEXT_PUBLIC_PICOCLAW_DIRECT_GATEWAY_URL='http://127.0.0.1:18790'; `$env:NEXT_PUBLIC_PICOCLAW_USE_CREDENTIALS='false'; Set-Location '$petclawDir'; npm run dev -- --hostname 127.0.0.1 --port 3000 --webpack"
+    $gatewayWsBaseUrl = $gatewayBaseUrl -replace '^http:', 'ws:' -replace '^https:', 'wss:'
+    $escapedGatewayWsBaseUrl = $gatewayWsBaseUrl.Replace("'", "''")
+    $escapedGatewayBaseUrl = $gatewayBaseUrl.Replace("'", "''")
+    $escapedLauncherBaseUrl = $launcherBaseUrl.Replace("'", "''")
+    $petclawCmd = "`$env:NEXT_PUBLIC_PICOCLAW_API_URL='$escapedLauncherBaseUrl'; `$env:NEXT_PUBLIC_PICOCLAW_WS_URL='$escapedGatewayWsBaseUrl'; `$env:NEXT_PUBLIC_PICOCLAW_DIRECT_GATEWAY_URL='$escapedGatewayBaseUrl'; `$env:NEXT_PUBLIC_PICOCLAW_USE_CREDENTIALS='false'; Set-Location '$petclawDir'; npm run dev -- --hostname 127.0.0.1 --port $FrontendPort --webpack"
   }
 
   Start-DetachedPowerShell -Title "GoClaw - Petclaw" -Command $petclawCmd
@@ -621,9 +787,12 @@ if ((Test-HttpReady -Url $DashboardUrl -TimeoutSeconds 2)) {
 Write-Host ""
 Write-Host "GoClaw startup summary:"
 Write-Host "- Config:    $GatewayConfigPath"
-Write-Host "- Backend:   http://127.0.0.1:18790 (gateway direct)"
+Write-Host "- Backend:   $gatewayBaseUrl"
+Write-Host "- Launcher:  $launcherBaseUrl"
 Write-Host "- Dashboard: $DashboardUrl"
 Write-Host "- Petclaw:   $PetclawMode"
 Write-Host "- Renderer:  $DashboardUrl/desktop-pet"
-Write-Host "- Ports:     frontend=3000, backend=18790"
+Write-Host "- Ports:     frontend=$FrontendPort, backend=$GatewayPort, launcher=$LauncherPort"
+Write-Host "- LauncherMode: $launcherStartMode"
+Write-Host "- GatewayMode:  $gatewayStartMode"
 Write-Host "- Electron:  started or already running"

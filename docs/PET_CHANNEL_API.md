@@ -1,7 +1,7 @@
 # Pet Channel API 接口文档
 
-> 版本：v2.7  
-> 日期：2026-04-23  
+> 版本：v2.9  
+> 日期：2026-04-26  
 > 协议：WebSocket + JSON
 
 ---
@@ -11,23 +11,40 @@
 ### 1.1 WebSocket 连接地址
 
 ```
-ws://{host}:{port}/ws?session={sessionId}
+ws://{host}:{port}/ws?sessionId={sessionId}
 ```
 
 **参数说明**：
 
-| 参数 | 类型 | 必填 | 说明 |
-|------|------|------|------|
-| host | string | 是 | 服务器地址，默认 `0.0.0.0` |
-| port | int | 是 | 服务器端口，默认 `8080` |
-| sessionId | string | 否 | 会话ID，默认为 `default` |
+| 参数        | 类型 | 必填 | 说明                 |
+|-----------|------|------|--------------------|
+| host      | string | 是 | 服务器地址，默认 `0.0.0.0` |
+| port      | int | 是 | 服务器端口，默认 `8080`    |
+| sessionId | string | 是 | 连接的id凭证，用于流式传输路由   |
 
 **连接示例**：
 ```javascript
-const ws = new WebSocket('ws://localhost:8080/ws?session=user_001');
+const ws = new WebSocket('ws://localhost:8080/ws?sessionId=user_001');
 ```
 
-**重要**：连接建立后，服务器会主动推送 `init_status`，告知前端是否需要初始化配置。
+**重要说明**：
+
+- `sessionId` 参数：**连接的id凭证**，用于流式传输时路由到正确的 WebSocket 连接
+- 服务器根据 `sessionId` 匹配连接，确保响应发送到正确的客户端
+- 连接建立后，服务器会主动推送 `init_status`，告知前端是否需要初始化配置
+
+**session 与 session_key 的区别**：
+
+| 字段                      | 来源              | 用途                                                                               |
+|-------------------------|-----------------|----------------------------------------------------------------------------------|
+| `sessionId`（URL 参数）     | WebSocket 连接时传入 | 流式传输路由，匹配 WebSocket 连接                                                           |
+| `session_key`（chat 请求中） | 消息中传入           | 会话隔离，picoclaw 据此生成 session_key,通过session_key细化会话，达到session_key在一个角色的会话上属于一个聊天上下文 |
+
+**示例**：
+- 用户A 连接：`sessionId=user_001`
+- 用户B 连接：`sessionId=user_002`
+- 用户A 发送消息：`session_key=session-xxx` → 流式响应发送到 `sessionId=user_001` 的连接
+- 用户B 发送消息：`session_key=session-yyy` → 流式响应发送到 `sessionId=user_002` 的连接
 
 ---
 
@@ -288,7 +305,7 @@ LLM 解析到动作标签时推送。
 
 ---
 
-### 3.7 audio_and_voice - 语音流式合成音频
+### 3.7 text_and_audio - 语音流式合成音频
 
 当 `voice_enabled` 启用时，AI 回复会触发语音流式合成。后端将文本按标点符号和 `[text:]` 标签分割成多个片段，异步合成音频后按顺序推送给前端播放。
 
@@ -297,7 +314,7 @@ LLM 解析到动作标签时推送。
 ```json
 {
   "type": "push",
-  "push_type": "audio_and_voice",
+  "push_type": "text_and_audio",
   "data": {
     "seq": 1,
     "text": "你好呀，很高兴见到你",
@@ -316,7 +333,7 @@ LLM 解析到动作标签时推送。
 ```json
 {
   "type": "push",
-  "push_type": "audio_and_voice",
+  "push_type": "text_and_audio",
   "data": {
     "seq": 2,
     "text": "你好",
@@ -335,7 +352,7 @@ LLM 解析到动作标签时推送。
 ```json
 {
   "type": "push",
-  "push_type": "audio_and_voice",
+  "push_type": "text_and_audio",
   "data": {
     "seq": 0,
     "text": "",
@@ -374,8 +391,8 @@ LLM 解析到动作标签时推送。
 **前端处理逻辑**：
 
 ```javascript
-// 接收 audio_and_voice 推送
-if (msg.push_type === 'audio_and_voice') {
+// 接收 text_and_audio 推送
+if (msg.push_type === 'text_and_audio') {
     const data = msg.data;
     
     if (data.is_final) {
@@ -460,8 +477,6 @@ if (msg.push_type === 'audio_and_voice') {
 
 ### 4.2 chat - 发送聊天消息
 
-### 4.1 chat - 发送聊天消息
-
 发送用户消息给 AI，获得 AI 回复（流式推送）。
 
 **请求**：
@@ -471,7 +486,7 @@ if (msg.push_type === 'audio_and_voice') {
   "action": "chat",
   "data": {
     "text": "今天心情不错",
-    "session_key": "pet:default:user_001"
+    "session_key": "session-1712345678-abc123"
   },
   "request_id": "req_001"
 }
@@ -484,12 +499,32 @@ if (msg.push_type === 'audio_and_voice') {
   "status": "ok",
   "action": "chat",
   "data": {
-    "session_key": "pet:default:user_001"
+    "session_key": "session-1712345678-abc123"
   }
 }
 ```
 
 **推送**：AI 回复通过 `ai_chat` 推送，详见 3.2
+
+**session_key 字段说明**：
+
+| 字段 | 类型 | 必填 | 说明 |
+|------|------|------|------|
+| text | string | 是 | 用户输入的文本内容 |
+| session_key | string | 是 | 会话标识符，用于会话隔离。picoclaw 会据此生成内部 sessionKey，格式为 `agent:main:pet:{character_id}:{session_key}` |
+
+**session_key 与流式传输的关系**：
+
+- `session_key` 用于会话隔离，不影响流式传输路由
+- 流式传输使用 WebSocket 连接时的 `session`（URL 参数）来路由响应
+- 每个 WebSocket 连接对应一个 `session`，但可以有多个 `session_key`（不同会话）
+
+**示例**：
+```
+WebSocket 连接: session=user_001
+发送消息: session_key=session-xxx → 响应路由到 session=user_001 的连接
+切换会话: session_key=session-yyy → 仍然是 session=user_001 的连接收到响应
+```
 
 **字段说明**：
 
@@ -500,7 +535,73 @@ if (msg.push_type === 'audio_and_voice') {
 
 ---
 
-### 4.2 onboarding_config - 提交初始化配置
+### 4.2 audio_frame - 发送语音帧
+
+发送用户语音数据给 ASR 进行语音识别。语音输入和文本聊天走同一套会话机制，通过 `session_key` 实现会话隔离。
+
+**请求**：
+
+```json
+{
+  "action": "audio_frame",
+  "data": {
+    "audio": "//uQxAAAAs3gAAFBYy...",
+    "format": "pcm",
+    "sample_rate": 16000,
+    "channels": 1,
+    "sequence": 1,
+    "timestamp": 1234567890,
+    "session_key": "session-1712345678-abc123"
+  },
+  "request_id": "req_002"
+}
+```
+
+**响应**：
+
+```json
+{
+  "status": "ok",
+  "action": "audio_frame",
+  "data": {
+    "received": true
+  }
+}
+```
+
+**session_key 字段说明**：
+
+| 字段 | 类型 | 必填 | 说明 |
+|------|------|------|------|
+| audio | string | 是 | PCM 音频数据的 Base64 编码 |
+| format | string | 是 | 音频格式，固定为 `"pcm"` |
+| sample_rate | int | 是 | 采样率，建议 16000 |
+| channels | int | 是 | 声道数，建议 1（单声道） |
+| sequence | uint64 | 是 | 帧序号，用于音频帧排序 |
+| timestamp | uint32 | 是 | 毫秒级时间戳 |
+| session_key | string | 是 | 会话隔离标识，和文本聊天的 `session_key` 一致 |
+
+**语音输入与文本聊天的关系**：
+
+- 语音输入和文本聊天使用相同的 `session_key` 机制
+- 语音识别结果会进入与文本聊天相同的会话
+- ASR 转写结果通过 `ai_chat` 推送返回，详见 3.2
+
+**示例**：
+```
+WebSocket 连接: session=user_001
+发送语音: session_key=session-xxx → ASR 结果通过 ai_chat 推送到 session=user_001 的连接
+发送文本: session_key=session-xxx → AI 回复通过 ai_chat 推送到 session=user_001 的连接
+```
+
+**注意**：
+- 前端应使用 `MediaRecorder` 采集 PCM 音频，采样率 16000，声道 1
+- 建议每 20-50ms 的音频数据为一帧，带序号发送
+- 后端会自动检测静默（1.5s 无音频），触发 ASR 转写
+
+---
+
+### 4.3 onboarding_config - 提交初始化配置
 
 首次启动时提交用户与桌宠的配置信息。
 
@@ -636,7 +737,7 @@ if (msg.push_type === 'audio_and_voice') {
 
 ### 4.4 character_get - 获取角色配置
 
-获取当前桌宠的角色配置信息。
+获取桌宠的角色配置信息，支持获取当前角色或指定角色。
 
 **请求**：
 
@@ -644,6 +745,17 @@ if (msg.push_type === 'audio_and_voice') {
 {
   "action": "character_get",
   "data": {}
+}
+```
+
+或获取指定角色：
+
+```json
+{
+  "action": "character_get",
+  "data": {
+    "pet_id": "pet_002"
+  }
 }
 ```
 
@@ -658,7 +770,12 @@ if (msg.push_type === 'audio_and_voice') {
     "pet_name": "艾莉",
     "pet_persona": "温柔体贴，善于关心他人",
     "pet_persona_type": "gentle",
-    "avatar": "default",
+    "speech_tone": "温柔",
+    "catchphrase": "主人～",
+    "hobbies": "陪伴、倾听、撒娇",
+    "background": "一只可爱的小猫桌宠",
+    "preferences": "喜欢被抚摸、喜欢温暖的地方",
+    "avatar": "cute_cat",
     "created_at": "2024-04-01T00:00:00Z",
     "updated_at": "2024-04-08T12:00:00Z"
   }
@@ -673,15 +790,20 @@ if (msg.push_type === 'audio_and_voice') {
 | pet_name | string | 桌宠名称 |
 | pet_persona | string | 性格描述 |
 | pet_persona_type | string | 性格类型 |
+| speech_tone | string | 说话风格 |
+| catchphrase | string | 口头禅 |
+| hobbies | string | 兴趣爱好 |
+| background | string | 背景设定 |
+| preferences | string | 偏好 |
 | avatar | string | 头像/模型ID |
 | created_at | string | 创建时间（ISO 8601） |
 | updated_at | string | 更新时间（ISO 8601） |
 
 ---
 
-### 4.4 character_update - 更新角色配置
+### 4.5 character_update - 更新角色配置
 
-修改桌宠的角色配置，修改后新对话立即生效。
+修改当前激活桌宠的角色配置，修改后新对话立即生效。
 
 **请求**：
 
@@ -692,7 +814,12 @@ if (msg.push_type === 'audio_and_voice') {
     "pet_id": "pet_001",
     "pet_name": "星璃",
     "pet_persona": "活泼可爱，精力充沛",
-    "pet_persona_type": "playful"
+    "pet_persona_type": "playful",
+    "speech_tone": "俏皮",
+    "catchphrase": "主人主人～",
+    "hobbies": "唱歌、跳舞",
+    "background": "来自喵星的公主",
+    "preferences": "喜欢毛线球和猫薄荷"
   }
 }
 ```
@@ -708,12 +835,31 @@ if (msg.push_type === 'audio_and_voice') {
     "pet_name": "星璃",
     "pet_persona": "活泼可爱，精力充沛",
     "pet_persona_type": "playful",
-    "avatar": "default",
+    "speech_tone": "俏皮",
+    "catchphrase": "主人主人～",
+    "hobbies": "唱歌、跳舞",
+    "background": "来自喵星的公主",
+    "preferences": "喜欢毛线球和猫薄荷",
+    "avatar": "cute_cat",
     "created_at": "2024-04-01T00:00:00Z",
     "updated_at": "2024-04-08T12:30:00Z"
   }
 }
 ```
+
+**字段说明**：
+
+| 字段 | 类型 | 必填 | 说明 |
+|------|------|------|------|
+| pet_id | string | 是 | 桌宠ID |
+| pet_name | string | 否 | 桌宠名称 |
+| pet_persona | string | 否 | 性格描述 |
+| pet_persona_type | string | 否 | 性格类型 |
+| speech_tone | string | 否 | 说话风格 |
+| catchphrase | string | 否 | 口头禅 |
+| hobbies | string | 否 | 兴趣爱好 |
+| background | string | 否 | 背景设定 |
+| preferences | string | 否 | 偏好 |
 
 **注意**：修改后新的对话会立即使用新配置。
 
@@ -756,7 +902,124 @@ if (msg.push_type === 'audio_and_voice') {
 
 ---
 
-### 4.6 config_get - 获取应用配置
+### 4.6 character_create - 创建新角色
+
+创建一个新的桌宠角色。创建后不会自动切换到新角色，保持在当前角色。
+
+**请求**：
+
+```json
+{
+  "action": "character_create",
+  "data": {
+    "pet_name": "星璃",
+    "pet_persona": "活泼可爱，精力充沛",
+    "pet_persona_type": "playful",
+    "speech_tone": "俏皮",
+    "catchphrase": "主人主人～",
+    "hobbies": "唱歌、跳舞",
+    "background": "来自喵星的公主",
+    "preferences": "喜欢毛线球和猫薄荷",
+    "avatar": "cute_cat"
+  }
+}
+```
+
+**响应**：
+
+```json
+{
+  "status": "ok",
+  "action": "character_create",
+  "data": {
+    "pet_id": "pet_002",
+    "pet_name": "星璃",
+    "pet_persona": "活泼可爱，精力充沛",
+    "pet_persona_type": "playful",
+    "speech_tone": "俏皮",
+    "catchphrase": "主人主人～",
+    "hobbies": "唱歌、跳舞",
+    "background": "来自喵星的公主",
+    "preferences": "喜欢毛线球和猫薄荷",
+    "avatar": "cute_cat",
+    "created_at": "2024-04-23T10:00:00Z",
+    "updated_at": "2024-04-23T10:00:00Z"
+  }
+}
+```
+
+**字段说明**：
+
+| 字段 | 类型 | 必填 | 说明 |
+|------|------|------|------|
+| pet_name | string | 是 | 桌宠名称 |
+| pet_persona | string | 否 | 性格描述 |
+| pet_persona_type | string | 否 | 性格类型 |
+| speech_tone | string | 否 | 说话风格 |
+| catchphrase | string | 否 | 口头禅 |
+| hobbies | string | 否 | 兴趣爱好 |
+| background | string | 否 | 背景设定 |
+| preferences | string | 否 | 偏好 |
+| avatar | string | 否 | 头像/模型ID，默认 "cute_cat" |
+
+**说明**：
+- 创建成功后返回新角色的完整信息
+- 不会自动切换到新角色
+- 性格类型可自定义（如 gentle/playful/cool/wise 或任何自定义值）
+
+---
+
+### 4.7 user_profile_get - 获取用户画像
+
+获取当前用户的画像信息。
+
+**请求**：
+
+```json
+{
+  "action": "user_profile_get",
+  "data": {}
+}
+```
+
+**响应**：
+
+```json
+{
+  "status": "ok",
+  "action": "user_profile_get",
+  "data": {
+    "display_name": "小明",
+    "role": "计算机专业",
+    "language": "zh-CN",
+    "chronotype": "night",
+    "personality_tone": "阴阳怪气",
+    "anxiety_level": 65,
+    "pressure_level": "high",
+    "extra": {
+      "focus_windows": ["20:00-23:00"],
+      "selected_breakers": ["考试", "作业"]
+    }
+  }
+}
+```
+
+**字段说明**：
+
+| 字段 | 类型 | 说明 |
+|------|------|------|
+| display_name | string | 显示名称 |
+| role | string | 角色/职业 |
+| language | string | 语言偏好 |
+| chronotype | string | 昼夜偏好 |
+| personality_tone | string | 人格语调 |
+| anxiety_level | int | 焦虑等级（0-100） |
+| pressure_level | string | 压力等级 |
+| extra | object | 额外信息 |
+
+---
+
+### 4.8 config_get - 获取应用配置
 
 获取应用功能开关和设置。
 
@@ -991,6 +1254,7 @@ if (msg.push_type === 'audio_and_voice') {
   "action": "conversation_list",
   "data": {
     "character_id": "pet_001",
+    "session_id": "session-1712345678-abc123",
     "limit": 50,
     "offset": 0
   }
@@ -1007,6 +1271,7 @@ if (msg.push_type === 'audio_and_voice') {
     "conversations": [
       {
         "id": 1,
+        "session_id": "session-1712345678-abc123",
         "role": "user",
         "content": "你好呀",
         "timestamp": "2024-01-15T10:30:00Z",
@@ -1014,7 +1279,8 @@ if (msg.push_type === 'audio_and_voice') {
       },
       {
         "id": 2,
-        "role": "pet",
+        "session_id": "session-1712345678-abc123",
+        "role": "assistant",
         "content": "你好！今天心情怎么样？",
         "timestamp": "2024-01-15T10:30:05Z",
         "compressed": false
@@ -1031,6 +1297,7 @@ if (msg.push_type === 'audio_and_voice') {
 | 字段 | 类型 | 必填 | 说明 |
 |------|------|------|------|
 | character_id | string | 是 | 角色ID |
+| session_id | string | 否 | 会话ID，不传则获取该角色的所有会话 |
 | limit | int | 否 | 返回条数限制，默认 50 |
 | offset | int | 否 | 翻页偏移，默认 0 |
 
@@ -1867,6 +2134,263 @@ if (msg.push_type === 'audio_and_voice') {
 
 ---
 
+### 4.27 skill_list - 列出已安装的 Skills
+
+获取所有已安装的 skills 列表（包括 workspace、global、builtin 三种来源）。
+
+**请求**：
+
+```json
+{
+  "action": "skill_list",
+  "data": {}
+}
+```
+
+**响应**：
+
+```json
+{
+  "status": "ok",
+  "action": "skill_list",
+  "data": {
+    "skills": [
+      {
+        "name": "github-actions",
+        "description": "与 GitHub Actions 集成的 Skill",
+        "path": "/path/to/workspace/skills/github-actions/SKILL.md",
+        "source": "workspace"
+      },
+      {
+        "name": "weather",
+        "description": "查询天气的 Skill",
+        "path": "/path/to/global/skills/weather/SKILL.md",
+        "source": "global"
+      }
+    ]
+  }
+}
+```
+
+**字段说明**：
+
+| 字段 | 类型 | 说明 |
+|------|------|------|
+| skills | array | Skill 列表 |
+| skills[].name | string | Skill 名称 |
+| skills[].description | string | Skill 描述 |
+| skills[].path | string | SKILL.md 文件路径 |
+| skills[].source | string | 来源：`workspace`(工作区) / `global`(全局) / `builtin`(内置) |
+
+**Skill 存储位置**：
+
+| 来源 | 路径 | 说明 |
+|------|------|------|
+| workspace | `<workspace>/skills/` | 工作区级 skills，可写 |
+| global | `~/.picoclaw/skills/` | 全局 skills，可写 |
+| builtin | 环境变量或当前目录 | 内置 skills，只读 |
+
+---
+
+### 4.28 skill_search - 搜索 Skills
+
+从 registry（如 clawhub.ai）搜索可安装的 skills。
+
+**请求**：
+
+```json
+{
+  "action": "skill_search",
+  "data": {
+    "query": "github integration",
+    "limit": 10
+  }
+}
+```
+
+**响应**：
+
+```json
+{
+  "status": "ok",
+  "action": "skill_search",
+  "data": {
+    "results": [
+      {
+        "score": 0.95,
+        "slug": "github-actions",
+        "display_name": "GitHub Actions",
+        "summary": "与 GitHub Actions 集成，用于管理和监控 workflow",
+        "version": "1.2.3",
+        "registry_name": "clawhub"
+      }
+    ]
+  }
+}
+```
+
+**字段说明**：
+
+| 字段 | 类型 | 必填 | 说明 |
+|------|------|------|------|
+| query | string | 是 | 搜索关键词 |
+| limit | int | 否 | 返回条数限制，默认 10 |
+
+**响应字段说明**：
+
+| 字段 | 类型 | 说明 |
+|------|------|------|
+| results | array | 搜索结果列表 |
+| results[].score | float | 相关度评分 0-1 |
+| results[].slug | string | Skill 唯一标识符（用于安装） |
+| results[].display_name | string | 显示名称 |
+| results[].summary | string | Skill 描述摘要 |
+| results[].version | string | 最新版本号 |
+| results[].registry_name | string | 来源 registry 名称 |
+
+---
+
+### 4.29 skill_install - 安装 Skill
+
+从 registry 安装一个 skill 到本地。
+
+**请求**：
+
+```json
+{
+  "action": "skill_install",
+  "data": {
+    "slug": "github-actions",
+    "registry": "clawhub",
+    "version": ""
+  }
+}
+```
+
+**响应**：
+
+```json
+{
+  "status": "ok",
+  "action": "skill_install",
+  "data": {
+    "slug": "github-actions",
+    "version": "1.2.3",
+    "is_malware_blocked": false,
+    "is_suspicious": false,
+    "summary": "与 GitHub Actions 集成"
+  }
+}
+```
+
+**字段说明**：
+
+| 字段 | 类型 | 必填 | 说明 |
+|------|------|------|------|
+| slug | string | 是 | Skill 唯一标识符 |
+| registry | string | 否 | Registry 名称，默认 `clawhub` |
+| version | string | 否 | 指定版本，为空则安装最新版本 |
+
+**响应字段说明**：
+
+| 字段 | 类型 | 说明 |
+|------|------|------|
+| slug | string | 安装的 Skill 标识符 |
+| version | string | 安装的版本号 |
+| is_malware_blocked | bool | 是否被安全检查拦截（恶意软件） |
+| is_suspicious | bool | 是否被标记为可疑 |
+| summary | string | Skill 描述 |
+
+**安装位置**：安装到 `<workspace>/skills/<slug>/`
+
+---
+
+### 4.30 skill_remove - 删除 Skill
+
+删除已安装的 workspace skill。
+
+**请求**：
+
+```json
+{
+  "action": "skill_remove",
+  "data": {
+    "name": "github-actions"
+  }
+}
+```
+
+**响应**：
+
+```json
+{
+  "status": "ok",
+  "action": "skill_remove",
+  "data": {
+    "name": "github-actions"
+  }
+}
+```
+
+**字段说明**：
+
+| 字段 | 类型 | 必填 | 说明 |
+|------|------|------|------|
+| name | string | 是 | 要删除的 Skill 名称 |
+
+**限制**：
+- 只能删除 `workspace` 来源的 skills
+- `global` 和 `builtin` 来源的 skills 不能通过此接口删除
+
+**错误**：`only workspace skills can be deleted` - 尝试删除非 workspace skill
+
+---
+
+### 4.31 skill_get - 获取 Skill 内容
+
+获取指定 skill 的完整内容（SKILL.md）。
+
+**请求**：
+
+```json
+{
+  "action": "skill_get",
+  "data": {
+    "name": "github-actions"
+  }
+}
+```
+
+**响应**：
+
+```json
+{
+  "status": "ok",
+  "action": "skill_get",
+  "data": {
+    "name": "github-actions",
+    "content": "# GitHub Actions Skill\n\nThis skill provides integration with GitHub Actions..."
+  }
+}
+```
+
+**字段说明**：
+
+| 字段 | 类型 | 必填 | 说明 |
+|------|------|------|------|
+| name | string | 是 | Skill 名称 |
+
+**响应字段说明**：
+
+| 字段 | 类型 | 说明 |
+|------|------|------|
+| name | string | Skill 名称 |
+| content | string | SKILL.md 的完整内容（Markdown 格式） |
+
+**错误**：`skill not found` - Skill 不存在
+
+---
+
 ## 五、错误码
 
 ### 5.1 WebSocket 错误 (status: error)
@@ -1895,6 +2419,13 @@ if (msg.push_type === 'audio_and_voice') {
 | `unsupported provider: xxx` | 不支持的供应商 | 供应商类型不是 `minimax` 或 `doubao` |
 | `provider is required` | 供应商必填 | 查询音色时缺少 provider 字段 |
 | `api_key is required` | API Key 必填 | 查询音色时缺少 api_key 字段 |
+| `skills manager not initialized` | Skills 管理器未初始化 | 服务未正确初始化 |
+| `query is required` | 搜索关键词必填 | 搜索 skills 时缺少 query 字段 |
+| `slug is required` | Skill slug 必填 | 安装 skill 时缺少 slug 字段 |
+| `registry .* not found` | Registry 不存在 | 指定了不存在的 registry |
+| `skill .* already exists` | Skill 已存在 | 要安装的 skill 已经存在 |
+| `skill .* not found` | Skill 不存在 | 要删除/获取的 skill 不存在 |
+| `only workspace skills can be deleted` | 只可删除 workspace skill | 尝试删除 global 或 builtin skill |
 
 ### 5.2 错误响应示例
 
@@ -2054,8 +2585,10 @@ async def send_chat(ws, text):
 | audio_done | 音频播放完毕 | 通知后端当前音频片段已播放完毕 |
 | onboarding_config | 提交初始化配置 | 首次启动时提交配置 |
 | user_profile_update | 更新用户画像 | 提交用户信息（昵称、角色、作息等），用于 LLM 上下文 |
-| character_get | 获取角色配置 | 查看当前角色 |
+| user_profile_get | 获取用户画像 | 获取当前用户画像信息 |
+| character_get | 获取角色配置 | 查看当前角色或指定角色 |
 | character_update | 更新角色配置 | 修改角色设置 |
+| character_create | 创建新角色 | 创建新的桌宠角色 |
 | character_switch | 切换角色 | 切换当前激活的角色 |
 | config_get | 获取应用配置 | 查看应用设置 |
 | config_update | 更新应用配置 | 修改应用设置 |
@@ -2078,6 +2611,11 @@ async def send_chat(ws, text):
 | voice_model_get_voices | 获取可用音色 | 查询供应商的音色列表 |
 | voice_model_update | 更新语音模型 | 修改模型的配置（API Key、音色等） |
 | voice_model_set_default | 设置默认语音模型 | 热切换到指定模型 |
+| skill_list | 列出 Skills | 获取已安装的 skills 列表 |
+| skill_search | 搜索 Skills | 从 registry 搜索可安装的 skills |
+| skill_install | 安装 Skill | 从 registry 安装 skill 到本地 |
+| skill_remove | 删除 Skill | 删除已安装的 workspace skill |
+| skill_get | 获取 Skill 内容 | 获取 skill 的完整内容（SKILL.md） |
 
 ### 7.2 push_type 快速索引
 
@@ -2088,7 +2626,7 @@ async def send_chat(ws, text):
 | emotion_change | 情绪变化时 | 推送情绪状态更新 |
 | action_trigger | LLM 解析到动作时 | 推送动作触发 |
 | character_switch | 角色切换后 | 推送切换后的角色ID |
-| audio_and_voice | 语音流式合成 | 流式推送语音音频片段，按顺序播放 |
+| text_and_audio | 语音流式合成 | 流式推送语音音频片段，按顺序播放 |
 | heartbeat | 每 30 秒 | 保活检测 |
 
 ---

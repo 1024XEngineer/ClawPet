@@ -29,6 +29,19 @@ contextBridge.exposeInMainWorld('electronAPI', {
    * @returns {string} 后端 URL（默认 http://127.0.0.1:18790）
    */
   getBackendBaseUrl: () => process.env.GOCLAW_BACKEND_URL || 'http://127.0.0.1:18790',
+
+  /**
+   * 获取 Launcher 服务地址（用于管理 API）
+   * @returns {string} Launcher URL（默认 http://127.0.0.1:18800）
+   */
+  getLauncherBaseUrl: () => process.env.GOCLAW_LAUNCHER_URL || 'http://127.0.0.1:18800',
+
+  /**
+   * 获取前端 API 基地址
+   * Pet channel 应该直连 Gateway (18790)，而不是通过 Launcher (18800)
+   * @returns {string} API URL（默认 http://127.0.0.1:18790）
+   */
+  getApiBaseUrl: () => process.env.GOCLAW_API_URL || process.env.GOCLAW_BACKEND_URL || 'http://127.0.0.1:18790',
   
   /**
    * 获取启动器 Token（用于身份验证）
@@ -72,6 +85,12 @@ contextBridge.exposeInMainWorld('electronAPI', {
    * 关闭当前窗口
    */
   closeWindow: () => ipcRenderer.send('window-close'),
+
+  /**
+   * 设置桌宠窗口是否穿透鼠标
+   * @param {boolean} enabled - true 为穿透，false 为可点击
+   */
+  setPetClickThrough: (enabled) => ipcRenderer.send('set-pet-click-through', Boolean(enabled)),
   
   // ==================== 设置窗口 ====================
   
@@ -135,6 +154,16 @@ contextBridge.exposeInMainWorld('electronAPI', {
    * 发送连接活跃状态（心跳）
    */
   sendConnectionAlive: () => ipcRenderer.send('connection-alive'),
+
+  /**
+   * 上报气泡窗口内容尺寸（用于主进程自适应窗口大小）
+   * @param {{width:number,height:number}} size
+   */
+  reportBubbleWindowSize: (size) => {
+    const width = Number(size?.width) || 0
+    const height = Number(size?.height) || 0
+    ipcRenderer.send('bubble-window-size', { width, height })
+  },
   
   // ==================== 事件监听 ====================
   
@@ -202,3 +231,44 @@ contextBridge.exposeInMainWorld('electronAPI', {
    */
   getStartupState: () => ipcRenderer.invoke('startup-state')
 });
+
+function serializeForMainLog(value) {
+  if (value instanceof Error) {
+    return {
+      name: value.name,
+      message: value.message,
+      stack: value.stack,
+    };
+  }
+
+  if (typeof value === 'object' && value !== null) {
+    try {
+      return JSON.parse(JSON.stringify(value));
+    } catch {
+      return String(value);
+    }
+  }
+
+  return value;
+}
+
+const forwardedConsoleLevels = ['log', 'info', 'warn', 'error'];
+for (const level of forwardedConsoleLevels) {
+  const original = console[level];
+  if (typeof original !== 'function') {
+    continue;
+  }
+
+  console[level] = (...args) => {
+    try {
+      ipcRenderer.send('renderer-log', {
+        level,
+        args: args.map(serializeForMainLog),
+      });
+    } catch {
+      // Ignore forwarding failures and keep console behavior unchanged.
+    }
+
+    original.apply(console, args);
+  };
+}

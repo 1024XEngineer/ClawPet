@@ -2,6 +2,7 @@ package asr
 
 import (
 	"context"
+	"encoding/binary"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -16,8 +17,103 @@ import (
 	"github.com/sipeed/picoclaw/pkg/logger"
 )
 
+type audioWriter interface {
+	WriteRTPPacket(seq uint16, ts uint32, data []byte) error
+	Close() error
+}
+
+type rtpWriter struct {
+	w   *oggwriter.OggWriter
+	seq uint16
+}
+
+func (w *rtpWriter) WriteRTPPacket(seq uint16, ts uint32, data []byte) error {
+	pkt := &rtp.Packet{
+		Header: rtp.Header{
+			SequenceNumber: seq,
+			Timestamp:      ts,
+			SSRC:           1,
+		},
+		Payload: data,
+	}
+	return w.w.WriteRTP(pkt)
+}
+
+func (w *rtpWriter) Close() error {
+	return w.w.Close()
+}
+
+type wavWriter struct {
+	file       *os.File
+	sampleRate int
+	channels   int
+	dataSize   int64
+}
+
+func newWavWriter(filename string, sampleRate, channels int) (*wavWriter, error) {
+	f, err := os.Create(filename)
+	if err != nil {
+		return nil, err
+	}
+
+	w := &wavWriter{
+		file:       f,
+		sampleRate: sampleRate,
+		channels:   channels,
+	}
+
+	header := make([]byte, 44)
+	copy(header[0:4], "RIFF")
+	binary.LittleEndian.PutUint32(header[4:], 0xFFFFFFFF)
+	copy(header[8:12], "WAVE")
+	copy(header[12:16], "fmt ")
+	binary.LittleEndian.PutUint32(header[16:20], 16)
+	binary.LittleEndian.PutUint16(header[20:22], 1)
+	binary.LittleEndian.PutUint16(header[22:24], uint16(channels))
+	binary.LittleEndian.PutUint32(header[24:28], uint32(sampleRate))
+	binary.LittleEndian.PutUint32(header[28:32], uint32(sampleRate)*2*uint32(channels))
+	binary.LittleEndian.PutUint16(header[32:34], 2*uint16(channels))
+	binary.LittleEndian.PutUint16(header[34:36], 16)
+	copy(header[36:40], "data")
+	binary.LittleEndian.PutUint32(header[40:44], 0xFFFFFFFF)
+
+	if _, err := f.Write(header); err != nil {
+		f.Close()
+		os.Remove(filename)
+		return nil, err
+	}
+
+	return w, nil
+}
+
+func (w *wavWriter) WriteRTPPacket(seq uint16, ts uint32, data []byte) error {
+	n, err := w.file.Write(data)
+	if err == nil {
+		w.dataSize += int64(n)
+	}
+	return err
+}
+
+func (w *wavWriter) Close() error {
+	if w.file != nil {
+		// RIFF size = fileSize - 8 (total file size minus RIFF header and this field)
+		riffSize := w.dataSize + 36
+		w.file.Seek(4, 0)
+		binary.Write(w.file, binary.LittleEndian, uint32(riffSize))
+
+		// data chunk size
+		w.file.Seek(40, 0)
+		binary.Write(w.file, binary.LittleEndian, uint32(w.dataSize))
+
+		w.file.Sync()
+		return w.file.Close()
+	}
+	return nil
+}
+
 type speechAccumulator struct {
-	writer      *oggwriter.OggWriter
+	writer      audioWriter
+	format      string // 保留字段，用于将来多格式支持
 	file        string
 	lastAudioAt time.Time
 	mu          sync.Mutex
@@ -25,7 +121,11 @@ type speechAccumulator struct {
 	chatID      string
 	speakerID   string
 	sessionID   string
+	sessionKey  string // 会话隔离标识
+	charID      string // 当前角色 ID
 	channel     string
+	sampleRate  int // 保留字段，用于将来多格式支持
+	channels    int // 保留字段，用于将来多格式支持
 }
 
 func (a *speechAccumulator) Push(chunk bus.AudioChunk) {
@@ -38,17 +138,8 @@ func (a *speechAccumulator) Push(chunk bus.AudioChunk) {
 
 	a.lastAudioAt = time.Now()
 
-	pkt := &rtp.Packet{
-		Header: rtp.Header{
-			SequenceNumber: uint16(chunk.Sequence),
-			Timestamp:      chunk.Timestamp,
-			SSRC:           1, // Stable arbitrary dummy
-		},
-		Payload: chunk.Data,
-	}
-
-	if err := a.writer.WriteRTP(pkt); err != nil {
-		logger.ErrorCF("voice-agent", "Failed to write RTP", map[string]any{"error": err})
+	if err := a.writer.WriteRTPPacket(uint16(chunk.Sequence), chunk.Timestamp, chunk.Data); err != nil {
+		logger.ErrorCF("voice-agent", "Failed to write audio", map[string]any{"error": err})
 	}
 }
 
@@ -112,36 +203,56 @@ func (a *Agent) listenChunks(ctx context.Context) {
 }
 
 func (a *Agent) handleChunk(chunk bus.AudioChunk) {
-	// Only accept Opus-encoded audio
-	if chunk.Format != "opus" {
+	// Only accept Opus or PCM encoded audio
+	if chunk.Format != "opus" && chunk.Format != "pcm" {
 		logger.DebugCF("voice-agent", "Ignoring unsupported audio format", map[string]any{"format": chunk.Format})
 		return
 	}
 
-	key := fmt.Sprintf("%s_%s", chunk.SessionID, chunk.SpeakerID)
+	key := fmt.Sprintf("%s_%s_%s", chunk.SessionID, chunk.SessionKey, chunk.SpeakerID)
 
 	a.mu.Lock()
 	acc, exists := a.sessions[key]
 	if !exists {
-		filename := filepath.Join(os.TempDir(), fmt.Sprintf("voice_%s_%d.ogg", key, time.Now().UnixNano()))
-		writer, err := oggwriter.New(filename, uint32(chunk.SampleRate), uint16(chunk.Channels))
-		if err != nil {
-			a.mu.Unlock()
-			logger.ErrorCF("voice-agent", "Failed to create OggWriter", map[string]any{"error": err})
-			return
+		var writer audioWriter
+		var filename string
+
+		if chunk.Format == "opus" {
+			filename = filepath.Join(os.TempDir(), fmt.Sprintf("voice_%s_%d.ogg", key, time.Now().UnixNano()))
+			oggWriter, err := oggwriter.New(filename, uint32(chunk.SampleRate), uint16(chunk.Channels))
+			if err != nil {
+				a.mu.Unlock()
+				logger.ErrorCF("voice-agent", "Failed to create OggWriter", map[string]any{"error": err})
+				return
+			}
+			writer = &rtpWriter{w: oggWriter}
+		} else {
+			filename = filepath.Join(os.TempDir(), fmt.Sprintf("voice_%s_%d.wav", key, time.Now().UnixNano()))
+			wavWriter, err := newWavWriter(filename, chunk.SampleRate, chunk.Channels)
+			if err != nil {
+				a.mu.Unlock()
+				logger.ErrorCF("voice-agent", "Failed to create WavWriter", map[string]any{"error": err})
+				return
+			}
+			writer = wavWriter
 		}
 
 		acc = &speechAccumulator{
 			writer:      writer,
+			format:      chunk.Format,
 			file:        filename,
 			lastAudioAt: time.Now(),
 			chatID:      chunk.ChatID,
 			speakerID:   chunk.SpeakerID,
 			sessionID:   chunk.SessionID,
+			sessionKey:  chunk.SessionKey,
+			charID:      chunk.CharID,
 			channel:     chunk.Channel,
+			sampleRate:  chunk.SampleRate,
+			channels:    chunk.Channels,
 		}
 		a.sessions[key] = acc
-		logger.DebugCF("voice-agent", "Started accumulating voice", map[string]any{"key": key, "file": filename})
+		logger.DebugCF("voice-agent", "Started accumulating voice", map[string]any{"key": key, "file": filename, "format": chunk.Format})
 	}
 	a.mu.Unlock()
 
@@ -238,11 +349,15 @@ func (a *Agent) processUtterance(ctx context.Context, acc *speechAccumulator) {
 	oralPrompt := "\n\n[SYSTEM]: The user just spoke this to you over voice chat. Please reply in a highly concise, conversational, oral style suitable for text-to-speech. Do not use markdown, emojis, asterisks, or code blocks. Speak naturally."
 
 	if err := a.bus.PublishInbound(ctx, bus.InboundMessage{
-		Channel:  channelType,
-		SenderID: acc.speakerID,
-		ChatID:   acc.chatID,
-		Content:  res.Text + oralPrompt,
-		Peer:     bus.Peer{Kind: "channel", ID: acc.chatID},
+		Channel:    channelType,
+		SenderID:   acc.speakerID,
+		SessionKey: acc.sessionKey,
+		ChatID:     acc.chatID,
+		Content:    res.Text + oralPrompt,
+		Peer: bus.Peer{
+			Kind: acc.charID,
+			ID:   acc.sessionKey,
+		},
 		Metadata: map[string]string{
 			"is_voice": "true",
 		},
