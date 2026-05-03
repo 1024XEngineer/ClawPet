@@ -54,6 +54,8 @@ const (
 	ActionCharacterCreate      = "character_create"        // 创建角色
 	ActionUserProfileGet       = "user_profile_get"        // 获取用户画像
 	ActionAudioFrame           = "audio_frame"             // 音频帧（语音输入）
+	ActionVoiceConfigGet       = "voice_config_get"        // 获取 voice 配置（model_name）
+	ActionVoiceConfigUpdate    = "voice_config_update"     // 更新 voice 配置（model_name）
 )
 
 // =============================================================================
