@@ -319,6 +319,55 @@ function logToFile(message) {
 
 logToFile('Electron application started');
 
+function attachRendererCrashDiagnostics(win, label) {
+  if (!win || win.isDestroyed()) {
+    return;
+  }
+
+  const wc = win.webContents;
+
+  wc.on('render-process-gone', (_event, details) => {
+    try {
+      logToFile(`[${label}] render-process-gone reason=${details?.reason || 'unknown'} exitCode=${details?.exitCode ?? 'n/a'}`);
+    } catch (error) {
+      logToFile(`[${label}] render-process-gone logging failed: ${String(error)}`);
+    }
+  });
+
+  wc.on('unresponsive', () => {
+    logToFile(`[${label}] webContents became unresponsive`);
+  });
+
+  wc.on('responsive', () => {
+    logToFile(`[${label}] webContents responsive again`);
+  });
+
+  wc.on('console-message', (_event, level, message, line, sourceId) => {
+    if (!message) {
+      return;
+    }
+    const msg = String(message);
+    if (!/error|exception|failed|unhandled|domexception|crash|fatal/i.test(msg)) {
+      return;
+    }
+    logToFile(`[${label}] console-message level=${level} ${sourceId || 'unknown'}:${line || 0} ${msg}`);
+  });
+}
+
+app.on('render-process-gone', (_event, webContents, details) => {
+  let url = 'unknown';
+  try {
+    url = webContents?.getURL?.() || 'unknown';
+  } catch {
+    url = 'unknown';
+  }
+  logToFile(`[APP] render-process-gone reason=${details?.reason || 'unknown'} exitCode=${details?.exitCode ?? 'n/a'} url=${url}`);
+});
+
+app.on('child-process-gone', (_event, details) => {
+  logToFile(`[APP] child-process-gone type=${details?.type || 'unknown'} reason=${details?.reason || 'unknown'} exitCode=${details?.exitCode ?? 'n/a'} name=${details?.name || 'unknown'}`);
+});
+
 const persistedOnboarding = loadOnboardingState();
 onboardingLocked = !(persistedOnboarding && persistedOnboarding.completed === true);
 logToFile(`[ONBOARDING] startup locked=${onboardingLocked}`);
@@ -341,6 +390,9 @@ const gotSingleInstanceLock = app.requestSingleInstanceLock();
 if (!gotSingleInstanceLock) {
   app.quit();
 }
+
+// Mitigate renderer timer/audio callback starvation when window is occluded on Windows.
+app.commandLine.appendSwitch('disable-backgrounding-occluded-windows');
 
 /**
  * 从 URL 中提取端口号
@@ -785,9 +837,11 @@ function createBubbleWindow() {
     webPreferences: {
       nodeIntegration: false,
       contextIsolation: true,
-      preload: path.join(__dirname, 'preload.js')
+      preload: path.join(__dirname, 'preload.js'),
+      backgroundThrottling: false,
     }
   });
+  attachRendererCrashDiagnostics(bubbleWindow, 'BUBBLE WINDOW');
 
   bubbleWindow.setIgnoreMouseEvents(true, { forward: true });
 
@@ -880,9 +934,11 @@ function createPetWindow() {
     webPreferences: {
       nodeIntegration: false,
       contextIsolation: true,
-      preload: path.join(__dirname, 'preload.js')
+      preload: path.join(__dirname, 'preload.js'),
+      backgroundThrottling: false,
     }
   });
+  attachRendererCrashDiagnostics(petWindow, 'PET WINDOW');
 
   // Re-apply bottom-right placement to avoid OS window policy override.
   placePetWindowBottomRight(petWindow);
@@ -1111,9 +1167,11 @@ function createSettingsWindow(targetUrl = buildSettingsWindowUrl()) {
     webPreferences: {
       nodeIntegration: false,
       contextIsolation: true,
-      preload: path.join(__dirname, 'preload.js')
+      preload: path.join(__dirname, 'preload.js'),
+      backgroundThrottling: false,
     }
   });
+  attachRendererCrashDiagnostics(settingsWindow, 'SETTINGS WINDOW');
 
   const settingsUrl = targetUrl || buildDashboardUrl();
   logToFile(`[SETTINGS WINDOW] opening ${settingsUrl}`);
@@ -1126,6 +1184,34 @@ function createSettingsWindow(targetUrl = buildSettingsWindowUrl()) {
   // 监听加载完成事件
   settingsWindow.webContents.on('did-finish-load', () => {
     logToFile('[SETTINGS WINDOW] did-finish-load');
+  });
+
+  settingsWindow.webContents.on('did-navigate', (_event, url) => {
+    if (!isOnboardingUrl(url)) {
+      return;
+    }
+    const consoleUrl = buildSettingsWindowUrl();
+    if (url === consoleUrl) {
+      return;
+    }
+    logToFile(`[SETTINGS WINDOW] blocked onboarding navigation in console window: ${url}`);
+    settingsWindow.loadURL(consoleUrl).catch((err) => {
+      logToFile(`[SETTINGS WINDOW] recover to console failed: ${String(err)}`);
+    });
+  });
+
+  settingsWindow.webContents.on('did-navigate-in-page', (_event, url) => {
+    if (!isOnboardingUrl(url)) {
+      return;
+    }
+    const consoleUrl = buildSettingsWindowUrl();
+    if (url === consoleUrl) {
+      return;
+    }
+    logToFile(`[SETTINGS WINDOW] blocked in-page onboarding navigation in console window: ${url}`);
+    settingsWindow.loadURL(consoleUrl).catch((err) => {
+      logToFile(`[SETTINGS WINDOW] recover to console failed: ${String(err)}`);
+    });
   });
 
   settingsWindow.loadURL(settingsUrl).catch((err) => {
@@ -1180,9 +1266,11 @@ function createOnboardingWindow(targetUrl = buildSettingsWindowUrl({ onboarding:
     webPreferences: {
       nodeIntegration: false,
       contextIsolation: true,
-      preload: path.join(__dirname, 'preload.js')
+      preload: path.join(__dirname, 'preload.js'),
+      backgroundThrottling: false,
     }
   });
+  attachRendererCrashDiagnostics(onboardingWindow, 'ONBOARDING WINDOW');
 
   const onboardingUrl = targetUrl || buildSettingsWindowUrl({ onboarding: true });
   logToFile(`[ONBOARDING WINDOW] opening ${onboardingUrl}`);
@@ -1233,8 +1321,10 @@ function createStartupWindow() {
       nodeIntegration: false,
       contextIsolation: true,
       preload: path.join(__dirname, 'preload.js'),
+      backgroundThrottling: false,
     },
   });
+  attachRendererCrashDiagnostics(startupWindow, 'STARTUP WINDOW');
 
   const startupHtmlPath = path.join(__dirname, 'startup.html');
   startupWindow.loadFile(startupHtmlPath).catch((err) => {
@@ -1395,6 +1485,23 @@ ipcMain.on('open-settings', async () => {
   createSettingsWindow(targetUrl);
 });
 
+ipcMain.handle('voice-ensure-settings-foreground', () => {
+  try {
+    if (!settingsWindow || settingsWindow.isDestroyed()) {
+      return { ok: false, reason: 'settings-window-missing' };
+    }
+    if (settingsWindow.isMinimized()) {
+      settingsWindow.restore();
+    }
+    settingsWindow.show();
+    settingsWindow.focus();
+    return { ok: true };
+  } catch (error) {
+    logToFile(`[IPC] voice-ensure-settings-foreground failed: ${String(error)}`);
+    return { ok: false, reason: 'focus-failed' };
+  }
+});
+
 // 打开引导窗口
 ipcMain.on('open-onboarding', () => {
   logToFile('[IPC] open-onboarding');
@@ -1404,6 +1511,11 @@ ipcMain.on('open-onboarding', () => {
 // 设置引导模式
 ipcMain.on('set-onboarding-mode', (event, enabled) => {
   logToFile(`[IPC] set-onboarding-mode ${Boolean(enabled)}`);
+  const sourceWindow = BrowserWindow.fromWebContents(event.sender);
+  if (sourceWindow === settingsWindow) {
+    logToFile('[IPC] set-onboarding-mode ignored from settings window (surface=console)');
+    return;
+  }
   if (enabled) {
     const currentUrl = event.sender.getURL();
     enterOnboardingMode('renderer-request', {

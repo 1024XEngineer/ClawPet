@@ -126,6 +126,10 @@ type speechAccumulator struct {
 	channel     string
 	sampleRate  int // 保留字段，用于将来多格式支持
 	channels    int // 保留字段，用于将来多格式支持
+	chunkCount  int
+	byteCount   int
+	firstSeq    uint64
+	lastSeq     uint64
 }
 
 func (a *speechAccumulator) Push(chunk bus.AudioChunk) {
@@ -137,6 +141,12 @@ func (a *speechAccumulator) Push(chunk bus.AudioChunk) {
 	}
 
 	a.lastAudioAt = time.Now()
+	a.chunkCount++
+	a.byteCount += len(chunk.Data)
+	if a.firstSeq == 0 {
+		a.firstSeq = chunk.Sequence
+	}
+	a.lastSeq = chunk.Sequence
 
 	if err := a.writer.WriteRTPPacket(uint16(chunk.Sequence), chunk.Timestamp, chunk.Data); err != nil {
 		logger.ErrorCF("voice-agent", "Failed to write audio", map[string]any{"error": err})
@@ -252,7 +262,15 @@ func (a *Agent) handleChunk(chunk bus.AudioChunk) {
 			channels:    chunk.Channels,
 		}
 		a.sessions[key] = acc
-		logger.DebugCF("voice-agent", "Started accumulating voice", map[string]any{"key": key, "file": filename, "format": chunk.Format})
+		logger.DebugCF("voice-agent", "Started accumulating voice", map[string]any{
+			"key":        key,
+			"file":       filename,
+			"format":     chunk.Format,
+			"sample_rate": chunk.SampleRate,
+			"channels":   chunk.Channels,
+			"session_id": chunk.SessionID,
+			"session_key": chunk.SessionKey,
+		})
 	}
 	a.mu.Unlock()
 
@@ -292,6 +310,15 @@ func (a *Agent) checkSilence(ctx context.Context) {
 	a.mu.Unlock()
 
 	for _, acc := range finished {
+		logger.InfoCF("voice-agent", "Detected voice silence; finalizing utterance", map[string]any{
+			"session_id":  acc.sessionID,
+			"session_key": acc.sessionKey,
+			"chat_id":     acc.chatID,
+			"chunks":      acc.chunkCount,
+			"bytes":       acc.byteCount,
+			"first_seq":   acc.firstSeq,
+			"last_seq":    acc.lastSeq,
+		})
 		go a.processUtterance(ctx, acc)
 	}
 }
@@ -299,25 +326,55 @@ func (a *Agent) checkSilence(ctx context.Context) {
 func (a *Agent) processUtterance(ctx context.Context, acc *speechAccumulator) {
 	defer os.Remove(acc.file)
 
-	logger.InfoCF("voice-agent", "User finished speaking, transcribing...", map[string]any{"file": acc.file})
+	logger.InfoCF("voice-agent", "User finished speaking, transcribing...", map[string]any{
+		"file":        acc.file,
+		"session_id":  acc.sessionID,
+		"session_key": acc.sessionKey,
+		"chat_id":     acc.chatID,
+		"chunks":      acc.chunkCount,
+		"bytes":       acc.byteCount,
+		"first_seq":   acc.firstSeq,
+		"last_seq":    acc.lastSeq,
+	})
 
 	if a.transcriber == nil {
-		logger.ErrorCF("voice-agent", "No STT configured!", nil)
+		logger.ErrorCF("voice-agent", "No STT configured!", map[string]any{
+			"session_id":  acc.sessionID,
+			"session_key": acc.sessionKey,
+			"chat_id":     acc.chatID,
+		})
 		return
 	}
 
 	res, err := a.transcriber.Transcribe(ctx, acc.file)
 	if err != nil {
-		logger.ErrorCF("voice-agent", "Transcription failed", map[string]any{"error": err})
+		logger.ErrorCF("voice-agent", "Transcription failed", map[string]any{
+			"error":       err,
+			"session_id":  acc.sessionID,
+			"session_key": acc.sessionKey,
+			"chat_id":     acc.chatID,
+		})
 		return
 	}
 
 	if res.Text == "" {
-		logger.DebugCF("voice-agent", "Ignored empty transcription", map[string]any{"file": acc.file})
+		logger.WarnCF("voice-agent", "Ignored empty transcription", map[string]any{
+			"file":        acc.file,
+			"session_id":  acc.sessionID,
+			"session_key": acc.sessionKey,
+			"chat_id":     acc.chatID,
+			"duration":    res.Duration,
+		})
 		return
 	}
 
-	logger.InfoCF("voice-agent", "Transcription result", map[string]any{"text": res.Text, "duration": res.Duration})
+	logger.InfoCF("voice-agent", "Transcription result", map[string]any{
+		"text":        res.Text,
+		"duration":    res.Duration,
+		"session_id":  acc.sessionID,
+		"session_key": acc.sessionKey,
+		"chat_id":     acc.chatID,
+	})
 
 	channelType := acc.channel
 	if channelType == "" {
@@ -362,6 +419,18 @@ func (a *Agent) processUtterance(ctx context.Context, acc *speechAccumulator) {
 			"is_voice": "true",
 		},
 	}); err != nil {
-		logger.ErrorCF("voice-agent", "Failed to publish inbound message", map[string]any{"error": err})
+		logger.ErrorCF("voice-agent", "Failed to publish inbound message", map[string]any{
+			"error":       err,
+			"session_id":  acc.sessionID,
+			"session_key": acc.sessionKey,
+			"chat_id":     acc.chatID,
+		})
+		return
 	}
+
+	logger.InfoCF("voice-agent", "Published inbound voice message", map[string]any{
+		"session_id":  acc.sessionID,
+		"session_key": acc.sessionKey,
+		"chat_id":     acc.chatID,
+	})
 }

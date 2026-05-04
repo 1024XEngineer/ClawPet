@@ -817,7 +817,8 @@ export function useChat(options: UseChatOptions = {}): UseChatResult {
     try {
       await wsRef.current.connect()
     } catch (err) {
-      setError("连接失败")
+      const message = err instanceof Error ? err.message : "连接失败"
+      setError(message)
       console.error("WebSocket connection failed:", err)
     }
   }, [])

@@ -25,10 +25,22 @@ export type ConnectionState =
   | "connected"
   | "error"
 
+export type AudioRecordingState =
+  | "idle"
+  | "recording"
+  | "recognizing"
+  | "error"
+
+export type ChatProtocolMode = "pico" | "pet"
+
 export interface ChatStoreState {
   messages: ChatMessage[]
   connectionState: ConnectionState
   isTyping: boolean
+  audioRecordingState: AudioRecordingState
+  audioError?: string
+  audioSequence: number
+  protocolMode: ChatProtocolMode
   activeSessionId: string
   hasHydratedActiveSession: boolean
 }
@@ -39,6 +51,10 @@ const DEFAULT_CHAT_STATE: ChatStoreState = {
   messages: [],
   connectionState: "disconnected",
   isTyping: false,
+  audioRecordingState: "idle",
+  audioError: undefined,
+  audioSequence: 0,
+  protocolMode: "pico",
   activeSessionId: getInitialActiveSessionId(),
   hasHydratedActiveSession: false,
 }

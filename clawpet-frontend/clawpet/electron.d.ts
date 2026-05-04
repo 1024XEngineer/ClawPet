@@ -32,6 +32,7 @@ declare global {
       onSettingsUpdate?: (callback: (settings: unknown) => void) => void
       onBubbleShow?: (callback: (payload: BubblePayload) => void) => void
       onForceStopMedia?: (callback: () => void) => () => void
+      ensureSettingsForeground?: () => Promise<{ ok: boolean; reason?: string }>
     }
   }
 }

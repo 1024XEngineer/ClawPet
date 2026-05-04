@@ -51,11 +51,21 @@
     "messagesCount": "{{count}} messages",
     "noModel": "Select model",
     "attachImage": "Add images",
+    "attachmentsUnsupportedInPetMode": "Image attachments are not supported in Pet mode yet.",
+    "attachmentsClearedForPetMode": "Switched to Pet mode. Pending image attachments were cleared.",
     "removeImage": "Remove image",
     "uploadedImage": "Uploaded image",
     "invalidImage": "\"{{name}}\" is not a supported image file.",
     "imageTooLarge": "\"{{name}}\" exceeds the {{size}} limit.",
     "imageReadFailed": "Failed to read \"{{name}}\".",
+    "audio": {
+      "recording": "Recording... Tap the mic button again to stop.",
+      "recognizing": "Recognizing speech...",
+      "recognizingTimeout": "Speech recognition timed out. Please try again.",
+      "error": "Audio input failed. Please try again.",
+      "notConnected": "Connection is not ready. Cannot start recording.",
+      "recorderNotReady": "Audio recorder is not ready yet. Please try again."
+    },
     "empty": {
       "noConfiguredModel": "No Model Configured",
       "noConfiguredModelDescription": "You need to configure at least one AI model with an API key before you can start chatting.",

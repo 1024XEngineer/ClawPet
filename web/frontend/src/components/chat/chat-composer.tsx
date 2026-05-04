@@ -1,4 +1,10 @@
-import { IconArrowUp, IconPhotoPlus, IconX } from "@tabler/icons-react"
+import {
+  IconArrowUp,
+  IconMicrophone,
+  IconPhotoPlus,
+  IconPlayerStop,
+  IconX,
+} from "@tabler/icons-react"
 import type { KeyboardEvent } from "react"
 import { useTranslation } from "react-i18next"
 import TextareaAutosize from "react-textarea-autosize"
@@ -14,9 +20,14 @@ interface ChatComposerProps {
   onAddImages: () => void
   onRemoveAttachment: (index: number) => void
   onSend: () => void
+  onToggleRecording: () => void
   isConnected: boolean
   hasDefaultModel: boolean
   canSend: boolean
+  canRecord: boolean
+  isRecording: boolean
+  canAttachImages: boolean
+  attachImageDisabledReason?: string
 }
 
 export function ChatComposer({
@@ -26,9 +37,14 @@ export function ChatComposer({
   onAddImages,
   onRemoveAttachment,
   onSend,
+  onToggleRecording,
   isConnected,
   hasDefaultModel,
   canSend,
+  canRecord,
+  isRecording,
+  canAttachImages,
+  attachImageDisabledReason,
 }: ChatComposerProps) {
   const { t } = useTranslation()
   const canInput = isConnected && hasDefaultModel
@@ -92,11 +108,36 @@ export function ChatComposer({
               size="icon"
               className="text-muted-foreground hover:text-foreground h-8 w-8 rounded-full"
               onClick={onAddImages}
-              disabled={!canInput}
+              disabled={!canInput || !canAttachImages}
               aria-label={t("chat.attachImage")}
-              title={t("chat.attachImage")}
+              title={
+                !canAttachImages && attachImageDisabledReason
+                  ? attachImageDisabledReason
+                  : t("chat.attachImage")
+              }
             >
               <IconPhotoPlus className="size-4" />
+            </Button>
+            <Button
+              type="button"
+              variant="ghost"
+              size="icon"
+              className={cn(
+                "h-8 w-8 rounded-full",
+                isRecording
+                  ? "text-rose-600 hover:text-rose-700"
+                  : "text-muted-foreground hover:text-foreground",
+              )}
+              onClick={onToggleRecording}
+              disabled={!canRecord}
+              aria-label={isRecording ? "Stop recording" : "Start recording"}
+              title={isRecording ? "Stop recording" : "Start recording"}
+            >
+              {isRecording ? (
+                <IconPlayerStop className="size-4" />
+              ) : (
+                <IconMicrophone className="size-4" />
+              )}
             </Button>
           </div>
 

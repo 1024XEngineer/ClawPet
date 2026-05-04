@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/base64"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"path/filepath"
 	"sync"
@@ -1760,12 +1761,24 @@ func (s *PetService) handleAudioFrame(sessionID string, req Request) error {
 		Data:       pcmData,
 	}
 
-	ctx, cancel := context.WithTimeout(context.Background(), 100*time.Millisecond)
+	ctx, cancel := context.WithTimeout(context.Background(), 1500*time.Millisecond)
 	err = s.msgBus.PublishAudioChunk(ctx, chunk)
 	cancel()
 	if err != nil {
-		logger.ErrorCF("pet", "Failed to publish audio chunk", map[string]any{"error": err.Error()})
-		return s.sendError(sessionID, req.Action, "语音识别失败，请重试")
+		errMsg := "语音识别失败，请重试"
+		if errors.Is(err, context.DeadlineExceeded) {
+			errMsg = "语音输入通道繁忙，请稍后重试"
+		}
+		if errors.Is(err, bus.ErrBusClosed) {
+			errMsg = "语音通道未就绪，请重启应用后重试"
+		}
+		logger.ErrorCF("pet", "Failed to publish audio chunk", map[string]any{
+			"error":     err.Error(),
+			"session_id": sessionID,
+			"sequence":  data.Sequence,
+			"chat_id":   chunk.ChatID,
+		})
+		return s.sendError(sessionID, req.Action, errMsg)
 	}
 
 	return s.sendResponse(sessionID, req.Action, map[string]bool{"received": true})

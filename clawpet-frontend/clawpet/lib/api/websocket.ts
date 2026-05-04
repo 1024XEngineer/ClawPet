@@ -1,7 +1,5 @@
 import {
   API_ENDPOINTS,
-  DIRECT_PICO_TOKEN_PATH,
-  DIRECT_PICO_WS_PATH,
   DIRECT_PET_TOKEN_PATH,
   DIRECT_PET_WS_PATH,
   getApiBaseUrl,
@@ -11,6 +9,8 @@ import {
 } from "./config"
 
 const CHAT_ACTION = "chat"
+const AUDIO_FRAME_ACTION = "audio_frame"
+const DEBUG_WS = process.env.NODE_ENV !== "production"
 
 const PUSH_TYPE_AI_CHAT = "ai_chat"
 const PUSH_TYPE_AUDIO = "audio"
@@ -131,6 +131,7 @@ export type WSEventType =
   | "disconnected"
   | "message"
   | "audio"
+  | "voice_progress"
   | "tool_status"
   | "typing"
   | "error"
@@ -171,6 +172,7 @@ export class PicoClawWebSocket {
     fail: (err: Error) => void
   } | null = null
   private pendingActionRequests: Map<string, PendingActionRequest[]> = new Map()
+  private voiceInputBlockedReason = ""
 
   async connect(): Promise<void> {
     return new Promise(async (resolve, reject) => {
@@ -207,7 +209,9 @@ export class PicoClawWebSocket {
         const { token, wsPath, wsBaseUrl, mode } =
           await this.resolveTokenAndPath()
         this.wsMode = mode
-        const query = `session=${encodeURIComponent(this.routeSessionId)}&session_id=${encodeURIComponent(this.routeSessionId)}`
+        this.voiceInputBlockedReason = ""
+        const encodedSession = encodeURIComponent(this.routeSessionId)
+        const query = `sessionId=${encodedSession}&session=${encodedSession}&session_id=${encodedSession}`
         const url = `${wsBaseUrl}${wsPath}?${query}`
         this.connectWebSocket(url, token)
       } catch (err) {
@@ -244,39 +248,23 @@ export class PicoClawWebSocket {
     // Priority 1: Direct Gateway (18790) - always try first
     const directGatewayBase = getDirectGatewayBaseUrl()
     if (isDirectGatewayEnabled() && directGatewayBase) {
-      candidates.push(
-        {
-          baseUrl: directGatewayBase,
-          tokenPath: DIRECT_PET_TOKEN_PATH,
-          wsPath: DIRECT_PET_WS_PATH,
-          authMode: "direct",
-        },
-        {
-          baseUrl: directGatewayBase,
-          tokenPath: DIRECT_PICO_TOKEN_PATH,
-          wsPath: DIRECT_PICO_WS_PATH,
-          authMode: "direct",
-        },
-      )
+      candidates.push({
+        baseUrl: directGatewayBase,
+        tokenPath: DIRECT_PET_TOKEN_PATH,
+        wsPath: DIRECT_PET_WS_PATH,
+        authMode: "direct",
+      })
     }
 
     // Priority 2: Launcher (18800) - fallback only
     const launcherBase = getApiBaseUrl().trim()
     if (launcherBase && launcherBase !== directGatewayBase) {
-      candidates.push(
-        {
-          baseUrl: launcherBase,
-          tokenPath: API_ENDPOINTS.PET.TOKEN,
-          wsPath: DIRECT_PET_WS_PATH,
-          authMode: "launcher",
-        },
-        {
-          baseUrl: launcherBase,
-          tokenPath: API_ENDPOINTS.PICO.TOKEN,
-          wsPath: DIRECT_PICO_WS_PATH,
-          authMode: "launcher",
-        },
-      )
+      candidates.push({
+        baseUrl: launcherBase,
+        tokenPath: API_ENDPOINTS.PET.TOKEN,
+        wsPath: DIRECT_PET_WS_PATH,
+        authMode: "launcher",
+      })
     }
 
     let lastError = "PET channel not available"
@@ -312,18 +300,22 @@ export class PicoClawWebSocket {
 
       const wsPathFromToken = this.normalizeWsPath(data.ws_url)
       const wsBaseUrl = this.normalizeWsBaseUrl(data.ws_url, candidate.baseUrl)
-      const hasExplicitPicoSignal =
-        data.protocol === "pico" || wsPathFromToken === DIRECT_PICO_WS_PATH
+      if (data.protocol === "pico" || wsPathFromToken === "/pico/ws") {
+        lastError = "PET channel unavailable: server returned pico channel"
+        continue
+      }
+
       const resolvedPath = wsPathFromToken || candidate.wsPath
-      const mode: WSMode =
-        hasExplicitPicoSignal || resolvedPath === DIRECT_PICO_WS_PATH
-          ? "pico"
-          : "pet"
+      if (resolvedPath !== DIRECT_PET_WS_PATH) {
+        lastError = `PET channel unavailable: unexpected ws path ${resolvedPath}`
+        continue
+      }
+
       return {
         token: data.token || "",
         wsPath: resolvedPath,
         wsBaseUrl,
-        mode,
+        mode: "pet",
       }
     }
 
@@ -400,6 +392,9 @@ export class PicoClawWebSocket {
       this.ws.onmessage = (event) => {
         try {
           const data = JSON.parse(event.data)
+          if (DEBUG_WS) {
+            console.info("[petclaw][ws][inbound]", data)
+          }
 
           if (this.wsMode === "pico") {
             this.handlePicoMessage(data as PicoWireMessage)
@@ -413,6 +408,9 @@ export class PicoClawWebSocket {
 
           this.handleResponse(data as PetResponse)
         } catch {
+          if (DEBUG_WS) {
+            console.warn("[petclaw][ws][inbound-invalid]", event.data)
+          }
           this.emit({ type: "error", data: "Invalid message format" })
         }
       }
@@ -771,10 +769,93 @@ export class PicoClawWebSocket {
     }
 
     if (resp.status === "error") {
-      const message =
+      const baseMessage =
         String(resp.error || (resp.data?.error as string) || "Unknown error")
+      const isAudioFrameGenericAsrFailure =
+        resp.action === AUDIO_FRAME_ACTION && /语音识别失败\s*，?\s*请重试/.test(baseMessage)
+      const audioFrameDetails =
+        resp.action === AUDIO_FRAME_ACTION
+          ? ` [audio_frame] ${baseMessage}; data=${JSON.stringify(resp.data || {})}`
+          : ""
+      const message = audioFrameDetails || baseMessage
+      if (/unknown action\s*:\s*audio_frame/i.test(message)) {
+        this.voiceInputBlockedReason = "当前服务不支持 audio_frame，请切换到 PET 语音通道。"
+      }
+      if (DEBUG_WS && resp.action === AUDIO_FRAME_ACTION) {
+        console.warn("[petclaw][ws][audio_frame][error]", {
+          error: baseMessage,
+          data: resp.data || {},
+          requestId: resp.request_id || "",
+          suppressed: isAudioFrameGenericAsrFailure,
+        })
+      }
+      if (isAudioFrameGenericAsrFailure) {
+        return
+      }
       this.emit({ type: "error", data: message })
+      return
     }
+
+    if (resp.action === AUDIO_FRAME_ACTION && resp.status === "ok") {
+      this.emit({
+        type: "voice_progress",
+        data: {
+          action: AUDIO_FRAME_ACTION,
+          received: Boolean(resp.data?.received),
+        },
+      })
+      return
+    }
+
+    if (resp.action === CHAT_ACTION && resp.status === "ok") {
+      const text = this.extractTextFromResponseData(resp.data)
+      if (!text) {
+        return
+      }
+      const timestamp = Date.now()
+      const messageId = `assistant-${timestamp}`
+      this.emit({
+        type: "message",
+        data: {
+          id: messageId,
+          role: "assistant",
+          content: text,
+          timestamp,
+          streaming: false,
+        } satisfies ChatMessage,
+      })
+      this.emit({ type: "typing", data: "false" })
+    }
+  }
+
+  private extractTextFromResponseData(data?: Record<string, unknown>): string {
+    if (!data) {
+      return ""
+    }
+
+    const direct =
+      (typeof data.text === "string" && data.text) ||
+      (typeof data.content === "string" && data.content) ||
+      (typeof data.message === "string" && data.message) ||
+      (typeof data.answer === "string" && data.answer) ||
+      (typeof data.response === "string" && data.response) ||
+      ""
+    if (direct) {
+      return normalizeIncomingText(direct)
+    }
+
+    const nested = data.data
+    if (nested && typeof nested === "object") {
+      const nestedObj = nested as Record<string, unknown>
+      const nestedText =
+        (typeof nestedObj.text === "string" && nestedObj.text) ||
+        (typeof nestedObj.content === "string" && nestedObj.content) ||
+        (typeof nestedObj.message === "string" && nestedObj.message) ||
+        ""
+      return normalizeIncomingText(nestedText)
+    }
+
+    return ""
   }
 
   async requestAction<T extends Record<string, unknown> = Record<string, unknown>>(
@@ -895,7 +976,47 @@ export class PicoClawWebSocket {
     })
   }
 
-  private sendAction(action: string, data?: Record<string, unknown>): void {
+  sendAudioFrame(audioBase64: string, sequence: number, sessionKey: string): boolean {
+    const normalizedAudio = audioBase64.trim()
+    const normalizedSessionKey = sessionKey.trim()
+    if (!normalizedAudio || !normalizedSessionKey) {
+      return false
+    }
+
+    if (this.wsMode === "pico") {
+      this.emit({ type: "error", data: "当前通道不支持语音输入" })
+      return false
+    }
+
+    if (this.voiceInputBlockedReason) {
+      this.emit({ type: "error", data: this.voiceInputBlockedReason })
+      return false
+    }
+
+    const timestampUint32 = Math.floor(Date.now() % 4294967296)
+
+    this.sendAction(
+      AUDIO_FRAME_ACTION,
+      {
+      audio: normalizedAudio,
+      format: "pcm",
+      sample_rate: 16000,
+      channels: 1,
+      sequence,
+      timestamp: timestampUint32,
+      session_key: normalizedSessionKey,
+      },
+      { queueIfDisconnected: false },
+    )
+    return true
+  }
+
+  private sendAction(
+    action: string,
+    data?: Record<string, unknown>,
+    options: { queueIfDisconnected?: boolean } = {},
+  ): void {
+    const queueIfDisconnected = options.queueIfDisconnected ?? true
     const requestId = `req-${++this.msgIdCounter}-${Date.now()}`
     const msg: PetRequest = {
       action,
@@ -905,6 +1026,11 @@ export class PicoClawWebSocket {
 
     if (this.ws?.readyState === WebSocket.OPEN) {
       this.sendRaw(msg)
+      return
+    }
+
+    if (!queueIfDisconnected) {
+      this.emit({ type: "error", data: "Connection not ready" })
       return
     }
 
@@ -952,6 +1078,25 @@ export class PicoClawWebSocket {
 
   get isConnected(): boolean {
     return this.ws?.readyState === WebSocket.OPEN
+  }
+
+  getVoiceInputAvailability(sessionKey?: string): {
+    available: boolean
+    reason: string
+  } {
+    if (this.voiceInputBlockedReason) {
+      return { available: false, reason: this.voiceInputBlockedReason }
+    }
+    if (this.wsMode !== "pet") {
+      return { available: false, reason: "当前不是 PET 通道，无法使用语音输入。" }
+    }
+    if (this.ws?.readyState !== WebSocket.OPEN) {
+      return { available: false, reason: "连接未建立，无法开始录音。" }
+    }
+    if (!sessionKey?.trim()) {
+      return { available: false, reason: "会话未就绪，无法开始录音。" }
+    }
+    return { available: true, reason: "" }
   }
 
   async getVoiceModelList(): Promise<PetResponse & { data?: VoiceModelListData }> {

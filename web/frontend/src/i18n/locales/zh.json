@@ -51,11 +51,21 @@
     "messagesCount": "{{count}} 条消息",
     "noModel": "选择模型",
     "attachImage": "添加图片",
+    "attachmentsUnsupportedInPetMode": "Pet 模式暂不支持图片附件。",
+    "attachmentsClearedForPetMode": "已切换到 Pet 模式，待发送图片附件已清空。",
     "removeImage": "移除图片",
     "uploadedImage": "已上传图片",
     "invalidImage": "“{{name}}”不是支持的图片文件。",
     "imageTooLarge": "“{{name}}”超过了 {{size}} 限制。",
     "imageReadFailed": "读取“{{name}}”失败。",
+    "audio": {
+      "recording": "录音中... 再次点击麦克风可停止。",
+      "recognizing": "语音识别中...",
+      "recognizingTimeout": "语音识别超时，请重试。",
+      "error": "语音输入失败，请重试。",
+      "notConnected": "连接未建立，无法开始录音。",
+      "recorderNotReady": "录音器尚未就绪，请稍后重试。"
+    },
     "empty": {
       "noConfiguredModel": "尚未配置模型",
       "noConfiguredModelDescription": "请先配置至少一个带有 API Key 的 AI 模型，才能开始对话。",

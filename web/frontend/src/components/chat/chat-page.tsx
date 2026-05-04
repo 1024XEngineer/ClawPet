@@ -17,6 +17,7 @@ import { PageHeader } from "@/components/page-header"
 import { Button } from "@/components/ui/button"
 import { useChatModels } from "@/hooks/use-chat-models"
 import { useGateway } from "@/hooks/use-gateway"
+import { useAudioInput } from "@/hooks/use-audio-input"
 import { usePicoChat } from "@/hooks/use-pico-chat"
 import { useSessionHistory } from "@/hooks/use-session-history"
 import type { ChatAttachment } from "@/store/chat"
@@ -60,6 +61,9 @@ export function ChatPage() {
     messages,
     connectionState,
     isTyping,
+    audioRecordingState,
+    audioError,
+    protocolMode,
     activeSessionId,
     sendMessage,
     switchSession,
@@ -204,6 +208,35 @@ export function ChatPage() {
   }
 
   const canSubmit = canSend && (Boolean(input.trim()) || attachments.length > 0)
+  const { isRecording, toggleRecording } = useAudioInput(canSend)
+  const canAttachImages = protocolMode !== "pet"
+  const attachImageDisabledReason = canAttachImages
+    ? undefined
+    : t("chat.attachmentsUnsupportedInPetMode")
+
+  useEffect(() => {
+    if (!audioError) {
+      return
+    }
+    toast.error(audioError)
+  }, [audioError])
+
+  useEffect(() => {
+    if (protocolMode !== "pet" || attachments.length === 0) {
+      return
+    }
+    setAttachments([])
+    toast.info(t("chat.attachmentsClearedForPetMode"))
+  }, [protocolMode, attachments.length, t])
+
+  const audioStatusText =
+    audioRecordingState === "recording"
+      ? t("chat.audio.recording")
+      : audioRecordingState === "recognizing"
+        ? t("chat.audio.recognizing")
+        : audioRecordingState === "error"
+          ? audioError || t("chat.audio.error")
+          : ""
 
   return (
     <div className="bg-background/95 flex h-full flex-col">
@@ -307,6 +340,12 @@ export function ChatPage() {
         </div>
       )}
 
+      {audioStatusText && (
+        <div className="border-border/70 bg-muted/45 text-muted-foreground flex items-center justify-center border-t px-4 py-2 text-xs">
+          <span>{audioStatusText}</span>
+        </div>
+      )}
+
       <ChatComposer
         input={input}
         attachments={attachments}
@@ -314,9 +353,16 @@ export function ChatPage() {
         onAddImages={handleAddImages}
         onRemoveAttachment={handleRemoveAttachment}
         onSend={handleSend}
+        onToggleRecording={() => {
+          void toggleRecording()
+        }}
         isConnected={isChatConnected}
         hasDefaultModel={Boolean(defaultModelName)}
         canSend={canSubmit}
+        canRecord={isChatConnected}
+        isRecording={isRecording}
+        canAttachImages={canAttachImages}
+        attachImageDisabledReason={attachImageDisabledReason}
       />
     </div>
   )

@@ -229,7 +229,9 @@ contextBridge.exposeInMainWorld('electronAPI', {
    * 获取当前启动状态
    * @returns {Promise<object>} 启动状态对象
    */
-  getStartupState: () => ipcRenderer.invoke('startup-state')
+  getStartupState: () => ipcRenderer.invoke('startup-state'),
+
+  ensureSettingsForeground: () => ipcRenderer.invoke('voice-ensure-settings-foreground')
 });
 
 function serializeForMainLog(value) {

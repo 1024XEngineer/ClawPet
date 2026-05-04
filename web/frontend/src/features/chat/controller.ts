@@ -13,6 +13,14 @@ import {
   readStoredSessionId,
 } from "@/features/chat/state"
 import {
+  createChatRequest,
+  createAudioFrameRequest,
+  isPetChannelEnvelope,
+  type PetAiChatPushData,
+  type PetChannelPush,
+  type PetChannelResponse,
+} from "@/features/chat/pet-protocol"
+import {
   invalidateSocket,
   isCurrentSocket,
   normalizeWsUrlForBrowser,
@@ -38,6 +46,11 @@ let connectionGeneration = 0
 let reconnectTimer: number | null = null
 let reconnectAttempts = 0
 let shouldMaintainConnection = false
+let activePetAssistantMessageId: string | null = null
+let currentProtocolMode: "pico" | "pet" = "pico"
+let recognizingFallbackTimer: number | null = null
+
+const RECOGNIZING_FALLBACK_MS = 15000
 
 function clearReconnectTimer() {
   if (reconnectTimer !== null) {
@@ -87,6 +100,43 @@ function setActiveSessionId(sessionId: string) {
   updateChatStore({ activeSessionId: sessionId })
 }
 
+function clearRecognizingFallbackTimer() {
+  if (recognizingFallbackTimer !== null) {
+    window.clearTimeout(recognizingFallbackTimer)
+    recognizingFallbackTimer = null
+  }
+}
+
+function scheduleRecognizingFallback() {
+  clearRecognizingFallbackTimer()
+  recognizingFallbackTimer = window.setTimeout(() => {
+    recognizingFallbackTimer = null
+    const state = getChatState()
+    if (state.audioRecordingState !== "recognizing") {
+      return
+    }
+
+    updateChatStore({
+      audioRecordingState: "idle",
+      audioError: i18n.t("chat.audio.recognizingTimeout"),
+      isTyping: false,
+    })
+  }, RECOGNIZING_FALLBACK_MS)
+}
+
+function resetAudioSessionState() {
+  clearRecognizingFallbackTimer()
+  updateChatStore({
+    audioRecordingState: "idle",
+    audioError: undefined,
+    audioSequence: 0,
+  })
+}
+
+export function getActiveSessionKey() {
+  return activeSessionIdRef
+}
+
 function disconnectChatInternal({
   clearDesiredConnection,
 }: {
@@ -102,6 +152,7 @@ function disconnectChatInternal({
   const socket = wsRef
   wsRef = null
   isConnecting = false
+  clearRecognizingFallbackTimer()
 
   invalidateSocket(socket)
 
@@ -109,6 +160,118 @@ function disconnectChatInternal({
     connectionState: "disconnected",
     isTyping: false,
   })
+}
+
+function handlePetChannelMessage(raw: unknown): boolean {
+  if (!isPetChannelEnvelope(raw)) {
+    return false
+  }
+
+  const message = raw as PetChannelResponse<Record<string, unknown>> &
+    PetChannelPush<Record<string, unknown>>
+
+  if (message.type === "push") {
+    if (message.push_type === "ai_chat") {
+      const aiData = (message.data || {}) as PetAiChatPushData
+      const chunkType = aiData.type || "text"
+      const textChunk = typeof aiData.text === "string" ? aiData.text : ""
+
+      if (chunkType === "final") {
+        clearRecognizingFallbackTimer()
+        activePetAssistantMessageId = null
+        updateChatStore({
+          isTyping: false,
+          audioRecordingState: "idle",
+          audioError: undefined,
+        })
+        return true
+      }
+
+      const incomingText = textChunk
+      if (!incomingText) {
+        return true
+      }
+
+      updateChatStore((prev) => {
+        const now = Date.now()
+        const currentId = activePetAssistantMessageId
+
+        if (!currentId) {
+          const newId = `pet-ai-${now}`
+          activePetAssistantMessageId = newId
+          return {
+            messages: [
+              ...prev.messages,
+              {
+                id: newId,
+                role: "assistant",
+                content: incomingText,
+                timestamp: now,
+              },
+            ],
+            isTyping: true,
+            audioRecordingState: "recognizing",
+            audioError: undefined,
+          }
+        }
+
+        return {
+          messages: prev.messages.map((msg) =>
+            msg.id === currentId
+              ? { ...msg, content: `${msg.content}${incomingText}` }
+              : msg,
+          ),
+          isTyping: true,
+          audioRecordingState: "recognizing",
+          audioError: undefined,
+        }
+      })
+      scheduleRecognizingFallback()
+      return true
+    }
+
+    if (message.push_type === "init_status") {
+      return true
+    }
+    return true
+  }
+
+  if (message.action === "chat") {
+    if (message.status === "error") {
+      clearRecognizingFallbackTimer()
+      updateChatStore({
+        isTyping: false,
+        audioRecordingState: "error",
+        audioError: message.error || "chat failed",
+      })
+    }
+    return true
+  }
+
+  if (message.action === "audio_frame") {
+    if (message.status === "ok") {
+      clearRecognizingFallbackTimer()
+      updateChatStore({ audioRecordingState: "recording", audioError: undefined })
+    } else if (message.status === "error") {
+      clearRecognizingFallbackTimer()
+      updateChatStore({
+        audioRecordingState: "error",
+        audioError: message.error || "audio_frame rejected",
+      })
+    }
+    return true
+  }
+
+  if (message.status === "error") {
+    clearRecognizingFallbackTimer()
+    updateChatStore({
+      audioRecordingState: "error",
+      audioError: message.error || "Pet channel error",
+    })
+    return true
+  }
+
+  return false
 }
 
 export async function connectChat() {
@@ -135,8 +298,10 @@ export async function connectChat() {
   updateChatStore({ connectionState: "connecting" })
 
   try {
-    const { token, ws_url } = await getPicoToken()
+    const { token, ws_url, protocol } = await getPicoToken()
     const sessionId = activeSessionIdRef
+    const protocolMode = protocol === "pet" ? "pet" : "pico"
+    currentProtocolMode = protocolMode
 
     if (generation !== connectionGeneration) {
       isConnecting = false
@@ -152,7 +317,10 @@ export async function connectChat() {
     }
 
     const finalWsUrl = normalizeWsUrlForBrowser(ws_url)
-    const url = `${finalWsUrl}?session_id=${encodeURIComponent(sessionId)}`
+    updateChatStore({ protocolMode })
+    const separator = finalWsUrl.includes("?") ? "&" : "?"
+    const sessionQueryKey = protocolMode === "pet" ? "sessionId" : "session_id"
+    const url = `${finalWsUrl}${separator}${sessionQueryKey}=${encodeURIComponent(sessionId)}`
     const socket = new WebSocket(url, [`token.${token}`])
 
     if (generation !== connectionGeneration) {
@@ -195,6 +363,9 @@ export async function connectChat() {
 
       try {
         const message = JSON.parse(event.data) as PicoMessage
+        if (handlePetChannelMessage(message)) {
+          return
+        }
         handlePicoMessage(message, sessionId)
       } catch {
         console.warn("Non-JSON message from pico:", event.data)
@@ -216,9 +387,11 @@ export async function connectChat() {
       }
       wsRef = null
       isConnecting = false
+      clearRecognizingFallbackTimer()
       updateChatStore({
         connectionState: "disconnected",
         isTyping: false,
+        audioRecordingState: "idle",
       })
       scheduleReconnect(generation, sessionId)
     }
@@ -237,7 +410,8 @@ export async function connectChat() {
         return
       }
       isConnecting = false
-      updateChatStore({ connectionState: "error" })
+      clearRecognizingFallbackTimer()
+      updateChatStore({ connectionState: "error", audioRecordingState: "error" })
       scheduleReconnect(generation, sessionId)
     }
 
@@ -351,6 +525,16 @@ export function sendChatMessage({
     return false
   }
 
+  if (currentProtocolMode === "pet" && normalizedAttachments.length > 0) {
+    toast.error(i18n.t("chat.attachmentsUnsupportedInPetMode"))
+    return false
+  }
+
+  if (!normalizedContent) {
+    toast.error("Text message is required")
+    return false
+  }
+
   const socket = wsRef
   const id = `msg-${++msgIdCounter}-${Date.now()}`
 
@@ -371,14 +555,9 @@ export function sendChatMessage({
 
   try {
     socket.send(
-      JSON.stringify({
-        type: "message.send",
-        id,
-        payload: {
-          content: normalizedContent,
-          media: normalizedAttachments.map((attachment) => attachment.url),
-        },
-      }),
+      JSON.stringify(
+        createChatRequest(normalizedContent, activeSessionIdRef, id),
+      ),
     )
     return true
   } catch (error) {
@@ -391,12 +570,80 @@ export function sendChatMessage({
   }
 }
 
+export function sendAudioFrame(
+  audioData: string,
+  sequence: number,
+  sessionKey: string,
+) {
+  if (!wsRef || wsRef.readyState !== WebSocket.OPEN) {
+    console.warn("WebSocket not connected for audio frame")
+    updateChatStore({
+      audioRecordingState: "error",
+      audioError: "WebSocket not connected",
+    })
+    return false
+  }
+
+  const normalizedAudio = audioData.trim()
+  const normalizedSessionKey = sessionKey.trim()
+  if (!normalizedAudio || !normalizedSessionKey) {
+    return false
+  }
+
+  const requestId = `audio-${++msgIdCounter}-${Date.now()}`
+
+  try {
+    wsRef.send(
+      JSON.stringify(
+        createAudioFrameRequest(
+          normalizedAudio,
+          sequence,
+          normalizedSessionKey,
+          requestId,
+        ),
+      ),
+    )
+
+    updateChatStore({
+      audioRecordingState: "recording",
+      audioError: undefined,
+      audioSequence: sequence,
+    })
+    return true
+  } catch (error) {
+    console.error("Failed to send audio frame:", error)
+    updateChatStore({
+      audioRecordingState: "error",
+      audioError: "Failed to send audio frame",
+    })
+    return false
+  }
+}
+
+export function setAudioRecordingState(state: "idle" | "recording" | "recognizing" | "error") {
+  if (state === "recognizing") {
+    scheduleRecognizingFallback()
+  } else {
+    clearRecognizingFallbackTimer()
+  }
+  updateChatStore({ audioRecordingState: state })
+}
+
+export function setAudioError(error?: string) {
+  updateChatStore({
+    audioError: error,
+    audioRecordingState: error ? "error" : "idle",
+  })
+}
+
 export async function switchChatSession(sessionId: string) {
   if (sessionId === activeSessionIdRef) {
     return
   }
 
   try {
+    activePetAssistantMessageId = null
+    resetAudioSessionState()
     const historyMessages = await loadSessionMessages(sessionId)
 
     disconnectChatInternal({ clearDesiredConnection: false })
@@ -418,6 +665,8 @@ export async function switchChatSession(sessionId: string) {
 }
 
 export async function newChatSession() {
+  activePetAssistantMessageId = null
+  resetAudioSessionState()
   disconnectChatInternal({ clearDesiredConnection: false })
   setActiveSessionId(generateSessionId())
   updateChatStore({

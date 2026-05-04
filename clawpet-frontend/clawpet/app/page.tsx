@@ -50,6 +50,7 @@ export default function Home() {
   >("medium")
   const [readyVisible, setReadyVisible] = useState(false)
   const [isElectronShell, setIsElectronShell] = useState(false)
+  const [isConsoleSurface, setIsConsoleSurface] = useState(false)
   const [layoutMode, setLayoutMode] = useState<LayoutMode>("full")
   const chat = useChat()
 
@@ -78,10 +79,33 @@ export default function Home() {
     const bootstrap = async () => {
       try {
         const searchParams = new URLSearchParams(window.location.search)
+        const pathname = window.location.pathname
         const hasForcedOnboarding = searchParams.get("onboarding") === "1"
         const isConsoleSurface = searchParams.get("surface") === "console"
+        setIsConsoleSurface(isConsoleSurface)
+
+        if (isConsoleSurface && window.location.pathname.startsWith("/onboarding")) {
+          const redirected = new URL(window.location.href)
+          redirected.pathname = "/"
+          redirected.searchParams.set("surface", "console")
+          window.location.replace(redirected.toString())
+          return
+        }
 
         if (isConsoleSurface) {
+          const onboardingState = loadOnboardingState()
+          if (onboardingState?.completed) {
+            applyMoodFromOnboardingState()
+          }
+          if (!cancelled) {
+            setBootState("ready")
+          }
+          return
+        }
+
+        // In Electron, settings/console window and onboarding window are separate.
+        // Any non-/onboarding route should render console content immediately.
+        if (window.electronAPI && !pathname.startsWith("/onboarding")) {
           const onboardingState = loadOnboardingState()
           if (onboardingState?.completed) {
             applyMoodFromOnboardingState()
@@ -161,13 +185,17 @@ export default function Home() {
       return
     }
 
+    if (isConsoleSurface) {
+      return
+    }
+
     const onboardingActive = bootState === "onboarding"
     window.electronAPI.setOnboardingMode(onboardingActive)
 
     return () => {
       window.electronAPI?.setOnboardingMode?.(false)
     }
-  }, [bootState])
+  }, [bootState, isConsoleSurface])
 
   useEffect(() => {
     if (typeof window === "undefined") {

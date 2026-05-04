@@ -6,6 +6,7 @@ interface PicoTokenResponse {
   token: string
   ws_url: string
   enabled: boolean
+  protocol?: "pico" | "pet"
 }
 
 interface PicoSetupResponse {
@@ -13,6 +14,7 @@ interface PicoSetupResponse {
   ws_url: string
   enabled: boolean
   changed: boolean
+  protocol?: "pico" | "pet"
 }
 
 const BASE_URL = ""
@@ -26,15 +28,15 @@ async function request<T>(path: string, options?: RequestInit): Promise<T> {
 }
 
 export async function getPicoToken(): Promise<PicoTokenResponse> {
-  return request<PicoTokenResponse>("/api/pico/token")
+  return request<PicoTokenResponse>("/api/pet/token")
 }
 
 export async function regenPicoToken(): Promise<PicoTokenResponse> {
-  return request<PicoTokenResponse>("/api/pico/token", { method: "POST" })
+  return request<PicoTokenResponse>("/api/pet/token", { method: "POST" })
 }
 
 export async function setupPico(): Promise<PicoSetupResponse> {
-  return request<PicoSetupResponse>("/api/pico/setup", { method: "POST" })
+  return request<PicoSetupResponse>("/api/pet/setup", { method: "POST" })
 }
 
 export type { PicoTokenResponse, PicoSetupResponse }
