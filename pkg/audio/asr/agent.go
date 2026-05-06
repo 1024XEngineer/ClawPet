@@ -165,16 +165,18 @@ func (a *speechAccumulator) Close() {
 type Agent struct {
 	bus         *bus.MessageBus
 	transcriber Transcriber
+	OnTranscription func(channel, sessionKey, chatID, text string)
 
 	mu       sync.Mutex
 	sessions map[string]*speechAccumulator // keyed by sessionID_speakerID
 }
 
-func NewAgent(mb *bus.MessageBus, t Transcriber) *Agent {
+func NewAgent(mb *bus.MessageBus, t Transcriber, onTranscription func(channel, sessionKey, chatID, text string)) *Agent {
 	return &Agent{
-		bus:         mb,
-		transcriber: t,
-		sessions:    make(map[string]*speechAccumulator),
+		bus:             mb,
+		transcriber:     t,
+		OnTranscription: onTranscription,
+		sessions:        make(map[string]*speechAccumulator),
 	}
 }
 
@@ -375,6 +377,10 @@ func (a *Agent) processUtterance(ctx context.Context, acc *speechAccumulator) {
 		"session_key": acc.sessionKey,
 		"chat_id":     acc.chatID,
 	})
+
+	if a.OnTranscription != nil {
+		a.OnTranscription(acc.channel, acc.sessionKey, acc.chatID, res.Text)
+	}
 
 	channelType := acc.channel
 	if channelType == "" {

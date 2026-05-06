@@ -16,6 +16,7 @@ const PUSH_TYPE_AI_CHAT = "ai_chat"
 const PUSH_TYPE_AUDIO = "audio"
 const PUSH_TYPE_AUDIO_AND_VOICE = "audio_and_voice"
 const PUSH_TYPE_TEXT_AND_AUDIO = "text_and_audio"
+const PUSH_TYPE_ASR = "asr"
 const PUSH_TYPE_EMOTION_CHANGE = "emotion_change"
 const PUSH_TYPE_ACTION_TRIGGER = "action_trigger"
 
@@ -131,6 +132,7 @@ export type WSEventType =
   | "disconnected"
   | "message"
   | "audio"
+  | "asr"
   | "voice_progress"
   | "tool_status"
   | "typing"
@@ -464,6 +466,9 @@ export class PicoClawWebSocket {
       case PUSH_TYPE_TEXT_AND_AUDIO:
         this.handleAudioPush(data, Boolean(push.is_final))
         break
+      case PUSH_TYPE_ASR:
+        this.handleASRPush(data)
+        break
       case PUSH_TYPE_EMOTION_CHANGE:
         this.handleEmotionChangePush(data)
         break
@@ -664,12 +669,40 @@ export class PicoClawWebSocket {
     this.emit({ type: "audio", data: payload })
   }
 
+  private handleASRPush(data: unknown): void {
+    if (typeof data !== "object" || data === null) {
+      return
+    }
+    const payload = data as Record<string, unknown>
+    const text =
+      (typeof payload.text === "string" && payload.text) ||
+      (typeof payload.Text === "string" && payload.Text) ||
+      ""
+    if (!text) {
+      return
+    }
+    const chatId = payload.chat_id ?? payload.chatId
+    this.emit({
+      type: "asr",
+      data: { text, chat_id: chatId },
+    })
+  }
+
   private projectAudioTextChunk(payload: Record<string, unknown>): void {
     const text =
       (typeof payload.text === "string" && payload.text) ||
       (typeof payload.Text === "string" && payload.Text) ||
       ""
     if (!text) {
+      return
+    }
+
+    if (payload.role === "user") {
+      const chatId = payload.chat_id ?? payload.chatId
+      this.emit({
+        type: "asr",
+        data: { text, chat_id: chatId },
+      })
       return
     }
 

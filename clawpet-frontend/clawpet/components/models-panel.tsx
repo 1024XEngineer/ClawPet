@@ -11,7 +11,7 @@ interface ModelsPanelProps {
   onDefaultModelChange?: (modelName: string) => void
 }
 
-export function ModelsPanel({ onClose }: ModelsPanelProps) {
+export function ModelsPanel({ onClose, onDefaultModelChange }: ModelsPanelProps) {
   const [models, setModels] = useState<ModelInfo[]>([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)

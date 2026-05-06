@@ -1273,3 +1273,23 @@ func (m *Manager) SendToChannel(ctx context.Context, channelName, chatID, conten
 	_, err := channel.Send(ctx, msg)
 	return err
 }
+
+// SendASRResult sends ASR transcription result to the frontend via the pet channel.
+// This is a no-op for non-pet channels.
+func (m *Manager) SendASRResult(channelName, sessionID, chatID, text string) {
+	m.mu.RLock()
+	ch, ok := m.channels[channelName]
+	m.mu.RUnlock()
+
+	if !ok {
+		return
+	}
+
+	// Type assert to petChannel to call SendASRResult
+	type asrSender interface {
+		SendASRResult(sessionID, chatID, text string)
+	}
+	if sender, ok := ch.(asrSender); ok {
+		sender.SendASRResult(sessionID, chatID, text)
+	}
+}

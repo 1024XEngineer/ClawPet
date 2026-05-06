@@ -5,6 +5,7 @@ import (
 	"strings"
 
 	"github.com/sipeed/picoclaw/pkg/config"
+	"github.com/sipeed/picoclaw/pkg/logger"
 	"github.com/sipeed/picoclaw/pkg/providers"
 )
 
@@ -80,6 +81,23 @@ func transcriberFromModelConfig(modelCfg *config.ModelConfig) Transcriber {
 	protocol, _ := providers.ExtractProtocol(modelCfg.Model)
 	if protocol == "elevenlabs" && modelCfg.APIKey() != "" {
 		return NewElevenLabsTranscriber(modelCfg.APIKey(), modelCfg.APIBase)
+	}
+	if protocol == "baidu" && modelCfg.APIKey() != "" {
+		appID := ""
+		secretKey := ""
+		if modelCfg.ExtraBody != nil {
+			if v, ok := modelCfg.ExtraBody["app_id"].(string); ok {
+				appID = v
+			}
+			if v, ok := modelCfg.ExtraBody["secret_key"].(string); ok {
+				secretKey = v
+			}
+		}
+		if appID != "" && secretKey != "" {
+			return NewBaiduTranscriber(appID, modelCfg.APIKey(), secretKey)
+		}
+		logger.WarnCF("voice", "Baidu ASR missing app_id or secret_key in ExtraBody", nil)
+		return nil
 	}
 	if modelID := whisperModelID(modelCfg); modelID != "" {
 		return NewWhisperTranscriber(modelCfg)

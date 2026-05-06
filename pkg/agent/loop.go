@@ -1173,7 +1173,7 @@ func (al *AgentLoop) transcribeAudioInMessage(ctx context.Context, msg bus.Inbou
 		return msg, false
 	}
 
-	al.sendTranscriptionFeedback(ctx, msg.Channel, msg.ChatID, msg.MessageID, transcriptions)
+	al.sendTranscriptionFeedback(ctx, msg.Channel, msg.ChatID, msg.MessageID, msg.SessionKey, transcriptions)
 
 	// Replace audio annotations sequentially with transcriptions.
 	idx := 0
@@ -1207,12 +1207,9 @@ func (al *AgentLoop) transcribeAudioInMessage(ctx context.Context, msg bus.Inbou
 // ordering with the subsequent placeholder is guaranteed.
 func (al *AgentLoop) sendTranscriptionFeedback(
 	ctx context.Context,
-	channel, chatID, messageID string,
+	channel, chatID, messageID, sessionKey string,
 	validTexts []string,
 ) {
-	if !al.cfg.Voice.EchoTranscription {
-		return
-	}
 	if al.channelManager == nil {
 		return
 	}
@@ -1224,13 +1221,20 @@ func (al *AgentLoop) sendTranscriptionFeedback(
 		}
 	}
 
-	var feedbackMsg string
-	if len(nonEmpty) > 0 {
-		feedbackMsg = "Transcript: " + strings.Join(nonEmpty, "\n")
-	} else {
-		feedbackMsg = "No voice detected in the audio"
+	if len(nonEmpty) == 0 {
+		return
 	}
 
+	// Send ASR transcription to frontend as user message (for display in chat)
+	asrText := nonEmpty[0]
+	al.channelManager.SendASRResult(channel, sessionKey, chatID, asrText)
+
+	// If EchoTranscription is enabled, also send the formatted feedback
+	if !al.cfg.Voice.EchoTranscription {
+		return
+	}
+
+	feedbackMsg := "Transcript: " + strings.Join(nonEmpty, "\n")
 	err := al.channelManager.SendMessage(ctx, bus.OutboundMessage{
 		Channel:          channel,
 		ChatID:           chatID,

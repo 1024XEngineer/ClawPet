@@ -11,13 +11,6 @@ interface UseVoiceInputOptions {
   sessionKey?: string
 }
 
-interface MicProbeResult {
-  avgRms: number
-  maxRms: number
-  samples: number
-  hasSignal: boolean
-}
-
 type VoicePhase = "idle" | "recording" | "recognizing" | "error"
 
 const TARGET_SAMPLE_RATE = 16000
@@ -115,7 +108,7 @@ function downsampleTo16k(input: Float32Array, sourceSampleRate: number): Float32
 }
 
 export function useVoiceInput(options: UseVoiceInputOptions = {}) {
-  const { onError, canRecord = true, sessionKey = "" } = options
+  const { onResult, onError, canRecord = true, sessionKey = "" } = options
   const [isListening, setIsListening] = useState(false)
   const [isSupported, setIsSupported] = useState(false)
   const [phase, setPhase] = useState<VoicePhase>("idle")
@@ -158,6 +151,7 @@ export function useVoiceInput(options: UseVoiceInputOptions = {}) {
   const captureHealthFailedRef = useRef(false)
   const hasReceivedSamplesRef = useRef(false)
   const recognizingHasResultRef = useRef(false)
+  const hasReceivedAnyResponseRef = useRef(false)
   const workletTickCountRef = useRef(0)
   const scriptProcessCallbacksRef = useRef(0)
   const scriptProcessSampleCountRef = useRef(0)
@@ -324,13 +318,6 @@ export function useVoiceInput(options: UseVoiceInputOptions = {}) {
         }
         mediaRecorderProbeChunkCountRef.current += 1
         mediaRecorderProbeBytesRef.current += size
-        if (mediaRecorderProbeChunkCountRef.current <= 3) {
-          debugLog("media recorder probe chunk", {
-            chunks: mediaRecorderProbeChunkCountRef.current,
-            chunkBytes: size,
-            totalBytes: mediaRecorderProbeBytesRef.current,
-          })
-        }
       }
       recorder.onerror = () => {
         mediaRecorderProbeErrorCountRef.current += 1
@@ -446,9 +433,7 @@ export function useVoiceInput(options: UseVoiceInputOptions = {}) {
       try {
         const ctx = audioContextRef.current
         if (ctx && ctx.state === "suspended") {
-          void ctx.resume().then(() => {
-            debugLog("audio context resumed by polling fallback")
-          }).catch(() => {
+          void ctx.resume().catch(() => {
           })
         }
         analyser.getFloatTimeDomainData(buffer)
@@ -457,12 +442,6 @@ export function useVoiceInput(options: UseVoiceInputOptions = {}) {
         scriptProcessSampleCountRef.current += copy.length
         analyserPollTicksRef.current += 1
         lastPollTickAtRef.current = Date.now()
-        if (analyserPollTicksRef.current % POLL_TICK_LOG_INTERVAL === 0) {
-          debugLog("analyser polling tick", {
-            ticks: analyserPollTicksRef.current,
-            sentFrames: sentFrameCountRef.current,
-          })
-        }
         handleIncomingSamples(wsClient, copy, sourceSampleRate)
       } catch (err) {
         debugLog("analyser polling error", {
@@ -494,9 +473,7 @@ export function useVoiceInput(options: UseVoiceInputOptions = {}) {
       try {
         const ctx = audioContextRef.current
         if (ctx && ctx.state === "suspended") {
-          void ctx.resume().then(() => {
-            debugLog("audio context resumed by raf loop")
-          }).catch(() => {
+          void ctx.resume().catch(() => {
           })
         }
         analyser.getFloatTimeDomainData(buffer)
@@ -505,12 +482,6 @@ export function useVoiceInput(options: UseVoiceInputOptions = {}) {
         scriptProcessSampleCountRef.current += copy.length
         rafPollTicksRef.current += 1
         lastRafTickAtRef.current = Date.now()
-        if (rafPollTicksRef.current % (POLL_TICK_LOG_INTERVAL * 4) === 0) {
-          debugLog("raf main loop tick", {
-            ticks: rafPollTicksRef.current,
-            sentFrames: sentFrameCountRef.current,
-          })
-        }
         handleIncomingSamples(wsClient, copy, sourceSampleRate)
       } catch (err) {
         debugLog("raf main loop error", {
@@ -539,16 +510,9 @@ export function useVoiceInput(options: UseVoiceInputOptions = {}) {
         return
       }
       watchdogRestartCountRef.current += 1
-      debugLog("sampling watchdog restart", {
-        restarts: watchdogRestartCountRef.current,
-        rafTicks: rafPollTicksRef.current,
-        analyserTicks: analyserPollTicksRef.current,
-      })
       const ctx = audioContextRef.current
       if (ctx && ctx.state === "suspended") {
-        void ctx.resume().then(() => {
-          debugLog("audio context resumed by watchdog")
-        }).catch(() => {
+        void ctx.resume().catch(() => {
         })
       }
       startRafSamplingLoop(wsClient, sourceSampleRate)
@@ -724,7 +688,7 @@ export function useVoiceInput(options: UseVoiceInputOptions = {}) {
       }
     }, MOCK_FRAME_MS)
 
-    debugLog("mock voice capture enabled", { frameMs: MOCK_FRAME_MS })
+    
   }, [clearMockCaptureTimer, debugLog, emitFrame, onError, sessionKey, setPhaseState, stopCapture])
 
   const startRecognizingTimeout = useCallback(() => {
@@ -772,25 +736,39 @@ export function useVoiceInput(options: UseVoiceInputOptions = {}) {
       if (phaseRef.current !== "recognizing") {
         return
       }
-      if (
-        event.type === "voice_progress" ||
-        event.type === "typing" ||
-        event.type === "message" ||
-        event.type === "audio"
-      ) {
-        debugLog("recognizing progress", { eventType: event.type })
-        startNoProgressTimeout()
+      if (event.type === "typing") {
+        if (event.data === "true" || event.data === true) {
+          startNoProgressTimeout()
+          recognizingHasResultRef.current = true
+          hasReceivedAnyResponseRef.current = true
+        }
       }
       if (event.type === "message" && typeof event.data === "object" && event.data) {
         const message = event.data as { role?: string; content?: string; streaming?: boolean }
         if (message.role === "assistant" && typeof message.content === "string" && message.content.trim()) {
           recognizingHasResultRef.current = true
+          hasReceivedAnyResponseRef.current = true
         }
       }
       if (event.type === "audio" && typeof event.data === "object" && event.data) {
-        const audioPayload = event.data as { text?: string }
+        const audioPayload = event.data as { text?: string; is_final?: boolean }
         if (typeof audioPayload.text === "string" && audioPayload.text.trim()) {
           recognizingHasResultRef.current = true
+          hasReceivedAnyResponseRef.current = true
+        }
+        if (audioPayload.is_final) {
+          clearRecognizingTimeout()
+          clearNoProgressTimeout()
+          setError(null)
+          setPhaseState("idle")
+        }
+      }
+      if (event.type === "asr" && typeof event.data === "object" && event.data) {
+        const asrPayload = event.data as { text?: string }
+        if (typeof asrPayload.text === "string" && asrPayload.text.trim()) {
+          recognizingHasResultRef.current = true
+          hasReceivedAnyResponseRef.current = true
+          onResult?.(asrPayload.text)
         }
       }
       if (event.type === "typing" && event.data === "false") {
@@ -799,26 +777,18 @@ export function useVoiceInput(options: UseVoiceInputOptions = {}) {
         if (recognizingHasResultRef.current) {
           setError(null)
           setPhaseState("idle")
-        } else {
+        } else if (!hasReceivedAnyResponseRef.current) {
           const message = "未识别到语音内容，请重试。"
           setPhaseState("error")
           setError(message)
           onError?.(message)
         }
         recognizingHasResultRef.current = false
+        hasReceivedAnyResponseRef.current = false
       }
       if (event.type === "message" && typeof event.data === "object" && event.data) {
         const message = event.data as { role?: string; streaming?: boolean }
         if (message.role === "assistant" && message.streaming === false) {
-          clearRecognizingTimeout()
-          clearNoProgressTimeout()
-          setError(null)
-          setPhaseState("idle")
-        }
-      }
-      if (event.type === "audio" && typeof event.data === "object" && event.data) {
-        const audio = event.data as { is_final?: boolean }
-        if (audio.is_final) {
           clearRecognizingTimeout()
           clearNoProgressTimeout()
           setError(null)
@@ -832,7 +802,7 @@ export function useVoiceInput(options: UseVoiceInputOptions = {}) {
       clearRecognizingTimeout()
       clearNoProgressTimeout()
     }
-  }, [clearNoProgressTimeout, clearRecognizingTimeout, debugLog, onError, setPhaseState, startNoProgressTimeout])
+  }, [clearNoProgressTimeout, clearRecognizingTimeout, debugLog, onError, onResult, setPhaseState, startNoProgressTimeout])
 
   useEffect(() => {
     if (!isSupported) {
@@ -976,19 +946,9 @@ export function useVoiceInput(options: UseVoiceInputOptions = {}) {
         stopCapture()
         return
       }
-      debugLog("audio context state", {
-        state: context.state,
-        sampleRate: context.sampleRate,
-      })
       if (!context.audioWorklet) {
         throw new Error("当前环境不支持语音输入")
       }
-      const firstTrack = mediaStreamRef.current.getAudioTracks()[0]
-      debugLog("media track state", {
-        readyState: firstTrack?.readyState || "unknown",
-        enabled: firstTrack?.enabled ?? false,
-        muted: firstTrack?.muted ?? false,
-      })
       sourceNodeRef.current = context.createMediaStreamSource(mediaStreamRef.current)
       const sourceSampleRate = context.sampleRate
       analyserNodeRef.current = context.createAnalyser()
@@ -1056,12 +1016,6 @@ export function useVoiceInput(options: UseVoiceInputOptions = {}) {
             const copy = new Float32Array(channel.length)
             copy.set(channel)
             scriptProcessSampleCountRef.current += copy.length
-            if (scriptProcessCallbacksRef.current <= 3) {
-              debugLog("script processor callback", {
-                callbacks: scriptProcessCallbacksRef.current,
-                samples: copy.length,
-              })
-            }
             handleIncomingSamples(wsClient, copy, sourceSampleRate, true)
           } catch (processErr) {
             const processMessage = processErr instanceof Error ? processErr.message : "语音输入失败，请重试。"
@@ -1119,7 +1073,6 @@ export function useVoiceInput(options: UseVoiceInputOptions = {}) {
         workletNodeRef.current.port.onmessage = (event: MessageEvent<{ samples?: Float32Array; kind?: string; tick?: number }>) => {
           if (event.data?.kind === "tick") {
             workletTickCountRef.current += 1
-            debugLog("audio worklet tick", { tick: event.data.tick ?? 0 })
             return
           }
           try {
@@ -1334,7 +1287,6 @@ export function useVoiceInput(options: UseVoiceInputOptions = {}) {
         }
         sampleBufferRef.current = []
         emitFrame(wsClient, remainder, contextRate, sessionKey)
-        debugLog("flushed trailing audio samples", { flushedSamples: remainder.length })
       } catch (err) {
         const message = err instanceof Error ? err.message : "语音输入失败，请重试。"
         setPhaseState("error")
@@ -1426,10 +1378,11 @@ export function useVoiceInput(options: UseVoiceInputOptions = {}) {
       mediaRecorderProbeErrors: finalStats.mediaRecorderProbeErrors,
       captureHealthFailed: finalStats.captureHealthFailed,
     })
-    recognizingHasResultRef.current = false
     setPhaseState("recognizing")
     startRecognizingTimeout()
     startNoProgressTimeout()
+    recognizingHasResultRef.current = false
+    hasReceivedAnyResponseRef.current = false
     stoppingRef.current = false
   }, [debugLog, emitFrame, onError, sessionKey, setPhaseState, startNoProgressTimeout, startRecognizingTimeout, stopCapture])
 
@@ -1461,251 +1414,6 @@ export function useVoiceInput(options: UseVoiceInputOptions = {}) {
     }
   }, [isListening, onError, setPhaseState, startListening, stopCapture, stopListening])
 
-  const sendMockFrameOnce = useCallback(() => {
-    const wsClient = wsRef.current as {
-      sendAudioFrame?: (audioBase64: string, sequence: number, sessionKey: string) => boolean
-      getVoiceInputAvailability?: (sessionKey?: string) => { available: boolean; reason: string }
-    }
-    const availability = wsClient.getVoiceInputAvailability?.(sessionKey)
-    if (availability && !availability.available) {
-      const message = availability.reason || "语音通道未就绪，请稍后重试。"
-      setPhaseState("error")
-      setError(message)
-      onError?.(message)
-      return false
-    }
-
-    const twoPi = Math.PI * 2
-    let phase = 0
-    const frequency = 440
-    const samples = new Float32Array(FRAME_SIZE)
-    for (let i = 0; i < FRAME_SIZE; i += 1) {
-      samples[i] = Math.sin(phase) * 0.2
-      phase += (twoPi * frequency) / TARGET_SAMPLE_RATE
-      if (phase >= twoPi) {
-        phase -= twoPi
-      }
-    }
-
-    try {
-      emitFrame(wsClient, samples, TARGET_SAMPLE_RATE, sessionKey)
-      setError(null)
-      debugLog("manual mock frame sent")
-      return true
-    } catch (err) {
-      const message = err instanceof Error ? err.message : "语音输入失败，请重试。"
-      setPhaseState("error")
-      setError(message)
-      onError?.(message)
-      return false
-    }
-  }, [debugLog, emitFrame, onError, sessionKey, setPhaseState])
-
-  const sendMockFrameBurst = useCallback(async (count = 20, intervalMs = 60) => {
-    const total = Math.max(1, Math.floor(count))
-    const gap = Math.max(0, Math.floor(intervalMs))
-    let sent = 0
-    for (let i = 0; i < total; i += 1) {
-      const ok = sendMockFrameOnce()
-      if (!ok) {
-        break
-      }
-      sent += 1
-      if (gap > 0 && i < total - 1) {
-        await new Promise<void>((resolve) => {
-          window.setTimeout(() => resolve(), gap)
-        })
-      }
-    }
-    debugLog("manual mock burst finished", { requested: total, sent })
-    if (sent > 0) {
-      clearRecognizingTimeout()
-      clearNoProgressTimeout()
-      recognizingHasResultRef.current = false
-      setError(null)
-      setPhaseState("recognizing")
-      startRecognizingTimeout()
-      startNoProgressTimeout()
-    }
-    return sent
-  }, [
-    clearNoProgressTimeout,
-    clearRecognizingTimeout,
-    debugLog,
-    sendMockFrameOnce,
-    setPhaseState,
-    startNoProgressTimeout,
-    startRecognizingTimeout,
-  ])
-
-  const sendMockVoiceLikeBurst = useCallback(async (durationMs = 1800, frameMs = 64) => {
-    const wsClient = wsRef.current as {
-      sendAudioFrame?: (audioBase64: string, sequence: number, sessionKey: string) => boolean
-      getVoiceInputAvailability?: (sessionKey?: string) => { available: boolean; reason: string }
-    }
-    const availability = wsClient.getVoiceInputAvailability?.(sessionKey)
-    if (availability && !availability.available) {
-      const message = availability.reason || "语音通道未就绪，请稍后重试。"
-      setPhaseState("error")
-      setError(message)
-      onError?.(message)
-      return 0
-    }
-
-    const frameSamples = Math.max(256, Math.floor((TARGET_SAMPLE_RATE * frameMs) / 1000))
-    const totalFrames = Math.max(1, Math.floor(durationMs / frameMs))
-    let phaseA = 0
-    let phaseB = 0
-    let sent = 0
-
-    for (let frameIndex = 0; frameIndex < totalFrames; frameIndex += 1) {
-      const t = frameIndex / totalFrames
-      const env = Math.sin(Math.PI * Math.min(1, Math.max(0, t)))
-      const f0 = 110 + 90 * Math.sin(t * Math.PI * 3)
-      const f1 = 420 + 160 * Math.sin(t * Math.PI * 5)
-      const samples = new Float32Array(frameSamples)
-
-      for (let i = 0; i < frameSamples; i += 1) {
-        phaseA += (Math.PI * 2 * f0) / TARGET_SAMPLE_RATE
-        phaseB += (Math.PI * 2 * f1) / TARGET_SAMPLE_RATE
-        if (phaseA >= Math.PI * 2) phaseA -= Math.PI * 2
-        if (phaseB >= Math.PI * 2) phaseB -= Math.PI * 2
-        const voiced = Math.sin(phaseA) * 0.28 + Math.sin(phaseB) * 0.12
-        const noise = (Math.random() * 2 - 1) * 0.03
-        samples[i] = (voiced + noise) * env
-      }
-
-      try {
-        emitFrame(wsClient, samples, TARGET_SAMPLE_RATE, sessionKey)
-        sent += 1
-      } catch (err) {
-        const message = err instanceof Error ? err.message : "语音输入失败，请重试。"
-        setPhaseState("error")
-        setError(message)
-        onError?.(message)
-        break
-      }
-
-      if (frameIndex < totalFrames - 1) {
-        await new Promise<void>((resolve) => {
-          window.setTimeout(() => resolve(), Math.max(0, frameMs - 8))
-        })
-      }
-    }
-
-    debugLog("manual mock voice-like burst finished", { durationMs, frameMs, sent })
-    if (sent > 0) {
-      clearRecognizingTimeout()
-      clearNoProgressTimeout()
-      recognizingHasResultRef.current = false
-      setError(null)
-      setPhaseState("recognizing")
-      startRecognizingTimeout()
-      startNoProgressTimeout()
-    }
-    return sent
-  }, [
-    clearNoProgressTimeout,
-    clearRecognizingTimeout,
-    debugLog,
-    emitFrame,
-    onError,
-    sessionKey,
-    setPhaseState,
-    startNoProgressTimeout,
-    startRecognizingTimeout,
-  ])
-
-  const runMicProbe = useCallback(async (): Promise<MicProbeResult | null> => {
-    if (!navigator?.mediaDevices?.getUserMedia) {
-      const message = "当前环境不支持麦克风测试。"
-      setPhaseState("error")
-      setError(message)
-      onError?.(message)
-      return null
-    }
-
-    let stream: MediaStream | null = null
-    let context: AudioContext | null = null
-    try {
-      setError(null)
-      stream = await navigator.mediaDevices.getUserMedia({ audio: true })
-      context = new AudioContext()
-      if (context.state !== "running") {
-        await context.resume()
-      }
-      const source = context.createMediaStreamSource(stream)
-      const analyser = context.createAnalyser()
-      analyser.fftSize = 2048
-      source.connect(analyser)
-
-      const frames = 18
-      const gapMs = 120
-      const buffer = new Float32Array(analyser.fftSize)
-      let total = 0
-      let max = 0
-
-      for (let i = 0; i < frames; i += 1) {
-        analyser.getFloatTimeDomainData(buffer)
-        let sum = 0
-        for (let j = 0; j < buffer.length; j += 1) {
-          sum += buffer[j] * buffer[j]
-        }
-        const rms = Math.sqrt(sum / buffer.length)
-        total += rms
-        if (rms > max) {
-          max = rms
-        }
-        await new Promise<void>((resolve) => {
-          window.setTimeout(() => resolve(), gapMs)
-        })
-      }
-
-      const avg = total / frames
-      const hasSignal = max > 0.003
-      const result: MicProbeResult = {
-        avgRms: avg,
-        maxRms: max,
-        samples: frames,
-        hasSignal,
-      }
-
-      debugLog("mic probe finished", {
-        avgRms: avg,
-        maxRms: max,
-        samples: frames,
-        hasSignal,
-      })
-
-      if (!hasSignal) {
-        const message = "麦克风通道打开但未检测到有效声音信号。"
-        setPhaseState("error")
-        setError(message)
-        onError?.(message)
-      } else {
-        setPhaseState("idle")
-        setError(`麦克风测试通过（maxRms=${max.toFixed(4)}）`)
-      }
-
-      return result
-    } catch (err) {
-      const message = err instanceof Error ? err.message : "麦克风测试失败"
-      setPhaseState("error")
-      setError(message)
-      onError?.(message)
-      return null
-    } finally {
-      if (stream) {
-        for (const track of stream.getTracks()) {
-          track.stop()
-        }
-      }
-      if (context) {
-        void context.close()
-      }
-    }
-  }, [debugLog, onError, setPhaseState])
-
   return {
     isListening,
     isSupported,
@@ -1715,9 +1423,5 @@ export function useVoiceInput(options: UseVoiceInputOptions = {}) {
     startListening,
     stopListening,
     toggleListening,
-    sendMockFrameOnce,
-    sendMockFrameBurst,
-    sendMockVoiceLikeBurst,
-    runMicProbe,
   }
 }

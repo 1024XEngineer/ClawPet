@@ -410,7 +410,10 @@ func setupAndStartServices(
 		// Start Voice Agent Orchestrator after channels are ready.
 		vaCtx, vaCancel := context.WithCancel(context.Background())
 		runningServices.VoiceAgentCancel = vaCancel
-		voiceAgent := asr.NewAgent(msgBus, transcriber)
+		voiceAgent := asr.NewAgent(msgBus, transcriber, func(channel, sessionKey, chatID, text string) {
+			// chatID is the WebSocket sessionID used by pet channel connections
+			runningServices.ChannelManager.SendASRResult(channel, chatID, chatID, text)
+		})
 		voiceAgent.Start(vaCtx)
 	}
 
@@ -630,7 +633,10 @@ func restartServices(
 		// Start Voice Agent Orchestrator on reload
 		vaCtx, vaCancel := context.WithCancel(context.Background())
 		runningServices.VoiceAgentCancel = vaCancel
-		voiceAgent := asr.NewAgent(msgBus, transcriber)
+		voiceAgent := asr.NewAgent(msgBus, transcriber, func(channel, sessionKey, chatID, text string) {
+			// chatID is the WebSocket sessionID used by pet channel connections
+			runningServices.ChannelManager.SendASRResult(channel, chatID, chatID, text)
+		})
 		voiceAgent.Start(vaCtx)
 	} else {
 		logger.InfoCF("voice", "Transcription disabled", nil)

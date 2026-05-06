@@ -144,9 +144,13 @@ func (s *SecureStrings) UnmarshalJSON(value []byte) error {
 	if string(value) == notHere {
 		return nil
 	}
+	var str string
+	if err := json.Unmarshal(value, &str); err == nil {
+		*s = []*SecureString{NewSecureString(str)}
+		return nil
+	}
 	var v []*SecureString
-	err := json.Unmarshal(value, &v)
-	if err != nil {
+	if err := json.Unmarshal(value, &v); err != nil {
 		return err
 	}
 	*s = v

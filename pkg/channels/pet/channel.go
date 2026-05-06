@@ -942,11 +942,41 @@ func (c *PetChannel) sendVoicePush(sessionID string, pushType string, data any) 
 				IsFinal:   false,
 				Timestamp: time.Now().Unix(),
 			}); err != nil {
-				return err
+				logger.Warnf("pet: failed to send voice push to conn_id=%s: %v", pc.id, err)
 			}
 		}
 	}
 	return nil
+}
+
+// SendASRResult 发送语音识别结果到前端（作为用户消息展示）
+func (c *PetChannel) SendASRResult(sessionID, chatID, text string) {
+	if text == "" {
+		return
+	}
+	c.connsMu.RLock()
+	defer c.connsMu.RUnlock()
+
+	asrData := ASRData{
+		ChatID: chatID,
+		Text:   text,
+		Role:   "user",
+	}
+	dataBytes, _ := json.Marshal(asrData)
+
+	for _, pc := range c.connections {
+		if pc.sessionID == sessionID || sessionID == "broadcast" {
+			if err := pc.writeJSON(PetStreamResponse{
+				Type:      "push",
+				PushType:  pet.PushTypeASR,
+				Data:      dataBytes,
+				IsFinal:   true,
+				Timestamp: time.Now().Unix(),
+			}); err != nil {
+				logger.Warnf("pet: failed to send ASR result to conn_id=%s: %v", pc.id, err)
+			}
+		}
+	}
 }
 
 // StreamData 流式数据内容
@@ -956,6 +986,13 @@ type StreamData struct {
 	Text        string `json:"text"`
 	Emotion     string `json:"emotion,omitempty"`
 	Action      string `json:"action,omitempty"`
+}
+
+// ASRData 语音识别结果数据
+type ASRData struct {
+	ChatID string `json:"chat_id"`
+	Text   string `json:"text"`
+	Role   string `json:"role"`
 }
 
 // PetStreamResponse 流式响应结构

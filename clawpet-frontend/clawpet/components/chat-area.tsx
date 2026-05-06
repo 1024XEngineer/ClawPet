@@ -98,11 +98,10 @@ export function ChatArea({ chat, layoutMode = "full" }: ChatAreaProps) {
     error: voiceError,
     unavailableReason: voiceUnavailableReason,
     toggleListening,
-    sendMockVoiceLikeBurst,
-    runMicProbe,
   } = useVoiceInput({
     canRecord: isConnected,
     sessionKey: activeSessionId,
+    onResult: sendMessage,
     onError: (voiceInputError) => {
       console.warn("[petclaw] voice input error", voiceInputError)
     },
@@ -418,37 +417,6 @@ export function ChatArea({ chat, layoutMode = "full" }: ChatAreaProps) {
               >
                 <Mic className="h-4.5 w-4.5" />
               </button>
-
-              {process.env.NODE_ENV !== "production" && (
-                <button
-                  onClick={() => {
-                    void sendMockVoiceLikeBurst(1800, 64)
-                  }}
-                  disabled={!isConnected || Boolean(voiceUnavailableReason)}
-                  className={cn(
-                    "flex items-center justify-center border border-white/80 bg-white/82 px-2 text-[11px] text-[#70563f] transition hover:bg-white disabled:cursor-not-allowed disabled:opacity-40",
-                    isUltra ? "h-9 rounded-xl" : "h-11 rounded-2xl",
-                  )}
-                  title="发送一段 mock 语音"
-                >
-                  Mock Voice
-                </button>
-              )}
-
-              {process.env.NODE_ENV !== "production" && (
-                <button
-                  onClick={() => {
-                    void runMicProbe()
-                  }}
-                  className={cn(
-                    "flex items-center justify-center border border-white/80 bg-white/82 px-2 text-[11px] text-[#70563f] transition hover:bg-white",
-                    isUltra ? "h-9 rounded-xl" : "h-11 rounded-2xl",
-                  )}
-                  title="检测麦克风是否有有效音频信号"
-                >
-                  Mic Test
-                </button>
-              )}
 
               {isTurnActive ? (
                 <Button
