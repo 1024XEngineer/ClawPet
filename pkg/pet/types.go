@@ -45,8 +45,13 @@ const (
 	ActionVoiceModelGet        = "voice_model_get"         // 获取语音模型详情
 	ActionVoiceModelUpdate     = "voice_model_update"      // 更新语音模型配置
 	ActionVoiceModelSetDefault = "voice_model_set_default" // 设置默认语音模型
-	ActionVoiceModelGetVoices  = "voice_model_get_voices"  // 获取供应商可用音色
-	ActionSkillList            = "skill_list"              // 列出 skills
+ActionVoiceModelGetVoices  = "voice_model_get_voices"  // 获取供应商可用音色
+	ActionASRModelListGet     = "asr_model_list_get"      // 获取 ASR 模型列表
+	ActionASRModelGet         = "asr_model_get"          // 获取 ASR 模型详情
+	ActionASRModelUpdate      = "asr_model_update"       // 更新 ASR 模型配置
+ActionASRModelSetDefault  = "asr_model_set_default"  // 设置默认 ASR 模型
+	ActionASRModelDelete     = "asr_model_delete"      // 删除 ASR 模型
+	ActionSkillList          = "skill_list"              // 列出 skills
 	ActionSkillSearch          = "skill_search"            // 搜索 skills
 	ActionSkillInstall         = "skill_install"           // 安装 skill
 	ActionSkillRemove          = "skill_remove"            // 删除 skill
@@ -188,6 +193,7 @@ type ConfigUpdateRequest struct {
 	ProactiveCare            *bool   `json:"proactive_care"`             // 是否启用主动关怀
 	ProactiveIntervalMinutes *int    `json:"proactive_interval_minutes"` // 主动关怀间隔（分钟）
 	VoiceEnabled             *bool   `json:"voice_enabled"`              // 是否启用语音
+	ASREnabled               *bool   `json:"asr_enabled"`                // 是否启用 ASR 语音识别
 	Language                 *string `json:"language"`                   // 语言设置
 }
 

@@ -2,6 +2,7 @@ package tts
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"io"
 	"os"
@@ -17,6 +18,89 @@ import (
 type TTSProvider interface {
 	Name() string
 	Synthesize(ctx context.Context, text string) (io.ReadCloser, error)
+}
+
+// petConfigTTSEntry is a minimal structure to read TTS models from pet_config.json
+type petConfigTTSEntry struct {
+	Name     string         `json:"name"`
+	Provider string         `json:"provider"`
+	Model    string         `json:"model"`
+	APIKey   string         `json:"api_key"`
+	APIBase  string         `json:"api_base"`
+	VoiceID  string         `json:"voice_id"`
+	Extra    map[string]any `json:"extra"`
+	Enabled  bool           `json:"enabled"`
+}
+
+type petConfigVoiceTTS struct {
+	ModelList      []*petConfigTTSEntry `json:"model_list"`
+	DefaultModel   string               `json:"default_model"`
+	TTSEnabled    bool                 `json:"tts_enabled"`
+	TTSModelName  string               `json:"tts_model_name"`
+}
+
+type petConfigTTS struct {
+	Voice *petConfigVoiceTTS `json:"voice"`
+}
+
+func loadPetConfigTTSModels(workspacePath string) []*petConfigTTSEntry {
+	petCfgPath := filepath.Join(workspacePath, "pet_config.json")
+	data, err := os.ReadFile(petCfgPath)
+	if err != nil {
+		return nil
+	}
+	var cfg petConfigTTS
+	if err := json.Unmarshal(data, &cfg); err != nil {
+		return nil
+	}
+	if cfg.Voice == nil {
+		return nil
+	}
+	return cfg.Voice.ModelList
+}
+
+func resolveTTSAPIKey(apiKey string) string {
+	if strings.HasPrefix(apiKey, "${") && strings.HasSuffix(apiKey, "}") {
+		envName := strings.TrimPrefix(strings.TrimSuffix(apiKey, "}"), "${")
+		return os.Getenv(envName)
+	}
+	return apiKey
+}
+
+func providerFromPetConfigTTS(entry *petConfigTTSEntry) TTSProvider {
+	if entry == nil {
+		return nil
+	}
+
+	apiKey := resolveTTSAPIKey(entry.APIKey)
+	if apiKey == "" {
+		return nil
+	}
+
+	modelID := entry.Model
+	if modelID == "" {
+		modelID = strings.TrimSpace(entry.Model)
+	}
+
+	switch entry.Provider {
+	case "doubao":
+		if apiBase := entry.APIBase; apiBase != "" {
+			return NewOpenAITTSProvider(apiKey, apiBase, "", modelID)
+		}
+	case "minimax":
+		if apiBase := entry.APIBase; apiBase != "" {
+			return NewOpenAITTSProvider(apiKey, apiBase, "", modelID)
+		}
+	case "mimo":
+		if apiBase := entry.APIBase; apiBase != "" {
+			return NewMimoTTSProvider(apiKey, apiBase, modelID, "")
+		}
+	default:
+		if apiBase := entry.APIBase; apiBase != "" {
+			return NewOpenAITTSProvider(apiKey, apiBase, "", modelID)
+		}
+	}
+	return nil
 }
 
 func providerFromModelConfig(mc *config.ModelConfig) TTSProvider {
@@ -42,6 +126,21 @@ func DetectTTS(cfg *config.Config) TTSProvider {
 		return nil
 	}
 
+	// Priority 1: pet_config.json TTS models (new unified config)
+	workspacePath := cfg.WorkspacePath()
+	if workspacePath != "" {
+		if entries := loadPetConfigTTSModels(workspacePath); entries != nil {
+			for _, entry := range entries {
+				if entry.Enabled {
+					if provider := providerFromPetConfigTTS(entry); provider != nil {
+						return provider
+					}
+				}
+			}
+		}
+	}
+
+	// Priority 2: config.json Voice.TTSModelName
 	if modelName := strings.TrimSpace(cfg.Voice.TTSModelName); modelName != "" {
 		if mc, err := cfg.GetModelConfig(modelName); err == nil {
 			if provider := providerFromModelConfig(mc); provider != nil {
@@ -50,6 +149,7 @@ func DetectTTS(cfg *config.Config) TTSProvider {
 		}
 	}
 
+	// Fall back to compatibility scanning for legacy TTS providers in ModelList.
 	for _, mc := range cfg.ModelList {
 		if strings.Contains(strings.ToLower(mc.Model), "tts") && mc.APIKey() != "" {
 			if provider := providerFromModelConfig(mc); provider != nil {

@@ -1074,18 +1074,28 @@ export function useChat(options: UseChatOptions = {}): UseChatResult {
         timestamp: Date.now(),
       }
 
-      updateSessionMessages(activeSessionIdRef.current, (prev) => [
-        ...prev,
-        userMessage,
-      ])
-      clearPendingBubbleTimer()
-      assistantTurnActiveRef.current = true
-      setIsTyping(true)
-      setIsTurnActive(true)
-      setToolStatus("idle")
-      setError(null)
+      try {
+        updateSessionMessages(activeSessionIdRef.current, (prev) => [
+          ...prev,
+          userMessage,
+        ])
+        clearPendingBubbleTimer()
+        assistantTurnActiveRef.current = true
+        setIsTyping(true)
+        setIsTurnActive(true)
+        setToolStatus("idle")
+        setError(null)
 
-      wsRef.current.send(outbound, activeSessionIdRef.current)
+        wsRef.current.send(outbound, activeSessionIdRef.current)
+      } catch (err) {
+        assistantTurnActiveRef.current = false
+        setIsTyping(false)
+        setIsTurnActive(false)
+        setToolStatus("idle")
+        const message = err instanceof Error ? err.message : "发送消息失败，请重试"
+        setError(message)
+        console.error("[petclaw] sendMessage failed:", err)
+      }
     },
     [clearPendingBubbleTimer, updateSessionMessages],
   )

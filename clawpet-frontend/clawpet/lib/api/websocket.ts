@@ -1206,6 +1206,33 @@ export class PicoClawWebSocket {
     return this.requestAction<VoiceModelVoicesData>("voice_model_get_voices", data)
   }
 
+  async getASRModelList(): Promise<PetResponse & { data?: ASRModelListData }> {
+    return this.requestAction<ASRModelListData>("asr_model_list_get")
+  }
+
+  async getASRModel(name: string): Promise<PetResponse & { data?: ASRModelData }> {
+    return this.requestAction<ASRModelData>("asr_model_get", { name })
+  }
+
+  async updateASRModel(data: {
+    name: string
+    api_key?: string
+    api_base?: string
+    model?: string
+    enabled?: boolean
+    extra?: Record<string, unknown>
+  }): Promise<PetResponse> {
+    return this.requestAction("asr_model_update", data)
+  }
+
+  async setDefaultASRModel(name: string): Promise<PetResponse> {
+    return this.requestAction("asr_model_set_default", { name })
+  }
+
+  async deleteASRModel(name: string): Promise<PetResponse> {
+    return this.requestAction("asr_model_delete", { name })
+  }
+
   async getModelList(): Promise<PetResponse & { data?: ModelListData }> {
     return this.requestAction<ModelListData>("model_list_get")
   }
@@ -1241,6 +1268,22 @@ export interface VoiceModelData {
 
 export interface VoiceModelListData {
   models: VoiceModelData[]
+  default: string
+}
+
+export interface ASRModelData {
+  name: string
+  provider: string
+  api_base: string
+  model: string
+  api_key: string
+  extra: Record<string, unknown>
+  enabled: boolean
+  is_default: boolean
+}
+
+export interface ASRModelListData {
+  models: ASRModelData[]
   default: string
 }
 

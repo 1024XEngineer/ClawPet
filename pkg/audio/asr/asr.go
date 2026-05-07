@@ -2,12 +2,54 @@ package asr
 
 import (
 	"context"
+	"encoding/json"
+	"os"
+	"path/filepath"
 	"strings"
 
 	"github.com/sipeed/picoclaw/pkg/config"
 	"github.com/sipeed/picoclaw/pkg/logger"
 	"github.com/sipeed/picoclaw/pkg/providers"
 )
+
+// petConfigASREntry is a minimal structure to read ASR models from pet_config.json
+type petConfigASREntry struct {
+	Name     string         `json:"name"`
+	Provider string         `json:"provider"`
+	Model    string         `json:"model"`
+	APIKey   string         `json:"api_key"`
+	APIBase  string         `json:"api_base"`
+	Extra    map[string]any `json:"extra"`
+	Enabled  bool           `json:"enabled"`
+}
+
+type petConfigVoice struct {
+	ModelList        interface{} `json:"model_list"`
+	ASRModelList     []*petConfigASREntry `json:"asr_model_list"`
+	DefaultModel     string    `json:"default_model"`
+	ASREnabled       bool      `json:"asr_enabled"`
+	DefaultASRModel string    `json:"default_asr_model"`
+}
+
+type petConfig struct {
+	Voice *petConfigVoice `json:"voice"`
+}
+
+func loadPetConfigASRModels(workspacePath string) []*petConfigASREntry {
+	petCfgPath := filepath.Join(workspacePath, "pet_config.json")
+	data, err := os.ReadFile(petCfgPath)
+	if err != nil {
+		return nil
+	}
+	var cfg petConfig
+	if err := json.Unmarshal(data, &cfg); err != nil {
+		return nil
+	}
+	if cfg.Voice == nil {
+		return nil
+	}
+	return cfg.Voice.ASRModelList
+}
 
 type Transcriber interface {
 	Name() string
@@ -108,6 +150,66 @@ func transcriberFromModelConfig(modelCfg *config.ModelConfig) Transcriber {
 	return nil
 }
 
+// transcriberFromPetConfigASR creates a Transcriber from pet_config.json ASR model entry
+func transcriberFromPetConfigASR(entry *petConfigASREntry) Transcriber {
+	if entry == nil {
+		return nil
+	}
+
+	apiKey := resolveAPIKey(entry.APIKey)
+	model := entry.Model
+	if entry.Provider == "whisper" && !strings.Contains(model, "/") {
+		model = entry.Provider + "/" + model
+	}
+
+	switch entry.Provider {
+	case "whisper":
+		if apiKey != "" {
+			return NewWhisperTranscriberFromAPI(apiKey, entry.APIBase, model)
+		}
+	case "baidu":
+		if apiKey != "" {
+			appID := ""
+			secretKey := ""
+			if entry.Extra != nil {
+				if v, ok := entry.Extra["app_id"].(string); ok {
+					appID = v
+				}
+				if v, ok := entry.Extra["secret_key"].(string); ok {
+					secretKey = v
+				}
+			}
+			if appID != "" && secretKey != "" {
+				return NewBaiduTranscriber(appID, apiKey, secretKey)
+			}
+		}
+	case "elevenlabs":
+		if apiKey != "" {
+			return NewElevenLabsTranscriber(apiKey, entry.APIBase)
+		}
+	case "audio_model":
+		if apiKey != "" || entry.APIBase != "" {
+			mc := &config.ModelConfig{
+				ModelName: entry.Name,
+				Model:     model,
+				APIBase:   entry.APIBase,
+			}
+			mc.APIKeys = config.SecureStrings{config.NewSecureString(apiKey)}
+			return NewAudioModelTranscriber(mc)
+		}
+	}
+	return nil
+}
+
+// resolveAPIKey resolves API key from environment variable reference
+func resolveAPIKey(apiKey string) string {
+	if strings.HasPrefix(apiKey, "${") && strings.HasSuffix(apiKey, "}") {
+		envName := strings.TrimPrefix(strings.TrimSuffix(apiKey, "}"), "${")
+		return os.Getenv(envName)
+	}
+	return apiKey
+}
+
 func fallbackTranscriberFromModelConfig(modelCfg *config.ModelConfig) Transcriber {
 	if modelCfg == nil {
 		return nil
@@ -130,6 +232,21 @@ func DetectTranscriber(cfg *config.Config) Transcriber {
 		return nil
 	}
 
+	// Priority 1: pet_config.json ASR models (new unified config)
+	workspacePath := cfg.WorkspacePath()
+	if workspacePath != "" {
+		if entries := loadPetConfigASRModels(workspacePath); entries != nil {
+			for _, entry := range entries {
+				if entry.Enabled {
+					if tr := transcriberFromPetConfigASR(entry); tr != nil {
+						return tr
+					}
+				}
+			}
+		}
+	}
+
+	// Priority 2: config.json Voice.ModelName
 	if modelName := strings.TrimSpace(cfg.Voice.ModelName); modelName != "" {
 		modelCfg, err := cfg.GetModelConfig(modelName)
 		if err == nil {

@@ -15,6 +15,7 @@ import (
 	"github.com/sipeed/picoclaw/pkg/cron"
 	"github.com/sipeed/picoclaw/pkg/logger"
 	"github.com/sipeed/picoclaw/pkg/pet/action"
+	"github.com/sipeed/picoclaw/pkg/pet/asr"
 	"github.com/sipeed/picoclaw/pkg/pet/characters"
 	"github.com/sipeed/picoclaw/pkg/pet/compression"
 	petconfig "github.com/sipeed/picoclaw/pkg/pet/config"
@@ -39,6 +40,7 @@ type PetService struct {
 	actionManager      *action.ActionManager
 	memoryStore        *memory.Store
 	voiceLoader        *voice.Loader
+	asrLoader         *asr.Loader
 	conversationStore  *compression.ConversationStore
 	compressionSvc     *compression.CompressionService
 	modelConfigManager *modelconfig.Manager
@@ -96,6 +98,17 @@ func NewPetService(msgBus *bus.MessageBus, cfg PetServiceConfig) (*PetService, e
 			fmt.Println("pet: voice provider loaded successfully")
 		} else {
 			fmt.Println("pet: voice provider is nil after loading")
+		}
+
+		// 创建 ASR 加载器
+		s.asrLoader = asr.NewLoader(s.configManager.GetVoice())
+		if err := s.asrLoader.Load(); err != nil {
+			fmt.Printf("pet: failed to load ASR: %v\n", err)
+		}
+		if s.asrLoader.IsEnabled() {
+			fmt.Println("pet: ASR enabled, provider:", s.asrLoader.GetCurrentModel())
+		} else {
+			fmt.Println("pet: ASR is not enabled or not loaded")
 		}
 
 		// 创建动作管理器
@@ -290,6 +303,10 @@ func (s *PetService) ConversationStore() *compression.ConversationStore {
 
 func (s *PetService) VoiceLoader() *voice.Loader {
 	return s.voiceLoader
+}
+
+func (s *PetService) ASRLoader() *asr.Loader {
+	return s.asrLoader
 }
 
 func (s *PetService) UserProfileManager() *userprofile.Manager {
@@ -493,6 +510,16 @@ func (s *PetService) HandleRequest(connID string, req Request) error {
 		return s.handleVoiceModelSetDefault(sessionID, req)
 	case ActionVoiceModelGetVoices:
 		return s.handleVoiceModelGetVoices(sessionID, req)
+	case ActionASRModelListGet:
+		return s.handleASRModelListGet(sessionID, req)
+	case ActionASRModelGet:
+		return s.handleASRModelGet(sessionID, req)
+	case ActionASRModelUpdate:
+		return s.handleASRModelUpdate(sessionID, req)
+	case ActionASRModelSetDefault:
+		return s.handleASRModelSetDefault(sessionID, req)
+	case ActionASRModelDelete:
+		return s.handleASRModelDelete(sessionID, req)
 	case ActionSkillList:
 		return s.handleSkillList(sessionID, req)
 	case ActionSkillSearch:
@@ -755,6 +782,9 @@ func (s *PetService) handleCharacterSwitch(sessionID string, req Request) error 
 
 func (s *PetService) handleConfigGet(sessionID string, req Request) error {
 	cfg := s.configManager.GetApp()
+	cfg.ASREnabled = s.configManager.GetVoice().ASREnabled
+	fmt.Printf("[DEBUG handleConfigGet] voice.ASREnabled=%v, returning cfg.ASREnabled=%v\n",
+		s.configManager.GetVoice().ASREnabled, cfg.ASREnabled)
 	return s.sendResponse(sessionID, req.Action, cfg)
 }
 
@@ -786,6 +816,11 @@ func (s *PetService) handleConfigUpdate(sessionID string, req Request) error {
 	}
 
 	s.configManager.SetAppConfig(cfg)
+
+	if data.ASREnabled != nil {
+		fmt.Printf("[DEBUG handleConfigUpdate] ASREnabled received: %v\n", *data.ASREnabled)
+		s.configManager.SetAsrEnabled(*data.ASREnabled)
+	}
 
 	return s.sendResponse(sessionID, req.Action, cfg)
 }
@@ -1392,6 +1427,249 @@ type VoiceModelResponse struct {
 type VoiceModelListGetResponse struct {
 	Models  []VoiceModelResponse `json:"models"`
 	Default string               `json:"default"`
+}
+
+// ASRModelResponse ASR 模型响应结构
+type ASRModelResponse struct {
+	Name      string         `json:"name"`
+	Provider  string         `json:"provider"`
+	Model     string         `json:"model"`
+	APIBase   string         `json:"api_base"`
+	APIKey    string         `json:"api_key"`
+	Extra     map[string]any `json:"extra"`
+	Enabled   bool           `json:"enabled"`
+	IsDefault bool           `json:"is_default"`
+}
+
+// ASRModelListGetResponse ASR 模型列表响应
+type ASRModelListGetResponse struct {
+	Models  []ASRModelResponse `json:"models"`
+	Default string             `json:"default"`
+}
+
+// ASRModelUpdateRequest ASR 模型更新请求
+type ASRModelUpdateRequest struct {
+	Name    string         `json:"name"`
+	APIKey  string         `json:"api_key,omitempty"`
+	APIBase string         `json:"api_base,omitempty"`
+	Model   string         `json:"model,omitempty"`
+	Enabled *bool          `json:"enabled,omitempty"`
+	Extra   map[string]any `json:"extra,omitempty"`
+}
+
+// ASRModelSetDefaultRequest ASR 模型设置默认请求
+type ASRModelSetDefaultRequest struct {
+	Name string `json:"name"`
+}
+
+func (s *PetService) handleASRModelListGet(sessionID string, req Request) error {
+	if s.asrLoader == nil {
+		return s.sendError(sessionID, req.Action, "ASR loader not initialized")
+	}
+
+	models := s.configManager.GetASRModelList()
+	defaultModel := s.configManager.GetDefaultASRModelName()
+
+	fmt.Printf("[DEBUG ASR] GetASRModelList returned %d models\n", len(models))
+	fmt.Printf("[DEBUG ASR] DefaultASRModelName=%s\n", defaultModel)
+	fmt.Printf("[DEBUG ASR] configManager path=%s\n", s.configManager.GetManagerPath())
+
+	resp := ASRModelListGetResponse{
+		Models:  make([]ASRModelResponse, 0, len(models)),
+		Default: defaultModel,
+	}
+
+	for _, m := range models {
+		resp.Models = append(resp.Models, ASRModelResponse{
+			Name:      m.Name,
+			Provider:  m.Provider,
+			Model:     m.Model,
+			APIBase:   m.APIBase,
+			APIKey:    m.MaskedAPIKey(),
+			Extra:     m.MaskedExtra(),
+			Enabled:   m.Enabled,
+			IsDefault: m.Name == defaultModel,
+		})
+	}
+
+	return s.sendResponse(sessionID, req.Action, resp)
+}
+
+func (s *PetService) handleASRModelGet(sessionID string, req Request) error {
+	if s.asrLoader == nil {
+		return s.sendError(sessionID, req.Action, "ASR loader not initialized")
+	}
+
+	var data struct {
+		Name string `json:"name"`
+	}
+	if err := json.Unmarshal(req.Data, &data); err != nil {
+		return s.sendError(sessionID, req.Action, "invalid request data")
+	}
+
+	if data.Name == "" {
+		return s.sendError(sessionID, req.Action, "name is required")
+	}
+
+	model := s.configManager.GetASRModel(data.Name)
+	if model == nil {
+		return s.sendError(sessionID, req.Action, fmt.Sprintf("ASR model %s not found", data.Name))
+	}
+
+	return s.sendResponse(sessionID, req.Action, ASRModelResponse{
+		Name:      model.Name,
+		Provider:  model.Provider,
+		Model:     model.Model,
+		APIBase:   model.APIBase,
+		APIKey:    model.MaskedAPIKey(),
+		Extra:     model.MaskedExtra(),
+		Enabled:   model.Enabled,
+		IsDefault: model.Name == s.configManager.GetDefaultASRModelName(),
+	})
+}
+
+func (s *PetService) handleASRModelUpdate(sessionID string, req Request) error {
+	if s.asrLoader == nil {
+		return s.sendError(sessionID, req.Action, "ASR loader not initialized")
+	}
+
+	var data ASRModelUpdateRequest
+	if err := json.Unmarshal(req.Data, &data); err != nil {
+		return s.sendError(sessionID, req.Action, "invalid request data")
+	}
+
+	if data.Name == "" {
+		return s.sendError(sessionID, req.Action, "name is required")
+	}
+
+	model := s.configManager.GetASRModel(data.Name)
+	if model == nil {
+		return s.sendError(sessionID, req.Action, fmt.Sprintf("ASR model %s not found", data.Name))
+	}
+
+	if data.APIKey != "" {
+		model.APIKey = data.APIKey
+	}
+	if data.APIBase != "" {
+		model.APIBase = data.APIBase
+	}
+	if data.Model != "" {
+		model.Model = data.Model
+	}
+	if data.Enabled != nil {
+		model.Enabled = *data.Enabled
+	}
+	if data.Extra != nil {
+		if model.Extra == nil {
+			model.Extra = make(map[string]any)
+		}
+		for k, v := range data.Extra {
+			model.Extra[k] = v
+		}
+	}
+
+	if err := s.configManager.UpdateASRModel(model); err != nil {
+		return s.sendError(sessionID, req.Action, err.Error())
+	}
+
+	needsSwitch := data.APIKey != "" || data.Extra != nil || data.Model != "" || data.APIBase != ""
+	if needsSwitch && s.asrLoader.GetCurrentModel() == data.Name && model.Enabled {
+		logger.Infof("pet ASR: config changed, reloading provider for %s", data.Name)
+		if err := s.asrLoader.SwitchModel(data.Name, s.configManager); err != nil {
+			logger.Warnf("pet ASR: failed to reload provider: %v", err)
+		}
+	}
+
+	return s.sendResponse(sessionID, req.Action, map[string]string{"status": "ok"})
+}
+
+func (s *PetService) handleASRModelSetDefault(sessionID string, req Request) error {
+	if s.asrLoader == nil {
+		return s.sendError(sessionID, req.Action, "ASR loader not initialized")
+	}
+
+	var data ASRModelSetDefaultRequest
+	if err := json.Unmarshal(req.Data, &data); err != nil {
+		return s.sendError(sessionID, req.Action, "invalid request data")
+	}
+
+	if data.Name == "" {
+		return s.sendError(sessionID, req.Action, "name is required")
+	}
+
+	model := s.configManager.GetASRModel(data.Name)
+	if model == nil {
+		return s.sendError(sessionID, req.Action, fmt.Sprintf("ASR model %s not found", data.Name))
+	}
+
+	if !model.Enabled {
+		return s.sendError(sessionID, req.Action, "cannot set disabled model as default")
+	}
+
+	s.configManager.SelectASRModel(data.Name)
+	if err := s.configManager.SaveVoiceConfig(); err != nil {
+		return s.sendError(sessionID, req.Action, err.Error())
+	}
+
+	if s.asrLoader.GetCurrentModel() != data.Name {
+		if err := s.asrLoader.SwitchModel(data.Name, s.configManager); err != nil {
+			logger.Warnf("pet ASR: failed to switch to %s: %v", data.Name, err)
+		}
+	}
+
+	return s.sendResponse(sessionID, req.Action, map[string]string{"status": "ok"})
+}
+
+func (s *PetService) handleASRModelDelete(sessionID string, req Request) error {
+	if s.asrLoader == nil {
+		return s.sendError(sessionID, req.Action, "ASR loader not initialized")
+	}
+
+	var data struct {
+		Name string `json:"name"`
+	}
+	if err := json.Unmarshal(req.Data, &data); err != nil {
+		return s.sendError(sessionID, req.Action, "invalid request data")
+	}
+
+	if data.Name == "" {
+		return s.sendError(sessionID, req.Action, "name is required")
+	}
+
+	models := s.configManager.GetASRModelList()
+	if len(models) <= 1 {
+		return s.sendError(sessionID, req.Action, "cannot delete the last model")
+	}
+
+	model := s.configManager.GetASRModel(data.Name)
+	if model == nil {
+		return s.sendError(sessionID, req.Action, fmt.Sprintf("ASR model %s not found", data.Name))
+	}
+
+	if err := s.configManager.DeleteASRModel(data.Name); err != nil {
+		return s.sendError(sessionID, req.Action, err.Error())
+	}
+
+	if err := s.configManager.SaveVoiceConfig(); err != nil {
+		return s.sendError(sessionID, req.Action, err.Error())
+	}
+
+	if s.asrLoader.GetCurrentModel() == data.Name {
+		firstEnabled := ""
+		for _, m := range models {
+			if m.Name != data.Name && m.Enabled {
+				firstEnabled = m.Name
+				break
+			}
+		}
+		if firstEnabled != "" {
+			if err := s.asrLoader.SwitchModel(firstEnabled, s.configManager); err != nil {
+				logger.Warnf("pet ASR: failed to switch after delete: %v", err)
+			}
+		}
+	}
+
+	return s.sendResponse(sessionID, req.Action, map[string]string{"status": "ok"})
 }
 
 func (s *PetService) handleVoiceModelListGet(sessionID string, req Request) error {

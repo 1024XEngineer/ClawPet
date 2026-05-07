@@ -55,7 +55,8 @@ func (m *Manager) Save() error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
-	fmt.Println("pet config: Manager.Save() called")
+	fmt.Printf("[DEBUG Save] voice.ASREnabled=%v, app.ASREnabled=%v\n",
+		m.voiceConfig.ASREnabled, m.appConfig.ASREnabled)
 
 	// 构建完整 PetConfig（包含 memory 和 compression 配置）
 	petCfg := &PetConfig{
@@ -210,8 +211,10 @@ func (m *Manager) AppendCharacter(char *CharacterConfig) {
 // SetAsrEnabled 设置是否启用语音识别
 func (m *Manager) SetAsrEnabled(enabled bool) {
 	m.mu.Lock()
-	defer m.mu.Unlock()
 	m.voiceConfig.ASREnabled = enabled
+	m.mu.Unlock()
+	fmt.Printf("[DEBUG SetAsrEnabled] enabled=%v\n", enabled)
+	m.Save()
 }
 
 // AppendVoiceModel 添加语音模型
@@ -240,8 +243,9 @@ func (m *Manager) SelectVoiceModel(name string) {
 // SetAppConfig 设置应用配置
 func (m *Manager) SetAppConfig(config *AppConfig) {
 	m.mu.Lock()
-	defer m.mu.Unlock()
 	m.appConfig = config
+	m.mu.Unlock()
+	m.Save()
 }
 
 // GetVoiceModel 获取指定语音模型配置
@@ -339,4 +343,128 @@ func (m *Manager) GetDefaultVoiceModelName() string {
 		return ""
 	}
 	return m.voiceConfig.DefaultModel
+}
+
+// GetASRModel 获取指定ASR模型配置
+func (m *Manager) GetASRModel(name string) *ASRModelConfig {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	if m.voiceConfig == nil {
+		return nil
+	}
+	for _, model := range m.voiceConfig.ASRModelList {
+		if model.Name == name {
+			return model
+		}
+	}
+	return nil
+}
+
+// SelectASRModel 选择ASR模型
+func (m *Manager) SelectASRModel(name string) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if m.voiceConfig == nil {
+		return
+	}
+	for _, model := range m.voiceConfig.ASRModelList {
+		if model.Name == name {
+			m.voiceConfig.DefaultASRModel = model.Name
+			return
+		}
+	}
+	logger.Infof("pet config: ASR model %s not found", name)
+}
+
+// UpdateASRModel 更新ASR模型配置
+func (m *Manager) UpdateASRModel(model *ASRModelConfig) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	if m.voiceConfig == nil {
+		return fmt.Errorf("voice config not initialized")
+	}
+
+	for i, existing := range m.voiceConfig.ASRModelList {
+		if existing.Name == model.Name {
+			if model.Provider != "" {
+				m.voiceConfig.ASRModelList[i].Provider = model.Provider
+			}
+			if model.Model != "" {
+				m.voiceConfig.ASRModelList[i].Model = model.Model
+			}
+			if model.APIKey != "" {
+				m.voiceConfig.ASRModelList[i].APIKey = model.APIKey
+			}
+			if model.APIBase != "" {
+				m.voiceConfig.ASRModelList[i].APIBase = model.APIBase
+			}
+			m.voiceConfig.ASRModelList[i].Enabled = model.Enabled
+			if model.Extra != nil {
+				if m.voiceConfig.ASRModelList[i].Extra == nil {
+					m.voiceConfig.ASRModelList[i].Extra = make(map[string]any)
+				}
+				for k, v := range model.Extra {
+					m.voiceConfig.ASRModelList[i].Extra[k] = v
+				}
+			}
+			return nil
+		}
+	}
+	return fmt.Errorf("ASR model %s not found", model.Name)
+}
+
+// AppendASRModel 添加ASR模型
+func (m *Manager) AppendASRModel(model *ASRModelConfig) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.voiceConfig.ASRModelList = append(m.voiceConfig.ASRModelList, model)
+}
+
+// GetASRModelList 获取所有ASR模型列表
+func (m *Manager) GetASRModelList() []*ASRModelConfig {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	if m.voiceConfig == nil {
+		return nil
+	}
+	return m.voiceConfig.ASRModelList
+}
+
+// GetDefaultASRModelName 获取默认ASR模型名称
+func (m *Manager) GetDefaultASRModelName() string {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	if m.voiceConfig == nil {
+		return ""
+	}
+	return m.voiceConfig.DefaultASRModel
+}
+
+// DeleteASRModel 删除 ASR 模型
+func (m *Manager) DeleteASRModel(name string) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	if m.voiceConfig == nil {
+		return fmt.Errorf("voice config not initialized")
+	}
+
+	for i, model := range m.voiceConfig.ASRModelList {
+		if model.Name == name {
+			m.voiceConfig.ASRModelList = append(
+				m.voiceConfig.ASRModelList[:i],
+				m.voiceConfig.ASRModelList[i+1:]...,
+			)
+			if m.voiceConfig.DefaultASRModel == name {
+				if len(m.voiceConfig.ASRModelList) > 0 {
+					m.voiceConfig.DefaultASRModel = m.voiceConfig.ASRModelList[0].Name
+				} else {
+					m.voiceConfig.DefaultASRModel = ""
+				}
+			}
+			return nil
+		}
+	}
+	return fmt.Errorf("ASR model %s not found", name)
 }

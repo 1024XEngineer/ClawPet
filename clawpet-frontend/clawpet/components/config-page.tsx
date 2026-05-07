@@ -1,6 +1,6 @@
 "use client"
 
-import { useCallback, useEffect, useMemo, useState } from "react"
+import { useCallback, useEffect, useMemo, useRef, useState } from "react"
 import {
   AlertTriangle,
   Code,
@@ -29,11 +29,13 @@ import {
   type CharacterProfileData,
   type Config,
   type VoiceModelData,
+  type ASRModelData,
 } from "@/lib/api"
 import { openOnboardingPopup } from "@/lib/onboarding"
 import { cn } from "@/lib/utils"
 import { ModelsPanel } from "./models-panel"
 import { VoiceModelsPanel } from "./voice-models-panel"
+import { AsrModelsPanel } from "./asr-models-panel"
 
 type ConfigTab = "visual" | "raw"
 
@@ -60,6 +62,7 @@ interface VoiceConfigState {
   voiceEnabled: boolean
   asrEnabled: boolean
   defaultVoiceModel: string
+  defaultAsrModel: string
 }
 
 const emptyPersonalityForm: PersonalityFormState = {
@@ -85,6 +88,7 @@ const emptyVoiceState: VoiceConfigState = {
   voiceEnabled: false,
   asrEnabled: false,
   defaultVoiceModel: "",
+  defaultAsrModel: "",
 }
 
 function getErrorMessage(error: unknown): string {
@@ -160,6 +164,8 @@ export function ConfigPage() {
     type: "error" | "success"
     message: string
   } | null>(null)
+  const [asrModels, setAsrModels] = useState<ASRModelData[]>([])
+  const [showAsrModelsPanel, setShowAsrModelsPanel] = useState(false)
 
   useEffect(() => {
     if (!configData?.config || hasChanges) {
@@ -220,8 +226,9 @@ export function ConfigPage() {
     setVoiceState(null)
     try {
       const ws = getWebSocketInstance()
-      const [voiceResp, petConfigResp] = await Promise.all([
+      const [voiceResp, asrResp, petConfigResp] = await Promise.all([
         ws.getVoiceModelList(),
+        ws.getASRModelList(),
         ws.getPetConfig(),
       ])
 
@@ -232,15 +239,21 @@ export function ConfigPage() {
         models[0]?.name ||
         ""
 
+      const asrModelList = asrResp.data?.models ?? []
+      const defaultAsrModel =
+        asrResp.data?.default ||
+        asrModelList.find((item) => item.is_default)?.name ||
+        ""
+
       setVoiceModels(models)
+      setAsrModels(asrModelList)
 
       setVoiceConfig({
         ...emptyVoiceState,
         voiceEnabled: Boolean(petConfigResp.data?.voice_enabled),
-        asrEnabled: Boolean(
-          (petConfigResp.data as { asr_enabled?: boolean } | undefined)?.asr_enabled,
-        ),
+        asrEnabled: Boolean(petConfigResp.data?.asr_enabled),
         defaultVoiceModel,
+        defaultAsrModel,
       })
     } catch (loadError) {
       setVoiceState({
@@ -411,11 +424,6 @@ export function ConfigPage() {
         })
 
         const ws = getWebSocketInstance()
-        await ws.updatePetConfig({
-          voice_enabled: voiceConfig.voiceEnabled,
-          asr_enabled: voiceConfig.asrEnabled,
-        })
-
         if (voiceConfig.defaultVoiceModel) {
           await ws.setDefaultVoiceModel(voiceConfig.defaultVoiceModel)
         }
@@ -687,9 +695,20 @@ export function ConfigPage() {
                         <button
                           type="button"
                           aria-pressed={voiceConfig.voiceEnabled}
-                          onClick={() =>
-                            handleVoiceConfigChange("voiceEnabled", !voiceConfig.voiceEnabled)
-                          }
+                          onClick={async () => {
+                            const newValue = !voiceConfig.voiceEnabled
+                            setVoiceConfig((prev) => ({ ...prev, voiceEnabled: newValue }))
+                            const ws = getWebSocketInstance()
+                            try {
+                              await ws.updatePetConfig({
+                                voice_enabled: newValue,
+                                asr_enabled: voiceConfig.asrEnabled,
+                              })
+                            } catch {
+                              setVoiceConfig((prev) => ({ ...prev, voiceEnabled: !newValue }))
+                              setVoiceState({ type: "error", message: "TTS配置保存失败" })
+                            }
+                          }}
                           className={cn(
                             "relative h-7 w-14 rounded-full transition",
                             voiceConfig.voiceEnabled ? "bg-emerald-500" : "bg-[#e7ddd3]",
@@ -705,22 +724,24 @@ export function ConfigPage() {
                         </button>
                       </div>
 
-                      <div className="dashboard-card rounded-[1rem] border border-white/80 bg-white/82 px-3 py-3">
-                        <p className="text-sm font-semibold text-[#4f3725]">默认语音模型</p>
-                        <p className="mt-1 text-xs text-[#816451]">
-                          {voiceConfig.defaultVoiceModel || "未设置默认模型"}
-                        </p>
-                        <p className="mt-1 text-xs text-[#9b7b62]">
-                          可用模型：{voiceModels.length} 个
-                        </p>
-                        <button
-                          type="button"
-                          onClick={() => setShowVoiceModelsPanel(true)}
-                          className="mt-3 rounded-[1rem] border border-amber-200 bg-amber-50 px-3 py-2 text-xs font-medium text-amber-700 transition hover:bg-amber-100"
-                        >
-                          管理语音模型
-                        </button>
-                      </div>
+                      {voiceConfig.voiceEnabled && (
+                        <div className="dashboard-card rounded-[1rem] border border-white/80 bg-white/82 px-3 py-3">
+                          <p className="text-sm font-semibold text-[#4f3725]">默认语音模型</p>
+                          <p className="mt-1 text-xs text-[#816451]">
+                            {voiceConfig.defaultVoiceModel || "未设置默认模型"}
+                          </p>
+                          <p className="mt-1 text-xs text-[#9b7b62]">
+                            可用模型：{voiceModels.length} 个
+                          </p>
+                          <button
+                            type="button"
+                            onClick={() => setShowVoiceModelsPanel(true)}
+                            className="mt-3 rounded-[1rem] border border-amber-200 bg-amber-50 px-3 py-2 text-xs font-medium text-amber-700 transition hover:bg-amber-100"
+                          >
+                            管理语音模型
+                          </button>
+                        </div>
+                      )}
 
                       <div className="dashboard-card flex items-center justify-between gap-4 rounded-[1rem] border border-white/80 bg-white/82 px-3 py-3">
                         <div>
@@ -730,9 +751,20 @@ export function ConfigPage() {
                         <button
                           type="button"
                           aria-pressed={voiceConfig.asrEnabled}
-                          onClick={() =>
-                            handleVoiceConfigChange("asrEnabled", !voiceConfig.asrEnabled)
-                          }
+                          onClick={async () => {
+                            const newValue = !voiceConfig.asrEnabled
+                            setVoiceConfig((prev) => ({ ...prev, asrEnabled: newValue }))
+                            const ws = getWebSocketInstance()
+                            try {
+                              await ws.updatePetConfig({
+                                voice_enabled: voiceConfig.voiceEnabled,
+                                asr_enabled: newValue,
+                              })
+                            } catch {
+                              setVoiceConfig((prev) => ({ ...prev, asrEnabled: !newValue }))
+                              setVoiceState({ type: "error", message: "ASR配置保存失败" })
+                            }
+                          }}
                           className={cn(
                             "relative h-7 w-14 rounded-full transition",
                             voiceConfig.asrEnabled ? "bg-emerald-500" : "bg-[#e7ddd3]",
@@ -747,6 +779,25 @@ export function ConfigPage() {
                           />
                         </button>
                       </div>
+
+                      {voiceConfig.asrEnabled && (
+                        <div className="dashboard-card rounded-[1rem] border border-white/80 bg-white/82 px-3 py-3">
+                          <p className="text-sm font-semibold text-[#4f3725]">默认 ASR 模型</p>
+                          <p className="mt-1 text-xs text-[#816451]">
+                            {voiceConfig.defaultAsrModel || "未设置默认模型"}
+                          </p>
+                          <p className="mt-1 text-xs text-[#9b7b62]">
+                            可用模型：{asrModels.length} 个
+                          </p>
+                          <button
+                            type="button"
+                            onClick={() => setShowAsrModelsPanel(true)}
+                            className="mt-3 rounded-[1rem] border border-amber-200 bg-amber-50 px-3 py-2 text-xs font-medium text-amber-700 transition hover:bg-amber-100"
+                          >
+                            管理语音识别模型
+                          </button>
+                        </div>
+                      )}
                     </div>
                   )}
                 </div>
@@ -1107,6 +1158,16 @@ export function ConfigPage() {
       {showVoiceModelsPanel && (
         <VoiceModelsPanel
           onClose={() => setShowVoiceModelsPanel(false)}
+          onChanged={() => {
+            void loadVoiceConfig()
+            setHasChanges(true)
+          }}
+        />
+      )}
+
+      {showAsrModelsPanel && (
+        <AsrModelsPanel
+          onClose={() => setShowAsrModelsPanel(false)}
           onChanged={() => {
             void loadVoiceConfig()
             setHasChanges(true)

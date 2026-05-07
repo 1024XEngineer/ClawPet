@@ -380,10 +380,37 @@ func setupAndStartServices(
 	agentLoop.SetChannelManager(runningServices.ChannelManager)
 	agentLoop.SetMediaStore(runningServices.MediaStore)
 
-	transcriber := asr.DetectTranscriber(cfg)
-	if transcriber != nil {
-		agentLoop.SetTranscriber(transcriber)
-		logger.InfoCF("voice", "Transcription enabled (agent-level)", map[string]any{"provider": transcriber.Name()})
+	// 从 pet channel 获取 ASR loader（优先），fallback 到 config.json 的检测
+	var asrTranscriber asr.Transcriber
+	var asrModelName string
+	if cfg.Channels.Pet.Enabled {
+		if petChannel, ok := runningServices.ChannelManager.GetChannel("pet"); ok {
+			if pc, ok := petChannel.(*petchannel.PetChannel); ok {
+				if asrLoader := pc.Service().ASRLoader(); asrLoader != nil && asrLoader.IsEnabled() {
+					if tr := asrLoader.GetCurrentTranscriber(); tr != nil {
+						asrTranscriber = tr
+						asrModelName = asrLoader.GetCurrentModel()
+						logger.InfoCF("voice", "ASR enabled via pet channel loader", map[string]any{
+							"model": asrModelName,
+						})
+					}
+				}
+			}
+		}
+	}
+
+	// Fallback: 检查 config.json 的 ModelList 中的 ASR 模型（兼容旧配置）
+	if asrTranscriber == nil {
+		if fallbackTranscriber := asr.DetectTranscriber(cfg); fallbackTranscriber != nil {
+			asrTranscriber = fallbackTranscriber
+			logger.InfoCF("voice", "ASR enabled via config.json fallback", map[string]any{
+				"provider": fallbackTranscriber.Name(),
+			})
+		}
+	}
+
+	if asrTranscriber != nil {
+		agentLoop.SetTranscriber(asrTranscriber)
 	}
 
 	ttsAvailable := tts.DetectTTS(cfg) != nil
@@ -404,13 +431,13 @@ func setupAndStartServices(
 		return nil, fmt.Errorf("error starting channels: %w", err)
 	}
 
-	logChannelVoiceCapabilities(runningServices.ChannelManager, transcriber != nil, ttsAvailable)
+	logChannelVoiceCapabilities(runningServices.ChannelManager, asrTranscriber != nil, ttsAvailable)
 
-	if transcriber != nil {
+	if asrTranscriber != nil {
 		// Start Voice Agent Orchestrator after channels are ready.
 		vaCtx, vaCancel := context.WithCancel(context.Background())
 		runningServices.VoiceAgentCancel = vaCancel
-		voiceAgent := asr.NewAgent(msgBus, transcriber, func(channel, sessionKey, chatID, text string) {
+		voiceAgent := asr.NewAgent(msgBus, asrTranscriber, func(channel, sessionKey, chatID, text string) {
 			// chatID is the WebSocket sessionID used by pet channel connections
 			runningServices.ChannelManager.SendASRResult(channel, chatID, chatID, text)
 		})
@@ -625,15 +652,39 @@ func restartServices(
 		fmt.Println("  ✓ Device event service restarted")
 	}
 
-	transcriber := asr.DetectTranscriber(cfg)
-	al.SetTranscriber(transcriber)
-	if transcriber != nil {
-		logger.InfoCF("voice", "Transcription re-enabled (agent-level)", map[string]any{"provider": transcriber.Name()})
+	// 从 pet channel 获取 ASR loader（优先），fallback 到 config.json 的检测
+	var asrTranscriber asr.Transcriber
+	if cfg.Channels.Pet.Enabled {
+		if petChannel, ok := runningServices.ChannelManager.GetChannel("pet"); ok {
+			if pc, ok := petChannel.(*petchannel.PetChannel); ok {
+				if asrLoader := pc.Service().ASRLoader(); asrLoader != nil && asrLoader.IsEnabled() {
+					if tr := asrLoader.GetCurrentTranscriber(); tr != nil {
+						asrTranscriber = tr
+						logger.InfoCF("voice", "ASR re-enabled via pet channel loader", map[string]any{
+							"model": asrLoader.GetCurrentModel(),
+						})
+					}
+				}
+			}
+		}
+	}
 
+	// Fallback: 检查 config.json 的 ModelList 中的 ASR 模型（兼容旧配置）
+	if asrTranscriber == nil {
+		if fallbackTranscriber := asr.DetectTranscriber(cfg); fallbackTranscriber != nil {
+			asrTranscriber = fallbackTranscriber
+			logger.InfoCF("voice", "ASR re-enabled via config.json fallback", map[string]any{
+				"provider": fallbackTranscriber.Name(),
+			})
+		}
+	}
+
+	al.SetTranscriber(asrTranscriber)
+	if asrTranscriber != nil {
 		// Start Voice Agent Orchestrator on reload
 		vaCtx, vaCancel := context.WithCancel(context.Background())
 		runningServices.VoiceAgentCancel = vaCancel
-		voiceAgent := asr.NewAgent(msgBus, transcriber, func(channel, sessionKey, chatID, text string) {
+		voiceAgent := asr.NewAgent(msgBus, asrTranscriber, func(channel, sessionKey, chatID, text string) {
 			// chatID is the WebSocket sessionID used by pet channel connections
 			runningServices.ChannelManager.SendASRResult(channel, chatID, chatID, text)
 		})
@@ -643,7 +694,7 @@ func restartServices(
 	}
 
 	ttsAvailable := tts.DetectTTS(cfg) != nil
-	logChannelVoiceCapabilities(runningServices.ChannelManager, transcriber != nil, ttsAvailable)
+	logChannelVoiceCapabilities(runningServices.ChannelManager, asrTranscriber != nil, ttsAvailable)
 	// NOTE: PID file is written once at startup and not updated on reload.
 	// Changing the gateway listen address requires a full restart.
 

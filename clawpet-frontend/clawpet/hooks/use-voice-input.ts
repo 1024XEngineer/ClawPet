@@ -768,7 +768,9 @@ export function useVoiceInput(options: UseVoiceInputOptions = {}) {
         if (typeof asrPayload.text === "string" && asrPayload.text.trim()) {
           recognizingHasResultRef.current = true
           hasReceivedAnyResponseRef.current = true
-          onResult?.(asrPayload.text)
+          if (phaseRef.current === "recognizing") {
+            onResult?.(asrPayload.text)
+          }
         }
       }
       if (event.type === "typing" && event.data === "false") {
@@ -1101,17 +1103,19 @@ export function useVoiceInput(options: UseVoiceInputOptions = {}) {
         }
         const message = err instanceof Error ? err.message : "audio worklet init failed"
         const cspBlocked = /content-security-policy|refused/i.test(message)
-        debugLog("audio worklet unavailable, fallback", {
+        debugLog("audio worklet unavailable, no fallback", {
           message,
           cspBlocked,
           forced: forceScriptProcessor.forced,
           forceReason: forceScriptProcessor.reason,
         })
-        startScriptProcessorBackend()
+        failStart("AudioWorklet 初始化失败，请检查麦克风权限或尝试刷新页面。")
+        return
       }
 
-      if (!workletNodeRef.current && !scriptProcessorRef.current) {
-        throw new Error("语音输入初始化失败")
+      if (!workletNodeRef.current) {
+        failStart("语音输入初始化失败：未检测到音频处理节点。")
+        return
       }
 
       sinkGainRef.current.connect(context.destination)
@@ -1129,11 +1133,11 @@ export function useVoiceInput(options: UseVoiceInputOptions = {}) {
       setPhaseState("recording")
       setIsListening(true)
       attachFocusGuards()
+      startCaptureHealthCheck()
       debugLog("backend ready", {
         startToken,
         backend: workletNodeRef.current ? "worklet" : scriptProcessorRef.current ? "script-processor" : "none",
       })
-      startCaptureHealthCheck()
 
       captureBootstrapTimeoutRef.current = setTimeout(() => {
         if (isStaleSession()) {
@@ -1146,51 +1150,12 @@ export function useVoiceInput(options: UseVoiceInputOptions = {}) {
           return
         }
         debugLog("capture bootstrap without samples", {
-          backend: workletNodeRef.current ? "worklet" : scriptProcessorRef.current ? "script-processor" : "none",
+          backend: "worklet",
           workletTicks: workletTickCountRef.current,
         })
-        if (workletNodeRef.current && !scriptProcessorRef.current && sourceNodeRef.current && sinkGainRef.current && audioContextRef.current === context) {
-          debugLog("switching fallback -> script-processor", {
-            reason: "no worklet samples",
-            workletTicks: workletTickCountRef.current,
-          })
-          try {
-            workletNodeRef.current.disconnect()
-          } catch {
-          }
-          workletNodeRef.current = null
-          try {
-            startScriptProcessorBackend()
-          } catch (fallbackErr) {
-            const fallbackMessage = fallbackErr instanceof Error ? fallbackErr.message : "语音输入初始化失败"
-            setPhaseState("error")
-            setError(fallbackMessage)
-            onError?.(fallbackMessage)
-            stopCapture()
-            setIsListening(false)
-            return
-          }
-          captureBootstrapTimeoutRef.current = setTimeout(() => {
-            if (phaseRef.current !== "recording" || hasReceivedSamplesRef.current) {
-              return
-            }
-            const message = "麦克风有权限但未产出音频数据，请检查默认输入设备或独占占用。"
-            debugLog("capture bootstrap timeout")
-            setPhaseState("error")
-            setError(message)
-            onError?.(message)
-            stopCapture()
-            setIsListening(false)
-          }, WORKLET_FALLBACK_DELAY_MS)
-          return
-        }
-        const message = "麦克风有权限但未产出音频数据，请检查默认输入设备或独占占用。"
-        debugLog("capture bootstrap timeout")
-        setPhaseState("error")
-        setError(message)
-        onError?.(message)
-        stopCapture()
-        setIsListening(false)
+        const message = "麦克风未产出音频数据，请检查麦克风是否被其他应用占用或权限设置是否正确。"
+        debugLog("capture bootstrap timeout - no fallback")
+        failStart(message)
       }, WORKLET_FALLBACK_DELAY_MS)
 
     } catch (err) {
@@ -1403,7 +1368,11 @@ export function useVoiceInput(options: UseVoiceInputOptions = {}) {
         void stopListening()
         return
       }
-      void startListening()
+      requestAnimationFrame(() => {
+        requestAnimationFrame(() => {
+          void startListening()
+        })
+      })
     } catch (err) {
       const message = err instanceof Error ? err.message : "语音输入失败，请重试。"
       setPhaseState("error")

@@ -51,6 +51,12 @@ func (l *ConfigLoader) Load() error {
 		return fmt.Errorf("failed to parse %s: %w", path, err)
 	}
 
+	fmt.Printf("[DEBUG ConfigLoader] Loaded PetConfig, Voice.ASRModelList len=%d\n",
+		len(cfg.Voice.ASRModelList))
+	for i, m := range cfg.Voice.ASRModelList {
+		fmt.Printf("[DEBUG ConfigLoader]   ASRModel[%d]: name=%s, provider=%s\n", i, m.Name, m.Provider)
+	}
+
 	// 至少需要一个角色
 	if len(cfg.Characters) == 0 {
 		cfg.Characters = []*CharacterConfig{DefaultCharacterConfig()}
@@ -196,19 +202,64 @@ func (l *ConfigLoader) GetVoiceModelConfig(name string) *VoiceModelConfig {
 	return nil
 }
 
-// GetDefaultVoiceModel 获取默认语音模型配置
-func (l *ConfigLoader) GetDefaultVoiceModel() *VoiceModelConfig {
+// GetVoiceModelList 获取所有语音模型（TTS）列表
+func (l *ConfigLoader) GetVoiceModelList() []*VoiceModelConfig {
+	if l.config == nil || l.config.Voice == nil {
+		return nil
+	}
+	return l.config.Voice.ModelList
+}
 
-	if l.config == nil || l.config.Voice == nil || l.config.Voice.DefaultModel == "" {
+// GetDefaultVoiceModelName 获取默认语音模型名称
+func (l *ConfigLoader) GetDefaultVoiceModelName() string {
+	if l.config == nil || l.config.Voice == nil {
+		return ""
+	}
+	return l.config.Voice.DefaultModel
+}
+
+// GetASRModelConfig 根据名称获取ASR模型配置
+func (l *ConfigLoader) GetASRModelConfig(name string) *ASRModelConfig {
+	if l.config == nil || l.config.Voice == nil {
 		return nil
 	}
 
-	for _, m := range l.config.Voice.ModelList {
-		if m.Name == l.config.Voice.DefaultModel {
+	for _, m := range l.config.Voice.ASRModelList {
+		if m.Name == name {
 			return m
 		}
 	}
 	return nil
+}
+
+// GetDefaultASRModel 获取默认ASR模型配置
+func (l *ConfigLoader) GetDefaultASRModel() *ASRModelConfig {
+	if l.config == nil || l.config.Voice == nil || l.config.Voice.DefaultASRModel == "" {
+		return nil
+	}
+
+	for _, m := range l.config.Voice.ASRModelList {
+		if m.Name == l.config.Voice.DefaultASRModel {
+			return m
+		}
+	}
+	return nil
+}
+
+// GetASRModelList 获取ASR模型列表
+func (l *ConfigLoader) GetASRModelList() []*ASRModelConfig {
+	if l.config == nil || l.config.Voice == nil {
+		return nil
+	}
+	return l.config.Voice.ASRModelList
+}
+
+// GetDefaultASRModelName 获取默认ASR模型名称
+func (l *ConfigLoader) GetDefaultASRModelName() string {
+	if l.config == nil || l.config.Voice == nil {
+		return ""
+	}
+	return l.config.Voice.DefaultASRModel
 }
 
 // LoadCharacterPrivateConfig 加载角色私有配置

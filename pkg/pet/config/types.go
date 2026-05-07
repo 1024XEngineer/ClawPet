@@ -27,6 +27,7 @@ type AppConfig struct {
 	ProactiveCare            bool   `json:"proactive_care"`             // 是否启用主动关怀
 	ProactiveIntervalMinutes int    `json:"proactive_interval_minutes"` // 主动关怀间隔（分钟）
 	VoiceEnabled             bool   `json:"voice_enabled"`              // 是否启用语音播报
+	ASREnabled               bool   `json:"asr_enabled"`                // 是否启用语音识别
 	Language                 string `json:"language"`                   // 语言设置
 }
 
@@ -159,9 +160,11 @@ type MBTIConfig struct {
 // VoiceConfig 语音配置结构
 // 包含TTS模型列表和ASR设置
 type VoiceConfig struct {
-	ModelList    []*VoiceModelConfig `json:"model_list"`    // 可用的语音模型列表
-	DefaultModel string              `json:"default_model"` // 默认使用的模型名称
-	ASREnabled   bool                `json:"asr_enabled"`   // 是否启用语音识别
+	ModelList      []*VoiceModelConfig `json:"model_list"`       // 可用的语音模型列表
+	DefaultModel   string              `json:"default_model"`   // 默认使用的模型名称
+	ASREnabled     bool                `json:"asr_enabled"`     // 是否启用语音识别
+	ASRModelList   []*ASRModelConfig    `json:"asr_model_list"`  // ASR模型列表
+	DefaultASRModel string             `json:"default_asr_model"` // 默认ASR模型名称
 }
 
 // VoiceModelConfig 语音模型配置
@@ -177,12 +180,48 @@ type VoiceModelConfig struct {
 	Enabled  bool           `json:"enabled"`  // 是否启用
 }
 
+// ASRModelConfig ASR模型配置
+// 支持多种ASR服务商
+type ASRModelConfig struct {
+	Name     string         `json:"name"`     // 模型标识名称
+	Provider string         `json:"provider"` // 供应商类型：whisper / baidu / elevenlabs / audio_model
+	Model    string         `json:"model"`    // 实际使用的模型ID
+	APIKey   string         `json:"api_key"`  // API密钥（支持${ENV_VAR}格式）
+	APIBase  string         `json:"api_base"` // API地址
+	Extra    map[string]any `json:"extra"`    // 供应商特定参数（如 app_id, secret_key）
+	Enabled  bool           `json:"enabled"`  // 是否启用
+}
+
 // MaskedAPIKey 返回脱敏后的 APIKey（已配置则显示 "******"）
 func (c *VoiceModelConfig) MaskedAPIKey() string {
 	if c.APIKey != "" {
 		return "******"
 	}
 	return ""
+}
+
+// MaskedAPIKey 返回脱敏后的 APIKey
+func (c *ASRModelConfig) MaskedAPIKey() string {
+	if c.APIKey != "" {
+		return "******"
+	}
+	return ""
+}
+
+// MaskedExtra 返回脱敏后的 Extra
+func (c *ASRModelConfig) MaskedExtra() map[string]any {
+	if c.Extra == nil {
+		return nil
+	}
+	result := make(map[string]any)
+	for k, v := range c.Extra {
+		if isSensitiveExtraKey(k) && v != "" {
+			result[k] = "******"
+		} else {
+			result[k] = v
+		}
+	}
+	return result
 }
 
 var sensitiveExtraKeys = []string{
@@ -282,8 +321,10 @@ func DefaultVoiceConfig() *VoiceConfig {
 				Enabled: false,
 			},
 		},
-		DefaultModel: "doubao-tts",
-		ASREnabled:   false,
+		DefaultModel:  "doubao-tts",
+		ASREnabled:    false,
+		ASRModelList:  nil,
+		DefaultASRModel: "",
 	}
 }
 
