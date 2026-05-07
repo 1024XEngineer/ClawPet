@@ -127,9 +127,13 @@ func (h *PetHook) BeforeLLM(ctx context.Context, req *agent.LLMHookRequest) (*ag
 		emotionList = append(emotionList, e)
 	}
 
-	var actionNames []string
+	var actionDescriptions []string
 	for _, a := range actions {
-		actionNames = append(actionNames, a.Name)
+		if a.Description != "" {
+			actionDescriptions = append(actionDescriptions, fmt.Sprintf("%s[%s]", a.Name, a.Description))
+		} else {
+			actionDescriptions = append(actionDescriptions, a.Name)
+		}
 	}
 
 	// 记忆检索prompt - 按权重从高到低排序，只取前500条
@@ -233,7 +237,7 @@ func (h *PetHook) BeforeLLM(ctx context.Context, req *agent.LLMHookRequest) (*ag
 		emotions.Joy, emotions.Anger, emotions.Sadness, emotions.Disgust, emotions.Surprise, emotions.Fear,
 		mbti,
 		strings.Join(emotionList, ", "),
-		strings.Join(actionNames, ", "),
+		strings.Join(actionDescriptions, ", "),
 		memoryTypesList)
 
 	// 先注入记忆，再注入用户档案，再注入角色信息，最后注入情绪动作
@@ -258,7 +262,7 @@ func (h *PetHook) BeforeLLM(ctx context.Context, req *agent.LLMHookRequest) (*ag
 		"memory_length":  len(memoryPrompt),
 		"emotions": fmt.Sprintf("joy=%d, anger=%d, sadness=%d, disgust=%d, surprise=%d, fear=%d",
 			emotions.Joy, emotions.Anger, emotions.Sadness, emotions.Disgust, emotions.Surprise, emotions.Fear),
-		"actions":        actionNames,
+		"actions":        actionDescriptions,
 		"total_messages": len(req.Messages),
 	})
 
@@ -345,8 +349,14 @@ func (h *PetHook) AfterLLM(ctx context.Context, resp *agent.LLMHookResponse) (*a
 		}
 	}
 
-	// 5. 检查情绪阈值，决定是否推送
-	if shouldPush, push := h.charManager.GetCurrent().GetEmotionEngine().ShouldPush(); shouldPush {
+	// 5. 每次回复都推送当前主导情绪（兜底动画驱动），阈值触发时额外推送完整信息
+	engine := h.charManager.GetCurrent().GetEmotionEngine()
+	dominantEmotion, dominantScore := engine.GetDominantEmotion()
+	h.pushEmotionChange(emotion.EmotionPush{
+		Emotion: dominantEmotion,
+		Score:   dominantScore,
+	})
+	if shouldPush, push := engine.ShouldPush(); shouldPush {
 		logger.InfoCF("pet", "PetHook: 情绪阈值触发推送", map[string]any{
 			"emotion": push.Emotion,
 			"score":   push.Score,

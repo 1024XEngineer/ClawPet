@@ -698,7 +698,7 @@ export class PicoClawWebSocket {
   private handleActionTriggerPush(data: Record<string, unknown>): void {
     this.emit({
       type: "action_trigger",
-      data: (data.action as string) || "",
+      data: (data.expression as string) || (data.action as string) || "",
     })
   }
 

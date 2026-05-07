@@ -414,6 +414,7 @@ export function useChat(options: UseChatOptions = {}): UseChatResult {
   const lastAssistantTextRef = useRef("")
   const assistantTurnActiveRef = useRef(false)
   const lastEmotionRef = useRef("neutral")
+  const lastActionRef = useRef("")
   const lastPlayedAudioRef = useRef<{ value: string; at: number }>({
     value: "",
     at: 0,
@@ -525,9 +526,12 @@ export function useChat(options: UseChatOptions = {}): UseChatResult {
         text: text?.trim() || "",
         at: Date.now(),
       }
+      const animation = lastActionRef.current || undefined
+      lastActionRef.current = ""
       window.electronAPI?.showBubble?.({
         text,
         emotion: lastEmotionRef.current,
+        animation,
         audio,
         duration_ms: typeof durationMs === "number" ? durationMs : undefined,
       })
@@ -1005,6 +1009,9 @@ export function useChat(options: UseChatOptions = {}): UseChatResult {
           break
 
         case "action_trigger":
+          if (typeof event.data === "string" && event.data.trim()) {
+            lastActionRef.current = event.data.trim()
+          }
           break
       }
     }

@@ -25,13 +25,18 @@ type Action struct {
 	// 格式示例："wave"、"happy_dance"、"thinking"
 	Name string `json:"name"`
 
-	// Description: 动作描述，供人类阅读
-	// 用于前端配置界面显示
+	// Description: 动作描述，供LLM理解何时选用该动作
 	Description string `json:"description"`
 
 	// Expression: 对应的表情/动画标识
 	// 前端根据此字段播放对应的Live2D表情或动画
 	Expression string `json:"expression"`
+
+	// EmotionTags: 该动作适用的情绪标签，辅助LLM选择
+	EmotionTags []string `json:"emotion_tags,omitempty"`
+
+	// Weight: 动作优先权重 0.0-1.0，越高越容易被选中
+	Weight float64 `json:"weight,omitempty"`
 
 	// CreatedAt: 创建时间戳（Unix时间）
 	CreatedAt int64 `json:"created_at"`

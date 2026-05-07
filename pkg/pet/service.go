@@ -109,6 +109,7 @@ func NewPetService(msgBus *bus.MessageBus, cfg PetServiceConfig) (*PetService, e
 		if err := s.actionManager.Load(); err != nil {
 			fmt.Printf("pet: failed to load actions: %v\n", err)
 		}
+		ensureDefaultActions(s.actionManager)
 
 		// 创建对话存储
 		if s.memoryStore != nil {
@@ -1824,4 +1825,63 @@ func (s *PetService) handleVoiceConfigUpdate(sessionID string, req Request) erro
 	}
 
 	return s.sendResponse(sessionID, req.Action, map[string]string{"status": "ok"})
+}
+
+// ensureDefaultActions 注册内置默认动作（仅在同名动作不存在时注册）
+// 这些动作对应 /pets/ 目录下的 GIF 文件，为 LLM 提供语义化动作选项。
+func ensureDefaultActions(mgr *action.ActionManager) {
+	defaults := []*action.Action{
+		{
+			Name:        "standby",
+			Description: "平静待机，适合无特定情绪的日常回复",
+			Expression:  "standby",
+			EmotionTags: []string{"neutral"},
+			Weight:      1.0,
+		},
+		{
+			Name:        "happy",
+			Description: "开心摇摆，适合夸赞用户、任务完成、收到好消息",
+			Expression:  "happy",
+			EmotionTags: []string{"joy", "happy"},
+			Weight:      0.9,
+		},
+		{
+			Name:        "sad",
+			Description: "低落委屈，适合用户倾诉烦恼、任务失败、帮不上忙",
+			Expression:  "sad",
+			EmotionTags: []string{"sadness", "sad"},
+			Weight:      0.8,
+		},
+		{
+			Name:        "celebrate",
+			Description: "庆祝跳出，适合重大完成、里程碑、用户取得突破",
+			Expression:  "celebrate",
+			EmotionTags: []string{"surprise", "joy"},
+			Weight:      0.8,
+		},
+		{
+			Name:        "shake-head",
+			Description: "轻松摇头晃脑，适合轻快、随意、无压力的闲聊氛围",
+			Expression:  "shake-head",
+			EmotionTags: []string{"joy", "neutral"},
+			Weight:      0.7,
+		},
+		{
+			Name:        "listen",
+			Description: "专注倾听，适合用户说了很长一段话、倾诉情绪、桌宠在等待",
+			Expression:  "listen",
+			EmotionTags: []string{"neutral"},
+			Weight:      0.7,
+		},
+		{
+			Name:        "stay-out",
+			Description: "静置输出，适合平静陈述、信息传达、无明显情绪波动的回复",
+			Expression:  "stay-out",
+			EmotionTags: []string{"neutral"},
+			Weight:      0.6,
+		},
+	}
+	for _, a := range defaults {
+		_ = mgr.Register(a) // 同名已存在时 Register 返回 error，直接忽略
+	}
 }

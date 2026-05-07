@@ -51,6 +51,15 @@ func FindPicoclawBinary() string {
 		}
 	}
 
+	// 检查当前工作目录（go run 时 os.Executable 返回的是 go 工具路径，需要单独检查 cwd）
+	// 必须返回绝对路径，Go 1.19+ 拒绝以相对路径运行当前目录里的可执行文件
+	if cwd, err := os.Getwd(); err == nil {
+		candidate := filepath.Join(cwd, binaryName)
+		if info, err := os.Stat(candidate); err == nil && !info.IsDir() {
+			return candidate
+		}
+	}
+
 	return "picoclaw"
 }
 

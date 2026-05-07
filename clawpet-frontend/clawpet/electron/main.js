@@ -1527,7 +1527,8 @@ ipcMain.on('show-bubble', (_event, data) => {
   const audio = typeof data?.audio === 'string' ? data.audio.trim() : '';
   const text = typeof data?.text === 'string' ? data.text.trim() : '';
   const emotion = typeof data?.emotion === 'string' ? data.emotion.trim() : '';
-  const fingerprint = `${audio}|${text}|${emotion}`;
+  const animation = typeof data?.animation === 'string' ? data.animation.trim() : '';
+  const fingerprint = `${audio}|${text}|${emotion}|${animation}`;
   const now = Date.now();
   const hasDetachedBubbleWindow = bubbleWindow && !bubbleWindow.isDestroyed();
 
@@ -1546,6 +1547,10 @@ ipcMain.on('show-bubble', (_event, data) => {
   if (hasDetachedBubbleWindow) {
     syncBubbleWindowToPet({ show: true });
     bubbleWindow.webContents.send('bubble-show', data);
+    // 同时通知宠物窗口更新动画，text 置 null 表示只更新动画不显示气泡文字
+    if (petWindow && !petWindow.isDestroyed()) {
+      petWindow.webContents.send('bubble-show', Object.assign({}, data, { text: null }));
+    }
   }
 });
 
