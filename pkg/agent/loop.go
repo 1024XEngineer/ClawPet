@@ -2238,6 +2238,7 @@ turnLoop:
 				ErrorPayload{
 					Stage:   "llm",
 					Message: err.Error(),
+					Err:     err,
 				},
 			)
 			logger.ErrorCF("agent", "LLM call failed",
