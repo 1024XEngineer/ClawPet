@@ -20,7 +20,7 @@ import (
 	"github.com/sipeed/picoclaw/pkg/config"
 	"github.com/sipeed/picoclaw/pkg/logger"
 	"github.com/sipeed/picoclaw/pkg/pet"
-	errors "github.com/sipeed/picoclaw/pkg/pet/errors"
+	perr "github.com/sipeed/picoclaw/pkg/pet/err"
 	"github.com/sipeed/picoclaw/pkg/pet/voice"
 )
 
@@ -178,7 +178,7 @@ func NewPetChannel(cfg config.PetConfig, msgBus *bus.MessageBus, workspacePath s
 	}
 	pc.service.SetPushHandler(pc.handleServicePush)
 
-	errors.SetPushHandler(pc.handleErrorPush)
+	perr.SetPushHandler(pc.handleErrorPush)
 
 	pc.service.Start()
 
@@ -205,7 +205,7 @@ func (c *PetChannel) handleServicePush(push any) {
 }
 
 // handleErrorPush 处理错误推送
-func (c *PetChannel) handleErrorPush(push errors.ErrorPush) {
+func (c *PetChannel) handleErrorPush(push perr.ErrorPush) {
 	c.connsMu.RLock()
 	defer c.connsMu.RUnlock()
 
@@ -1100,7 +1100,7 @@ func (s *petStreamer) processVoiceSegmentsLocked(content string) {
 						"seq":   s.seqCounter,
 						"error": err.Error(),
 					})
-					errors.Add(errors.LevelWarn, voice.CodeVoiceTTS, err.Error(), map[string]any{
+					perr.Add(perr.LevelWarn, voice.CodeVoiceTTS, err.Error(), map[string]any{
 						"seq": s.seqCounter,
 					})
 				}
@@ -1256,7 +1256,7 @@ func (s *petStreamer) trySendNextLocked() bool {
 func (s *petStreamer) sendAudioSegmentAsync(seg *voice.AudioSegment, isFinal bool) {
 	if seg == nil {
 		logger.WarnCF("pet", "sendAudioSegmentAsync: seg is nil!", nil)
-		errors.Add(errors.LevelError, voice.CodeVoiceTTS, "audio segment is nil", nil)
+		perr.Add(perr.LevelError, voice.CodeVoiceTTS, "audio segment is nil", nil)
 		return
 	}
 
@@ -1268,7 +1268,7 @@ func (s *petStreamer) sendAudioSegmentAsync(seg *voice.AudioSegment, isFinal boo
 		})
 		// TTS 错误：通过 errorMgr 推送错误 + 发送 ai_chat 文本
 		s.channel.sendStreamChunk(s.sessionID, s.chatID, "text", seg.Text, false)
-		errors.Add(errors.LevelError, voice.CodeVoiceTTS, seg.Error, map[string]any{
+		perr.Add(perr.LevelError, voice.CodeVoiceTTS, seg.Error, map[string]any{
 			"seq":  seg.Seq,
 			"text": seg.Text,
 		})
@@ -1283,7 +1283,7 @@ func (s *petStreamer) sendAudioSegmentAsync(seg *voice.AudioSegment, isFinal boo
 		})
 		// 空音频：通过 errorMgr 推送错误 + 发送 ai_chat 文本
 		s.channel.sendStreamChunk(s.sessionID, s.chatID, "text", seg.Text, false)
-		errors.Add(errors.LevelError, voice.CodeVoiceTTS, "empty audio payload", map[string]any{
+		perr.Add(perr.LevelError, voice.CodeVoiceTTS, "empty audio payload", map[string]any{
 			"seq":  seg.Seq,
 			"text": seg.Text,
 		})
@@ -1296,7 +1296,7 @@ func (s *petStreamer) sendAudioSegmentAsync(seg *voice.AudioSegment, isFinal boo
 			"seq":         seg.Seq,
 			"audio_bytes": len(seg.AudioData),
 		})
-		errors.Add(errors.LevelWarn, voice.CodeVoiceTTS, "unknown audio signature", map[string]any{
+		perr.Add(perr.LevelWarn, voice.CodeVoiceTTS, "unknown audio signature", map[string]any{
 			"seq":         seg.Seq,
 			"audio_bytes": len(seg.AudioData),
 		})

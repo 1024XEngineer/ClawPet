@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/base64"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"path/filepath"
 	"sync"
@@ -18,7 +19,7 @@ import (
 	"github.com/sipeed/picoclaw/pkg/pet/characters"
 	"github.com/sipeed/picoclaw/pkg/pet/compression"
 	petconfig "github.com/sipeed/picoclaw/pkg/pet/config"
-	"github.com/sipeed/picoclaw/pkg/pet/errors"
+	perr "github.com/sipeed/picoclaw/pkg/pet/err"
 	"github.com/sipeed/picoclaw/pkg/pet/memory"
 	"github.com/sipeed/picoclaw/pkg/pet/modelconfig"
 	"github.com/sipeed/picoclaw/pkg/pet/skills"
@@ -40,7 +41,7 @@ type PetService struct {
 	actionManager      *action.ActionManager
 	memoryStore        *memory.Store
 	voiceLoader        *voice.Loader
-	asrLoader         *asr.Loader
+	asrLoader          *asr.Loader
 	conversationStore  *compression.ConversationStore
 	compressionSvc     *compression.CompressionService
 	modelConfigManager *modelconfig.Manager
@@ -2052,12 +2053,12 @@ func (s *PetService) handleAudioFrame(sessionID string, req Request) error {
 			errMsg = "语音通道未就绪，请重启应用后重试"
 		}
 		logger.ErrorCF("pet", "Failed to publish audio chunk", map[string]any{
-			"error":     err.Error(),
+			"error":      err.Error(),
 			"session_id": sessionID,
-			"sequence":  data.Sequence,
-			"chat_id":   chunk.ChatID,
+			"sequence":   data.Sequence,
+			"chat_id":    chunk.ChatID,
 		})
-		errors.Add(errors.LevelError, voice.CodeVoiceASR, err.Error(), nil)
+		perr.Add(perr.LevelError, voice.CodeVoiceASR, err.Error(), nil)
 		return s.sendError(sessionID, req.Action, errMsg)
 	}
 

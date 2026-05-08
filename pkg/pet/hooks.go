@@ -13,13 +13,12 @@ import (
 	"github.com/sipeed/picoclaw/pkg/pet/characters"
 	"github.com/sipeed/picoclaw/pkg/pet/compression"
 	"github.com/sipeed/picoclaw/pkg/pet/emotion"
+	perr "github.com/sipeed/picoclaw/pkg/pet/err"
 	"github.com/sipeed/picoclaw/pkg/pet/memory"
 	"github.com/sipeed/picoclaw/pkg/pet/userprofile"
 	"github.com/sipeed/picoclaw/pkg/providers"
 	"github.com/sipeed/picoclaw/pkg/tools"
 )
-
-import errors "github.com/sipeed/picoclaw/pkg/pet/errors"
 
 // =============================================================================
 // LLM标签解析Hook
@@ -389,7 +388,7 @@ func (h *PetHook) AfterLLM(ctx context.Context, resp *agent.LLMHookResponse) (*a
 	parts := strings.Split(sessionKey, ":")
 	if len(parts) < 2 {
 		logger.WarnCF("pet", "PetHook: 无效的会话键格式", nil)
-		errors.Add(errors.LevelWarn, "session", "invalid session key format", map[string]any{"session_key": sessionKey})
+		perr.Add(perr.LevelWarn, "session", "invalid session key format", map[string]any{"session_key": sessionKey})
 		return resp, agent.HookDecision{Action: agent.HookActionContinue}, nil
 	}
 	sessionID := parts[len(parts)-1] // "test-1"
@@ -400,7 +399,7 @@ func (h *PetHook) AfterLLM(ctx context.Context, resp *agent.LLMHookResponse) (*a
 			if h.lastUserMessage != "" {
 				if err := h.conversationStore.Add(char.ID, sessionID, "user", h.lastUserMessage); err != nil {
 					logger.Warnf("pet: failed to add user message to conversation store: %v", err)
-					errors.Add(errors.LevelWarn, compression.CodeCompressionFailed, err.Error(), map[string]any{
+					perr.Add(perr.LevelWarn, compression.CodeCompressionFailed, err.Error(), map[string]any{
 						"char_id":    char.ID,
 						"session_id": sessionID,
 						"role":       "user",
@@ -410,7 +409,7 @@ func (h *PetHook) AfterLLM(ctx context.Context, resp *agent.LLMHookResponse) (*a
 			if parseText != "" {
 				if err := h.conversationStore.Add(char.ID, sessionID, "assistant", parseText); err != nil {
 					logger.Warnf("pet: failed to add pet message to conversation store: %v", err)
-					errors.Add(errors.LevelWarn, compression.CodeCompressionFailed, err.Error(), map[string]any{
+					perr.Add(perr.LevelWarn, compression.CodeCompressionFailed, err.Error(), map[string]any{
 						"char_id":    char.ID,
 						"session_id": sessionID,
 						"role":       "assistant",
@@ -943,9 +942,9 @@ func (h *PetHook) OnEvent(ctx context.Context, evt agent.Event) error {
 					}
 					ctx["reason"] = string(fe.Reason)
 				}
-				errors.Add(errors.LevelError, code, payload.Err.Error(), ctx)
+				perr.Add(perr.LevelError, code, payload.Err.Error(), ctx)
 			} else {
-				errors.Add(errors.LevelError, "agent_error", payload.Message, ctx)
+				perr.Add(perr.LevelError, "agent_error", payload.Message, ctx)
 			}
 		}
 	}
