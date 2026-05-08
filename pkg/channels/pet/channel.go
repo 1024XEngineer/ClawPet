@@ -20,6 +20,7 @@ import (
 	"github.com/sipeed/picoclaw/pkg/config"
 	"github.com/sipeed/picoclaw/pkg/logger"
 	"github.com/sipeed/picoclaw/pkg/pet"
+	errors "github.com/sipeed/picoclaw/pkg/pet/errors"
 	"github.com/sipeed/picoclaw/pkg/pet/voice"
 )
 
@@ -176,6 +177,9 @@ func NewPetChannel(cfg config.PetConfig, msgBus *bus.MessageBus, workspacePath s
 		return nil, err
 	}
 	pc.service.SetPushHandler(pc.handleServicePush)
+
+	errors.SetPushHandler(pc.handleErrorPush)
+
 	pc.service.Start()
 
 	// 初始化语音合成器
@@ -196,6 +200,26 @@ func (c *PetChannel) handleServicePush(push any) {
 	for _, pc := range c.connections {
 		if err := pc.writeJSON(push); err != nil {
 			logger.Warnf("pet: failed to push to conn_id=%s: %v", pc.id, err)
+		}
+	}
+}
+
+// handleErrorPush 处理错误推送
+func (c *PetChannel) handleErrorPush(push errors.ErrorPush) {
+	c.connsMu.RLock()
+	defer c.connsMu.RUnlock()
+
+	rawData, _ := json.Marshal(push)
+	pushMsg := pet.Push{
+		Type:      "push",
+		PushType:  pet.PushTypeError,
+		Data:      rawData,
+		Timestamp: time.Now().Unix(),
+	}
+
+	for _, pc := range c.connections {
+		if err := pc.writeJSON(pushMsg); err != nil {
+			logger.Warnf("pet: failed to push error to conn_id=%s: %v", pc.id, err)
 		}
 	}
 }
@@ -1076,6 +1100,9 @@ func (s *petStreamer) processVoiceSegmentsLocked(content string) {
 						"seq":   s.seqCounter,
 						"error": err.Error(),
 					})
+					errors.Add(errors.LevelWarn, voice.CodeVoiceTTS, err.Error(), map[string]any{
+						"seq": s.seqCounter,
+					})
 				}
 			}
 		} else {
@@ -1229,6 +1256,7 @@ func (s *petStreamer) trySendNextLocked() bool {
 func (s *petStreamer) sendAudioSegmentAsync(seg *voice.AudioSegment, isFinal bool) {
 	if seg == nil {
 		logger.WarnCF("pet", "sendAudioSegmentAsync: seg is nil!", nil)
+		errors.Add(errors.LevelError, voice.CodeVoiceTTS, "audio segment is nil", nil)
 		return
 	}
 
@@ -1238,17 +1266,12 @@ func (s *petStreamer) sendAudioSegmentAsync(seg *voice.AudioSegment, isFinal boo
 			"seq":   seg.Seq,
 			"error": seg.Error,
 		})
-		data := map[string]any{
-			"seq":        seg.Seq,
-			"text":       seg.Text,
-			"audio":      "",
-			"audio_mime": "audio/mpeg",
-			"duration":   0,
-			"is_final":   isFinal,
-			"error":      seg.Error,
-			"emotion":    "",
-		}
-		_ = s.channel.sendVoicePush(s.sessionID, "audio_and_voice", data)
+		// TTS 错误：通过 errorMgr 推送错误 + 发送 ai_chat 文本
+		s.channel.sendStreamChunk(s.sessionID, s.chatID, "text", seg.Text, false)
+		errors.Add(errors.LevelError, voice.CodeVoiceTTS, seg.Error, map[string]any{
+			"seq":  seg.Seq,
+			"text": seg.Text,
+		})
 		return
 	}
 
@@ -1258,23 +1281,22 @@ func (s *petStreamer) sendAudioSegmentAsync(seg *voice.AudioSegment, isFinal boo
 			"seq":  seg.Seq,
 			"text": seg.Text,
 		})
-		data := map[string]any{
-			"seq":        seg.Seq,
-			"text":       seg.Text,
-			"audio":      "",
-			"audio_mime": "audio/mpeg",
-			"duration":   0,
-			"is_final":   isFinal,
-			"error":      "empty audio payload",
-			"emotion":    "",
-		}
-		_ = s.channel.sendVoicePush(s.sessionID, "audio_and_voice", data)
+		// 空音频：通过 errorMgr 推送错误 + 发送 ai_chat 文本
+		s.channel.sendStreamChunk(s.sessionID, s.chatID, "text", seg.Text, false)
+		errors.Add(errors.LevelError, voice.CodeVoiceTTS, "empty audio payload", map[string]any{
+			"seq":  seg.Seq,
+			"text": seg.Text,
+		})
 		return
 	}
 	encoded := base64.StdEncoding.EncodeToString(seg.AudioData)
 	mimeType := inferAudioMimeFromBytes(seg.AudioData)
 	if mimeType == "" {
 		logger.WarnCF("pet", "sendAudioSegmentAsync: unknown audio signature", map[string]any{
+			"seq":         seg.Seq,
+			"audio_bytes": len(seg.AudioData),
+		})
+		errors.Add(errors.LevelWarn, voice.CodeVoiceTTS, "unknown audio signature", map[string]any{
 			"seq":         seg.Seq,
 			"audio_bytes": len(seg.AudioData),
 		})
