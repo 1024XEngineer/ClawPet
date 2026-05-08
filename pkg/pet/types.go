@@ -79,6 +79,7 @@ const (
 	PushTypeCharacterSwitch = "character_switch" // 角色切换
 	PushTypeAudio           = "audio"            // 音频播放
 	PushTypeTextAndAudio    = "text_and_audio"   // 文本和音频同时推送
+	PushTypeError           = "error"            // 错误推送
 )
 
 // =============================================================================
