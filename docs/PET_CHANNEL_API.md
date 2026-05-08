@@ -1,7 +1,7 @@
 # Pet Channel API 接口文档
 
-> 版本：v2.9  
-> 日期：2026-04-26  
+> 版本：v2.10  
+> 日期：2026-05-08  
 > 协议：WebSocket + JSON
 
 ---
@@ -427,6 +427,85 @@ if (msg.push_type === 'text_and_audio') {
     };
     
     audio.play();
+}
+```
+
+### 3.8 error - 错误推送
+
+当 pet 模块运行时发生错误（如 TTS 失败、LLM 调用失败等），后端主动推送错误信息给客户端。
+
+**推送格式**：
+
+```json
+{
+  "type": "push",
+  "push_type": "error",
+  "data": {
+    "level": "error",
+    "code": "voice_tts",
+    "message": "TTS provider not configured",
+    "timestamp": 1714896000,
+    "context": {
+      "seq": 1,
+      "text": "要说的文字"
+    }
+  },
+  "timestamp": 1714896000
+}
+```
+
+**字段说明**：
+
+| 字段 | 类型 | 说明 |
+|------|------|------|
+| level | string | 错误级别：`error` / `warn` / `info` |
+| code | string | 错误码，标识错误类型 |
+| message | string | 错误信息 |
+| timestamp | int | 错误发生时间戳 |
+| context | object | 错误上下文信息（可选） |
+
+**错误码列表**：
+
+| 错误码 | 说明 | 所在模块 |
+|--------|------|----------|
+| `voice_tts` | TTS 语音合成失败 | 语音合成 |
+| `voice_asr` | ASR 语音识别失败 | 语音识别 |
+| `compression_failed` | 会话存储/压缩失败 | 记忆压缩 |
+| `service_error` | 服务层通用错误 | PetService |
+| `provider_rate_limit` | LLM 供应商速率限制 | 供应商 |
+| `provider_timeout` | LLM 供应商请求超时 | 供应商 |
+| `provider_auth` | LLM 供应商认证失败 | 供应商 |
+| `provider_overload` | LLM 供应商服务器过载 | 供应商 |
+| `channel_conn` | WebSocket 连接错误 | 通道层 |
+| `channel_push` | 消息推送失败 | 通道层 |
+
+**前端处理逻辑**：
+
+```javascript
+// 接收 error 推送
+if (msg.push_type === 'error') {
+    const data = msg.data;
+    
+    console.error(`[${data.level}] ${data.code}: ${data.message}`);
+    
+    // 根据错误码做差异化处理
+    switch (data.code) {
+        case 'voice_tts':
+            // TTS 失败，可以显示友好提示或降级为纯文本
+            showToast('语音合成失败，将以文本形式回复');
+            break;
+        case 'provider_rate_limit':
+            // 速率限制，可以提示用户稍后重试
+            showToast('服务繁忙，请稍后重试');
+            break;
+        case 'provider_auth':
+            // 认证失败，需要检查配置
+            showToast('AI 配置异常，请检查 API Key');
+            break;
+        default:
+            // 其他错误
+            showToast(`服务错误: ${data.message}`);
+    }
 }
 ```
 
@@ -2732,6 +2811,7 @@ async def send_chat(ws, text):
 | character_switch | 角色切换后 | 推送切换后的角色ID |
 | text_and_audio | 语音流式合成 | 流式推送语音音频片段，按顺序播放 |
 | heartbeat | 每 30 秒 | 保活检测 |
+| error | 运行时错误 | 推送 TTS/LLM/供应商等运行时错误 |
 
 ---
 
@@ -2745,4 +2825,4 @@ async def send_chat(ws, text):
 
 4. **动作触发**：LLM 在回复中输出 `[action:xxx]` 标签时，后端自动解析并推送 `action_trigger`。
 
-5. **错误处理**：收到 `status: error` 时，检查 `error` 字段获取具体错误信息。
+5. **错误处理**：运行时错误通过 `push_type: error` 主动推送给客户端，包含错误码、错误信息和上下文。前端应根据 `code` 字段做差异化处理。
