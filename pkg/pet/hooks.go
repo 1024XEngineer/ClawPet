@@ -19,6 +19,8 @@ import (
 	"github.com/sipeed/picoclaw/pkg/tools"
 )
 
+import errors "github.com/sipeed/picoclaw/pkg/pet/errors"
+
 // =============================================================================
 // LLM标签解析Hook
 // =============================================================================
@@ -387,6 +389,7 @@ func (h *PetHook) AfterLLM(ctx context.Context, resp *agent.LLMHookResponse) (*a
 	parts := strings.Split(sessionKey, ":")
 	if len(parts) < 2 {
 		logger.WarnCF("pet", "PetHook: 无效的会话键格式", nil)
+		errors.Add(errors.LevelWarn, "session", "invalid session key format", map[string]any{"session_key": sessionKey})
 		return resp, agent.HookDecision{Action: agent.HookActionContinue}, nil
 	}
 	sessionID := parts[len(parts)-1] // "test-1"
@@ -397,11 +400,21 @@ func (h *PetHook) AfterLLM(ctx context.Context, resp *agent.LLMHookResponse) (*a
 			if h.lastUserMessage != "" {
 				if err := h.conversationStore.Add(char.ID, sessionID, "user", h.lastUserMessage); err != nil {
 					logger.Warnf("pet: failed to add user message to conversation store: %v", err)
+					errors.Add(errors.LevelWarn, compression.CodeCompressionFailed, err.Error(), map[string]any{
+						"char_id":    char.ID,
+						"session_id": sessionID,
+						"role":       "user",
+					})
 				}
 			}
 			if parseText != "" {
 				if err := h.conversationStore.Add(char.ID, sessionID, "assistant", parseText); err != nil {
 					logger.Warnf("pet: failed to add pet message to conversation store: %v", err)
+					errors.Add(errors.LevelWarn, compression.CodeCompressionFailed, err.Error(), map[string]any{
+						"char_id":    char.ID,
+						"session_id": sessionID,
+						"role":       "assistant",
+					})
 				}
 			}
 			h.lastUserMessage = ""
@@ -900,4 +913,61 @@ func parseMemoryTags(content string) []MemoryTag {
 		tags = append(tags, MemoryTag{Type: m[1], Weight: weight, Summary: m[3]})
 	}
 	return tags
+}
+
+func (h *PetHook) OnEvent(ctx context.Context, evt agent.Event) error {
+	if evt.Kind == agent.EventKindError {
+		if payload, ok := evt.Payload.(agent.ErrorPayload); ok {
+			ctx := make(map[string]any)
+			if evt.Meta.SessionKey != "" {
+				ctx["session_key"] = evt.Meta.SessionKey
+			}
+			if evt.Meta.AgentID != "" {
+				ctx["agent_id"] = evt.Meta.AgentID
+			}
+			if evt.Meta.TurnID != "" {
+				ctx["turn_id"] = evt.Meta.TurnID
+			}
+			if payload.Stage != "" {
+				ctx["stage"] = payload.Stage
+			}
+
+			if payload.Err != nil {
+				code := "agent_error"
+				if fe, ok := payload.Err.(*providers.FailoverError); ok {
+					code = mapFailoverCode(fe.Reason)
+					ctx["provider"] = fe.Provider
+					ctx["model"] = fe.Model
+					if fe.Status > 0 {
+						ctx["status"] = fe.Status
+					}
+					ctx["reason"] = string(fe.Reason)
+				}
+				errors.Add(errors.LevelError, code, payload.Err.Error(), ctx)
+			} else {
+				errors.Add(errors.LevelError, "agent_error", payload.Message, ctx)
+			}
+		}
+	}
+
+	return nil
+}
+
+func mapFailoverCode(reason providers.FailoverReason) string {
+	switch reason {
+	case providers.FailoverRateLimit:
+		return providers.CodeProviderRateLimit
+	case providers.FailoverOverloaded:
+		return providers.CodeProviderOverload
+	case providers.FailoverTimeout:
+		return providers.CodeProviderTimeout
+	case providers.FailoverContextOverflow:
+		return providers.CodeProviderContext
+	case providers.FailoverAuth:
+		return providers.CodeProviderAuth
+	case providers.FailoverFormat:
+		return providers.CodeProviderFormat
+	default:
+		return providers.CodeProviderUnknown
+	}
 }
