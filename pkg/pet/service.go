@@ -4,7 +4,6 @@ import (
 	"context"
 	"encoding/base64"
 	"encoding/json"
-	"errors"
 	"fmt"
 	"path/filepath"
 	"sync"
@@ -19,6 +18,7 @@ import (
 	"github.com/sipeed/picoclaw/pkg/pet/characters"
 	"github.com/sipeed/picoclaw/pkg/pet/compression"
 	petconfig "github.com/sipeed/picoclaw/pkg/pet/config"
+	"github.com/sipeed/picoclaw/pkg/pet/errors"
 	"github.com/sipeed/picoclaw/pkg/pet/memory"
 	"github.com/sipeed/picoclaw/pkg/pet/modelconfig"
 	"github.com/sipeed/picoclaw/pkg/pet/skills"
@@ -2057,6 +2057,7 @@ func (s *PetService) handleAudioFrame(sessionID string, req Request) error {
 			"sequence":  data.Sequence,
 			"chat_id":   chunk.ChatID,
 		})
+		errors.Add(errors.LevelError, voice.CodeVoiceASR, err.Error(), nil)
 		return s.sendError(sessionID, req.Action, errMsg)
 	}
 
