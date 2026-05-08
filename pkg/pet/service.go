@@ -41,7 +41,7 @@ type PetService struct {
 	actionManager      *action.ActionManager
 	memoryStore        *memory.Store
 	voiceLoader        *voice.Loader
-	asrLoader          *asr.Loader
+	asrLoader         *asr.Loader
 	conversationStore  *compression.ConversationStore
 	compressionSvc     *compression.CompressionService
 	modelConfigManager *modelconfig.Manager
@@ -778,6 +778,25 @@ func (s *PetService) handleCharacterSwitch(sessionID string, req Request) error 
 		return s.sendError(sessionID, req.Action, err.Error())
 	}
 
+	// 应用角色偏好音色
+	privateCfg := s.configManager.GetCharacterPrivateConfig()
+	if privateCfg != nil && privateCfg.VoiceModel != "" && privateCfg.VoiceID != "" {
+		// 更新全局模型的 VoiceID 为角色的偏好音色
+		if model := s.voiceLoader.GetModel(privateCfg.VoiceModel); model != nil {
+			model.VoiceID = privateCfg.VoiceID
+			// 持久化到全局配置
+			if err := s.configManager.UpdateVoiceModel(model); err != nil {
+				logger.Warnf("pet: failed to update voice model: %v", err)
+			}
+		}
+		// 切换到角色偏好的模型
+		if err := s.voiceLoader.SwitchModel(privateCfg.VoiceModel, s.configManager); err != nil {
+			logger.Warnf("pet: failed to switch voice model: %v", err)
+		} else {
+			logger.Infof("pet: switched to voice %s (%s)", privateCfg.VoiceModel, privateCfg.VoiceID)
+		}
+	}
+
 	s.sendPush(sessionID, PushTypeCharacterSwitch, CharacterSwitchPush{
 		CharacterID: s.charManager.GetCurrentID(),
 	})
@@ -1451,13 +1470,12 @@ type ASRModelListGetResponse struct {
 
 // ASRModelUpdateRequest ASR 模型更新请求
 type ASRModelUpdateRequest struct {
-	Name     string         `json:"name"`
-	Provider string         `json:"provider,omitempty"`
-	APIKey   string         `json:"api_key,omitempty"`
-	APIBase  string         `json:"api_base,omitempty"`
-	Model    string         `json:"model,omitempty"`
-	Enabled  *bool          `json:"enabled,omitempty"`
-	Extra    map[string]any `json:"extra,omitempty"`
+	Name    string         `json:"name"`
+	APIKey  string         `json:"api_key,omitempty"`
+	APIBase string         `json:"api_base,omitempty"`
+	Model   string         `json:"model,omitempty"`
+	Enabled *bool          `json:"enabled,omitempty"`
+	Extra   map[string]any `json:"extra,omitempty"`
 }
 
 // ASRModelSetDefaultRequest ASR 模型设置默认请求
@@ -1883,6 +1901,18 @@ func (s *PetService) handleVoiceModelUpdate(sessionID string, req Request) error
 	}
 	if data.VoiceID != "" {
 		model.VoiceID = data.VoiceID
+		// 同步更新当前角色的偏好音色
+		if char := s.charManager.GetCurrent(); char != nil {
+			privateCfg := s.configManager.GetCharacterPrivateConfig()
+			if privateCfg != nil {
+				privateCfg.VoiceModel = data.Name
+				privateCfg.VoiceID = data.VoiceID
+				s.configManager.SetCharacterPrivateConfig(privateCfg)
+				if err := s.configManager.SavePrivateConfig(char.ID, privateCfg); err != nil {
+					logger.Warnf("pet: failed to save character private config: %v", err)
+				}
+			}
+		}
 	}
 	if data.Enabled != nil {
 		model.Enabled = *data.Enabled
@@ -2002,9 +2032,21 @@ func (s *PetService) handleVoiceModelSetDefault(sessionID string, req Request) e
 		return s.sendError(sessionID, req.Action, err.Error())
 	}
 
-	if s.voiceLoader.GetCurrentModel() != data.Name {
-		if err := s.voiceLoader.SwitchModel(data.Name, s.configManager); err != nil {
-			logger.Warnf("pet voice: failed to switch to %s: %v", data.Name, err)
+	// 同步更新当前角色的偏好模型
+	if char := s.charManager.GetCurrent(); char != nil {
+		privateCfg := s.configManager.GetCharacterPrivateConfig()
+		if privateCfg != nil {
+			privateCfg.VoiceModel = data.Name
+			// VoiceID 保持不变（用户可能只想换模型，保留原音色）
+			s.configManager.SetCharacterPrivateConfig(privateCfg)
+			if err := s.configManager.SavePrivateConfig(char.ID, privateCfg); err != nil {
+				logger.Warnf("pet: failed to save character private config: %v", err)
+			}
+		}
+		if s.voiceLoader.GetCurrentModel() != data.Name {
+			if err := s.voiceLoader.SwitchModel(data.Name, s.configManager); err != nil {
+				logger.Warnf("pet voice: failed to switch to %s: %v", data.Name, err)
+			}
 		}
 	}
 
@@ -2249,10 +2291,10 @@ func (s *PetService) handleAudioFrame(sessionID string, req Request) error {
 			errMsg = "语音通道未就绪，请重启应用后重试"
 		}
 		logger.ErrorCF("pet", "Failed to publish audio chunk", map[string]any{
-			"error":      err.Error(),
+			"error":     err.Error(),
 			"session_id": sessionID,
-			"sequence":   data.Sequence,
-			"chat_id":    chunk.ChatID,
+			"sequence":  data.Sequence,
+			"chat_id":   chunk.ChatID,
 		})
 		perr.Add(perr.LevelError, voice.CodeVoiceASR, err.Error(), nil)
 		return s.sendError(sessionID, req.Action, errMsg)

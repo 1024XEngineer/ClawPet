@@ -113,6 +113,8 @@ type CharacterPrivateConfig struct {
 	MBTI         *MBTIConfig   `json:"mbti"`          // MBTI配置
 	LastUpdate   int64         `json:"last_update"`   // 最后更新时间（Unix时间戳）
 	Volatility   float64       `json:"volatility"`    // 情绪波动系数
+	VoiceModel   string        `json:"voice_model"`   // 偏好语音模型名
+	VoiceID      string        `json:"voice_id"`      // 偏好音色ID
 }
 
 // EmotionState 情绪状态配置
@@ -160,11 +162,11 @@ type MBTIConfig struct {
 // VoiceConfig 语音配置结构
 // 包含TTS模型列表和ASR设置
 type VoiceConfig struct {
-	ModelList      []*VoiceModelConfig `json:"model_list"`       // 可用的语音模型列表
-	DefaultModel   string              `json:"default_model"`   // 默认使用的模型名称
-	ASREnabled     bool                `json:"asr_enabled"`     // 是否启用语音识别
-	ASRModelList   []*ASRModelConfig    `json:"asr_model_list"`  // ASR模型列表
-	DefaultASRModel string             `json:"default_asr_model"` // 默认ASR模型名称
+	ModelList       []*VoiceModelConfig `json:"model_list"`        // 可用的语音模型列表
+	DefaultModel    string              `json:"default_model"`     // 默认使用的模型名称
+	ASREnabled      bool                `json:"asr_enabled"`       // 是否启用语音识别
+	ASRModelList    []*ASRModelConfig   `json:"asr_model_list"`    // ASR模型列表
+	DefaultASRModel string              `json:"default_asr_model"` // 默认ASR模型名称
 }
 
 // VoiceModelConfig 语音模型配置
@@ -321,9 +323,9 @@ func DefaultVoiceConfig() *VoiceConfig {
 				Enabled: false,
 			},
 		},
-		DefaultModel:  "doubao-tts",
-		ASREnabled:    false,
-		ASRModelList:  nil,
+		DefaultModel:    "doubao-tts",
+		ASREnabled:      false,
+		ASRModelList:    nil,
 		DefaultASRModel: "",
 	}
 }
