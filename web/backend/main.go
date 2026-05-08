@@ -306,6 +306,23 @@ func main() {
 		}
 	}
 
+	// Find available port with automatic fallback
+	portResult, err := utils.FindAvailablePortForService("launcher", portNum)
+	if err != nil {
+		logger.Fatalf("Cannot start server: %v", err)
+	}
+	if portResult.IsFallback {
+		logger.InfoC("web", portResult.Message())
+	}
+
+	// Update effective port
+	effectivePort = strconv.Itoa(portResult.Port)
+	if effectivePublic {
+		addr = "0.0.0.0:" + effectivePort
+	} else {
+		addr = "127.0.0.1:" + effectivePort
+	}
+
 	// Log startup info to file
 	logger.InfoC("web", fmt.Sprintf("Server will listen on http://localhost:%s", effectivePort))
 	if effectivePublic {

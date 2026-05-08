@@ -91,7 +91,13 @@ contextBridge.exposeInMainWorld('electronAPI', {
    * @param {boolean} enabled - true 为穿透，false 为可点击
    */
   setPetClickThrough: (enabled) => ipcRenderer.send('set-pet-click-through', Boolean(enabled)),
-  
+
+  /**
+   * 注册桌宠穿透快捷键
+   * @param {{enabled: boolean, keys: string}} data - 快捷键配置
+   */
+  registerPetClickThroughShortcut: (data) => ipcRenderer.send('register-pet-click-through-shortcut', data),
+
   // ==================== 设置窗口 ====================
   
   /**
@@ -231,7 +237,27 @@ contextBridge.exposeInMainWorld('electronAPI', {
    */
   getStartupState: () => ipcRenderer.invoke('startup-state'),
 
-  ensureSettingsForeground: () => ipcRenderer.invoke('voice-ensure-settings-foreground')
+  ensureSettingsForeground: () => ipcRenderer.invoke('voice-ensure-settings-foreground'),
+
+  // ==================== 语音输入快捷键 ====================
+
+  /**
+   * 监听语音输入快捷键触发事件
+   * @param {function} callback - 回调函数
+   */
+  onVoiceShortcutTriggered: (callback) => {
+    ipcRenderer.on('voice-shortcut-triggered', () => callback());
+  },
+
+  /**
+   * 注册/更新语音输入快捷键
+   * @param {object} data - 快捷键配置
+   * @param {boolean} data.enabled - 是否启用
+   * @param {string} data.keys - 快捷键（如 'CommandOrControl+P'）
+   */
+  registerVoiceShortcut: (data) => {
+    ipcRenderer.send('register-voice-shortcut', data);
+  }
 });
 
 function serializeForMainLog(value) {

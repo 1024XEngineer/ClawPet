@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/sipeed/picoclaw/pkg/config"
+	"github.com/sipeed/picoclaw/pkg/logger"
 	"github.com/sipeed/picoclaw/pkg/processutil"
 	"github.com/sipeed/picoclaw/web/backend/utils"
 )
@@ -164,7 +165,12 @@ func resolveGatewayBinaryForVersionInfo() string {
 		}
 	}
 
-	return utils.FindPicoclawBinary()
+	path, err := utils.FindPicoclawBinary()
+	if err != nil {
+		logger.Debugf("Could not resolve gateway binary: %v", err)
+		return "unknown"
+	}
+	return path
 }
 
 func gatewayVersionState() (int, bool) {

@@ -39,6 +39,24 @@ import { AsrModelsPanel } from "./asr-models-panel"
 
 type ConfigTab = "visual" | "raw"
 
+function simplifyShortcut(accelerator: string): string {
+  if (!accelerator) return ""
+  return accelerator
+    .replace(/CommandOrControl/gi, "Ctrl")
+    .replace(/Command/gi, "Cmd")
+    .replace(/Control/gi, "Ctrl")
+}
+
+function normalizeShortcut(shortcut: string): string {
+  if (!shortcut) return ""
+  const normalized = shortcut
+    .trim()
+    .replace(/Ctrl/gi, "CommandOrControl")
+    .replace(/Cmd/gi, "Command")
+    .replace(/Control/gi, "Control")
+  return normalized
+}
+
 interface ConfigFormState {
   defaultModel: string
   systemPrompt: string
@@ -166,6 +184,28 @@ export function ConfigPage() {
   } | null>(null)
   const [asrModels, setAsrModels] = useState<ASRModelData[]>([])
   const [showAsrModelsPanel, setShowAsrModelsPanel] = useState(false)
+  const [voiceInputShortcut, setVoiceInputShortcut] = useState("Ctrl+P")
+  const [voiceInputShortcutEnabled, setVoiceInputShortcutEnabled] = useState(true)
+  const [petClickThroughShortcut, setPetClickThroughShortcut] = useState("Ctrl+Shift+P")
+  const [petClickThroughEnabled, setPetClickThroughEnabled] = useState(true)
+
+  useEffect(() => {
+    if (configData?.config?.keyboard_shortcuts) {
+      const ks = configData.config.keyboard_shortcuts
+      if (ks.enabled !== undefined) {
+        setVoiceInputShortcutEnabled(ks.enabled)
+      }
+      if (ks.voice_input !== undefined && ks.voice_input !== "") {
+        setVoiceInputShortcut(simplifyShortcut(ks.voice_input))
+      }
+      if (ks.pet_click_through !== undefined) {
+        setPetClickThroughEnabled(ks.pet_click_through)
+      }
+      if (ks.pet_click_through_shortcut !== undefined && ks.pet_click_through_shortcut !== "") {
+        setPetClickThroughShortcut(simplifyShortcut(ks.pet_click_through_shortcut))
+      }
+    }
+  }, [configData])
 
   useEffect(() => {
     if (!configData?.config || hasChanges) {
@@ -421,6 +461,21 @@ export function ConfigPage() {
             port: formData.port,
             publicAccess: formData.publicAccess,
           },
+          keyboard_shortcuts: {
+            enabled: voiceInputShortcutEnabled,
+            voice_input: normalizeShortcut(voiceInputShortcut),
+            pet_click_through: petClickThroughEnabled,
+            pet_click_through_shortcut: normalizeShortcut(petClickThroughShortcut),
+          },
+        })
+
+        window.electronAPI?.registerVoiceShortcut?.({
+          enabled: voiceInputShortcutEnabled,
+          keys: normalizeShortcut(voiceInputShortcut),
+        })
+        window.electronAPI?.registerPetClickThroughShortcut?.({
+          enabled: petClickThroughEnabled,
+          keys: normalizeShortcut(petClickThroughShortcut),
         })
 
         const ws = getWebSocketInstance()
@@ -796,6 +851,104 @@ export function ConfigPage() {
                           >
                             管理语音识别模型
                           </button>
+                        </div>
+                      )}
+
+                      <div className="dashboard-card flex items-center justify-between gap-4 rounded-[1rem] border border-white/80 bg-white/82 px-3 py-3">
+                        <div>
+                          <p className="text-sm font-semibold text-[#4f3725]">语音输入快捷键</p>
+                          <p className="mt-1 text-xs text-[#816451]">
+                            按下快捷键开始/停止语音输入
+                          </p>
+                        </div>
+                        <button
+                          type="button"
+                          aria-pressed={voiceInputShortcutEnabled}
+                          onClick={() => {
+                            setVoiceInputShortcutEnabled(!voiceInputShortcutEnabled)
+                            setHasChanges(true)
+                          }}
+                          className={cn(
+                            "relative h-7 w-14 rounded-full transition",
+                            voiceInputShortcutEnabled
+                              ? "bg-emerald-500"
+                              : "bg-[#e7ddd3]",
+                          )}
+                        >
+                          <span
+                            className={cn(
+                              "absolute left-1 top-1 h-5 w-5 rounded-full bg-white transition-transform",
+                              voiceInputShortcutEnabled
+                                ? "translate-x-7"
+                                : "translate-x-0",
+                            )}
+                          />
+                        </button>
+                      </div>
+                      {voiceInputShortcutEnabled && (
+                        <div className="dashboard-card rounded-[1rem] border border-white/80 bg-white/82 px-3 py-3">
+                          <input
+                            type="text"
+                            value={voiceInputShortcut}
+                            onChange={(e) => {
+                              setVoiceInputShortcut(e.target.value)
+                              setHasChanges(true)
+                            }}
+                            placeholder="Ctrl+P"
+                            className="mt-1 w-full rounded-lg border border-amber-200 bg-amber-50/50 px-3 py-2 text-xs text-[#4f3725] placeholder-[#9b7b62] focus:border-amber-400 focus:outline-none focus:ring-1 focus:ring-amber-300"
+                          />
+                          <p className="mt-1 text-xs text-[#9b7b62]">
+                            格式: Ctrl+P, Ctrl+Shift+P, Alt+A
+                          </p>
+                        </div>
+                      )}
+
+                      <div className="dashboard-card flex items-center justify-between gap-4 rounded-[1rem] border border-white/80 bg-white/82 px-3 py-3">
+                        <div>
+                          <p className="text-sm font-semibold text-[#4f3725]">桌宠穿透快捷键</p>
+                          <p className="mt-1 text-xs text-[#816451]">
+                            按下快捷键切换桌宠穿透模式
+                          </p>
+                        </div>
+                        <button
+                          type="button"
+                          aria-pressed={petClickThroughEnabled}
+                          onClick={() => {
+                            setPetClickThroughEnabled(!petClickThroughEnabled)
+                            setHasChanges(true)
+                          }}
+                          className={cn(
+                            "relative h-7 w-14 rounded-full transition",
+                            petClickThroughEnabled
+                              ? "bg-emerald-500"
+                              : "bg-[#e7ddd3]",
+                          )}
+                        >
+                          <span
+                            className={cn(
+                              "absolute left-1 top-1 h-5 w-5 rounded-full bg-white transition-transform",
+                              petClickThroughEnabled
+                                ? "translate-x-7"
+                                : "translate-x-0",
+                            )}
+                          />
+                        </button>
+                      </div>
+                      {petClickThroughEnabled && (
+                        <div className="dashboard-card rounded-[1rem] border border-white/80 bg-white/82 px-3 py-3">
+                          <input
+                            type="text"
+                            value={petClickThroughShortcut}
+                            onChange={(e) => {
+                              setPetClickThroughShortcut(e.target.value)
+                              setHasChanges(true)
+                            }}
+                            placeholder="Ctrl+Shift+P"
+                            className="mt-1 w-full rounded-lg border border-amber-200 bg-amber-50/50 px-3 py-2 text-xs text-[#4f3725] placeholder-[#9b7b62] focus:border-amber-400 focus:outline-none focus:ring-1 focus:ring-amber-300"
+                          />
+                          <p className="mt-1 text-xs text-[#9b7b62]">
+                            格式: Ctrl+Shift+P, Ctrl+Alt+T
+                          </p>
                         </div>
                       )}
                     </div>

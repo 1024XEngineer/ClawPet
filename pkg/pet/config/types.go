@@ -337,3 +337,66 @@ func DefaultPetConfig() *PetConfig {
 		App:        DefaultAppConfig(),
 	}
 }
+
+// DeepCopy 返回 VoiceModelConfig 的深拷贝
+func (c *VoiceModelConfig) DeepCopy() *VoiceModelConfig {
+	if c == nil {
+		return nil
+	}
+	extraCopy := make(map[string]any)
+	for k, v := range c.Extra {
+		extraCopy[k] = v
+	}
+	return &VoiceModelConfig{
+		Name:     c.Name,
+		Provider: c.Provider,
+		Model:    c.Model,
+		APIKey:   c.APIKey,
+		APIBase:  c.APIBase,
+		VoiceID:  c.VoiceID,
+		Extra:    extraCopy,
+		Enabled:  c.Enabled,
+	}
+}
+
+// DeepCopy 返回 ASRModelConfig 的深拷贝
+func (c *ASRModelConfig) DeepCopy() *ASRModelConfig {
+	if c == nil {
+		return nil
+	}
+	extraCopy := make(map[string]any)
+	for k, v := range c.Extra {
+		extraCopy[k] = v
+	}
+	return &ASRModelConfig{
+		Name:     c.Name,
+		Provider: c.Provider,
+		Model:    c.Model,
+		APIKey:   c.APIKey,
+		APIBase:  c.APIBase,
+		Extra:    extraCopy,
+		Enabled:  c.Enabled,
+	}
+}
+
+// DeepCopy 返回 VoiceConfig 的深拷贝
+func (c *VoiceConfig) DeepCopy() *VoiceConfig {
+	if c == nil {
+		return nil
+	}
+	modelListCopy := make([]*VoiceModelConfig, len(c.ModelList))
+	for i, m := range c.ModelList {
+		modelListCopy[i] = m.DeepCopy()
+	}
+	asrListCopy := make([]*ASRModelConfig, len(c.ASRModelList))
+	for i, m := range c.ASRModelList {
+		asrListCopy[i] = m.DeepCopy()
+	}
+	return &VoiceConfig{
+		ModelList:       modelListCopy,
+		DefaultModel:    c.DefaultModel,
+		ASREnabled:      c.ASREnabled,
+		ASRModelList:    asrListCopy,
+		DefaultASRModel: c.DefaultASRModel,
+	}
+}

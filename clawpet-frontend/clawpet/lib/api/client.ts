@@ -722,6 +722,12 @@ export interface Config {
     publicAccess?: boolean
     allowedCidrs?: string[]
   }
+  keyboard_shortcuts?: {
+    enabled?: boolean
+    voice_input?: string
+    pet_click_through?: boolean
+    pet_click_through_shortcut?: string
+  }
 }
 
 export const configApi = {

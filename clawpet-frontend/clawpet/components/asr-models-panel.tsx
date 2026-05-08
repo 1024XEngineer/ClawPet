@@ -39,11 +39,15 @@ export function AsrModelsPanel({ onClose, onChanged }: AsrModelsPanelProps) {
   const [editingModel, setEditingModel] = useState<ASRModelData | null>(null)
 
   const fetchModels = useCallback(async () => {
+    console.log("[DEBUG fetchModels] Starting")
     try {
       const ws = getWebSocketInstance()
+      console.log("[DEBUG fetchModels] Calling getASRModelList")
       const resp = await ws.getASRModelList()
+      console.log("[DEBUG fetchModels] getASRModelList returned, resp:", resp)
       const data = resp.data as ASRModelListData | undefined
       const list = data?.models ?? []
+      console.log("[DEBUG fetchModels] Models list length:", list.length)
       const defaultName = data?.default || list.find((item) => item.is_default)?.name || ""
       setDefaultModel(defaultName)
       setModels(
@@ -53,8 +57,10 @@ export function AsrModelsPanel({ onClose, onChanged }: AsrModelsPanelProps) {
           return a.name.localeCompare(b.name)
         }),
       )
+      console.log("[DEBUG fetchModels] State updated, models:", list.map(m => m.name))
       setError(null)
     } catch (loadError) {
+      console.error("[DEBUG fetchModels] Error:", loadError)
       setError(loadError instanceof Error ? loadError.message : "加载 ASR 模型失败")
     } finally {
       setLoading(false)
@@ -83,20 +89,29 @@ export function AsrModelsPanel({ onClose, onChanged }: AsrModelsPanelProps) {
     if (!window.confirm(`确定要删除 ASR 模型 "${modelName}" 吗？`)) {
       return
     }
+    console.log("[DEBUG handleDelete] Starting delete for:", modelName)
     try {
       const ws = getWebSocketInstance()
-      await ws.deleteASRModel(modelName)
+      console.log("[DEBUG handleDelete] Calling ws.deleteASRModel")
+      const result = await ws.deleteASRModel(modelName)
+      console.log("[DEBUG handleDelete] deleteASRModel returned:", result)
+      console.log("[DEBUG handleDelete] Calling fetchModels")
       await fetchModels()
+      console.log("[DEBUG handleDelete] fetchModels completed")
       onChanged?.()
     } catch (deleteError) {
+      console.error("[DEBUG handleDelete] Error:", deleteError)
       setError(deleteError instanceof Error ? deleteError.message : "删除 ASR 模型失败")
     }
   }
 
   const handleModelSaved = async () => {
+    console.log("[DEBUG handleModelSaved] Called, current addingModel:", addingModel)
     setAddingModel(false)
     setEditingModel(null)
+    console.log("[DEBUG handleModelSaved] State updated, calling fetchModels")
     await fetchModels()
+    console.log("[DEBUG handleModelSaved] fetchModels done")
     onChanged?.()
   }
 
@@ -310,14 +325,27 @@ function AsrModelDialog({
         if (v) extra[k] = v
       }
 
-      await ws.updateASRModel({
-        name: normalizedName,
-        api_base: form.api_base.trim() || undefined,
-        model: form.model.trim(),
-        api_key: form.api_key.trim() || undefined,
-        enabled: form.enabled,
-        extra: Object.keys(extra).length > 0 ? extra : undefined,
-      })
+      if (editing) {
+        await ws.updateASRModel({
+          name: normalizedName,
+          provider: form.provider.trim(),
+          api_base: form.api_base.trim() || undefined,
+          model: form.model.trim(),
+          api_key: form.api_key.trim() || undefined,
+          enabled: form.enabled,
+          extra: Object.keys(extra).length > 0 ? extra : undefined,
+        })
+      } else {
+        await ws.addASRModel({
+          name: normalizedName,
+          provider: form.provider.trim(),
+          api_base: form.api_base.trim() || undefined,
+          model: form.model.trim(),
+          api_key: form.api_key.trim() || undefined,
+          enabled: form.enabled,
+          extra: Object.keys(extra).length > 0 ? extra : undefined,
+        })
+      }
       onSaved()
     } catch (saveError) {
       setError(saveError instanceof Error ? saveError.message : "保存 ASR 模型失败")

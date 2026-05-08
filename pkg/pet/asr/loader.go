@@ -56,11 +56,11 @@ func (l *Loader) Load() error {
 		return nil
 	}
 
-	l.mergeDefaultModels()
+	mergedModels := l.mergeDefaultModels()
 
 	modelName := l.cfg.DefaultASRModel
 	if modelName == "" {
-		modelName = l.findFirstEnabledModel()
+		modelName = l.findFirstEnabledModelFromList(mergedModels)
 	}
 
 	if modelName == "" {
@@ -71,19 +71,32 @@ func (l *Loader) Load() error {
 	return l.loadModel(modelName)
 }
 
-// mergeDefaultModels 将默认模型合并到配置中
-func (l *Loader) mergeDefaultModels() {
+func (l *Loader) findFirstEnabledModelFromList(models []*config.ASRModelConfig) string {
+	for _, m := range models {
+		if m.Enabled {
+			return m.Name
+		}
+	}
+	return ""
+}
+
+// mergeDefaultModels 将默认模型合并到配置中（仅用于加载，不修改原始配置）
+func (l *Loader) mergeDefaultModels() []*config.ASRModelConfig {
 	existingNames := make(map[string]bool)
 	for _, m := range l.cfg.ASRModelList {
 		existingNames[m.Name] = true
 	}
 
+	merged := make([]*config.ASRModelConfig, len(l.cfg.ASRModelList))
+	copy(merged, l.cfg.ASRModelList)
+
 	for _, defaultModel := range defaultASRModels {
 		if !existingNames[defaultModel.Name] {
-			l.cfg.ASRModelList = append(l.cfg.ASRModelList, defaultModel)
+			merged = append(merged, defaultModel)
 			logger.Infof("pet asr: added default model %s", defaultModel.Name)
 		}
 	}
+	return merged
 }
 
 // findFirstEnabledModel 返回第一个启用的模型名称

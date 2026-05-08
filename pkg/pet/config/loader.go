@@ -14,14 +14,17 @@ import (
 // 负责从工作区加载和管理pet_config.json统一配置
 type ConfigLoader struct {
 	config        *PetConfig // 统一配置
-	workspacePath string     // 工作区目录路径
+	workspacePath string     // 工作区目录路径 (e.g., ~/.picoclaw/workspace)
+	homePath      string     // 根目录路径 (e.g., ~/.picoclaw)
 }
 
 // NewConfigLoader 创建配置加载器实例
-// workspacePath: 工作区目录路径
-func NewConfigLoader(workspacePath string) *ConfigLoader {
+// homePath: 根目录路径 (e.g., ~/.picoclaw)
+// workspacePath: 工作区目录路径 (e.g., ~/.picoclaw/workspace)
+func NewConfigLoader(homePath, workspacePath string) *ConfigLoader {
 	return &ConfigLoader{
 		config:        nil,
+		homePath:      homePath,
 		workspacePath: workspacePath,
 	}
 }
@@ -31,16 +34,109 @@ func (l *ConfigLoader) WorkspacePath() string {
 	return l.workspacePath
 }
 
+// HomePath 返回根目录路径
+func (l *ConfigLoader) HomePath() string {
+	return l.homePath
+}
+
+// migrateFromOldPathIfNeeded 检查并迁移旧路径的配置到新路径
+// 返回：是否发生了迁移，新路径是否已存在
+func (l *ConfigLoader) migrateFromOldPathIfNeeded() (migrated bool, err error) {
+	newPath := filepath.Join(l.workspacePath, PetConfigFile)
+	oldPath := filepath.Join(l.homePath, PetConfigFile)
+
+	// 检查新路径是否已存在
+	newExists, _ := fileExists(newPath)
+	if newExists {
+		logger.Debugf("pet config: new path already exists at %s, no migration needed", newPath)
+		return false, nil
+	}
+
+	// 检查旧路径是否存在
+	oldExists, err := fileExists(oldPath)
+	if err != nil {
+		return false, fmt.Errorf("failed to check old path: %w", err)
+	}
+	if !oldExists {
+		// 旧路径也不存在，无需迁移
+		logger.Debugf("pet config: no old config found at %s, will use defaults", oldPath)
+		return false, nil
+	}
+
+	// 旧路径存在但新路径不存在，需要迁移
+	logger.Infof("pet config: migrating config from old path %s to new path %s", oldPath, newPath)
+
+	// 确保新路径的目录存在
+	if err := os.MkdirAll(l.workspacePath, 0755); err != nil {
+		return false, fmt.Errorf("failed to create workspace directory: %w", err)
+	}
+
+	// 读取旧配置
+	oldData, err := os.ReadFile(oldPath)
+	if err != nil {
+		return false, fmt.Errorf("failed to read old config: %w", err)
+	}
+
+	// 写入新路径
+	if err := os.WriteFile(newPath, oldData, 0644); err != nil {
+		return false, fmt.Errorf("failed to write migrated config: %w", err)
+	}
+
+	logger.Infof("pet config: successfully migrated config from %s to %s", oldPath, newPath)
+	return true, nil
+}
+
+// fileExists 检查文件是否存在
+func fileExists(path string) (bool, error) {
+	_, err := os.Stat(path)
+	if err == nil {
+		return true, nil
+	}
+	if os.IsNotExist(err) {
+		return false, nil
+	}
+	return false, err
+}
+
 // Load 加载统一配置文件pet_config.json
+// 支持从新路径加载，同时兼容旧路径（用于迁移）
 func (l *ConfigLoader) Load() error {
-	path := filepath.Join(l.workspacePath, PetConfigFile)
+	// 1. 首先尝试迁移旧配置到新路径
+	migrated, err := l.migrateFromOldPathIfNeeded()
+	if err != nil {
+		// 迁移失败，回退到旧路径
+		logger.Warnf("pet config: migration failed, will try old path: %v", err)
+	}
+
+	// 2. 确定加载路径（新路径优先，但兼容旧路径）
+	newPath := filepath.Join(l.workspacePath, PetConfigFile)
+	oldPath := filepath.Join(l.homePath, PetConfigFile)
+
+	var path string
+	if migrated {
+		// 如果迁移成功了，使用新路径
+		path = newPath
+		logger.Debugf("pet config: using migrated config from %s", path)
+	} else {
+		// 检查新路径是否存在
+		newExists, _ := fileExists(newPath)
+		if newExists {
+			path = newPath
+			logger.Debugf("pet config: using new config path %s", path)
+		} else {
+			// 新路径不存在，尝试旧路径
+			path = oldPath
+			logger.Debugf("pet config: new path not found, trying old path %s", path)
+		}
+	}
+
 	logger.Debugf("pet config: loading config from %s", path)
 	data, err := os.ReadFile(path)
 	if err != nil {
 		if os.IsNotExist(err) {
 			// 文件不存在，使用默认配置
 			l.config = DefaultPetConfig()
-			logger.Infof("pet config: no config file found, using defaults")
+			logger.Infof("pet config: no config file found at any path, using defaults")
 			return nil
 		}
 		return fmt.Errorf("failed to read %s: %w", path, err)
@@ -49,12 +145,6 @@ func (l *ConfigLoader) Load() error {
 	var cfg PetConfig
 	if err := json.Unmarshal(data, &cfg); err != nil {
 		return fmt.Errorf("failed to parse %s: %w", path, err)
-	}
-
-	fmt.Printf("[DEBUG ConfigLoader] Loaded PetConfig, Voice.ASRModelList len=%d\n",
-		len(cfg.Voice.ASRModelList))
-	for i, m := range cfg.Voice.ASRModelList {
-		fmt.Printf("[DEBUG ConfigLoader]   ASRModel[%d]: name=%s, provider=%s\n", i, m.Name, m.Provider)
 	}
 
 	// 至少需要一个角色
@@ -143,13 +233,12 @@ func (l *ConfigLoader) GetCharacters() []*CharacterConfig {
 	return l.config.Characters
 }
 
-// GetVoice 返回语音配置（只读）
+// GetVoice 返回语音配置（深拷贝，避免共享状态）
 func (l *ConfigLoader) GetVoice() *VoiceConfig {
 	if l.config == nil || l.config.Voice == nil {
 		return DefaultVoiceConfig()
 	}
-	cfg := *l.config.Voice
-	return &cfg
+	return l.config.Voice.DeepCopy()
 }
 
 // GetApp 返回应用配置（只读）
@@ -331,13 +420,8 @@ func EnsureDefaultConfig(workspacePath string) error {
 
 // SavePetConfig 保存完整的 PetConfig 到文件
 func (l *ConfigLoader) SavePetConfig(cfg *PetConfig) error {
-	if cfg == nil {
-		return fmt.Errorf("config is nil")
-	}
-
 	path := filepath.Join(l.workspacePath, PetConfigFile)
 
-	// 确保目录存在
 	if err := os.MkdirAll(l.workspacePath, 0755); err != nil {
 		return fmt.Errorf("failed to create workspace dir: %w", err)
 	}
@@ -347,8 +431,14 @@ func (l *ConfigLoader) SavePetConfig(cfg *PetConfig) error {
 		return fmt.Errorf("failed to marshal config: %w", err)
 	}
 
-	if err := os.WriteFile(path, data, 0644); err != nil {
-		return fmt.Errorf("failed to write %s: %w", path, err)
+	tmpPath := path + ".tmp"
+	if err := os.WriteFile(tmpPath, data, 0644); err != nil {
+		return fmt.Errorf("failed to write %s: %w", tmpPath, err)
+	}
+
+	if err := os.Rename(tmpPath, path); err != nil {
+		os.Remove(tmpPath)
+		return fmt.Errorf("failed to rename %s: %w", path, err)
 	}
 
 	logger.Infof("pet config: saved to %s", path)

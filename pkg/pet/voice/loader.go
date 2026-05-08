@@ -72,10 +72,10 @@ func RegisterProvider(name string, factory TTSFactory) {
 	})
 }
 
-// mergeDefaultModels 将默认模型合并到配置中（如果不存在）
-func (l *Loader) mergeDefaultModels() {
-	if l.cfg == nil {
-		return
+// mergeDefaultModels 将默认模型合并到配置中（仅用于加载，不修改原始配置）
+func (l *Loader) mergeDefaultModels() []*config.VoiceModelConfig {
+	if l.cfg == nil || l.cfg.ModelList == nil {
+		return l.cfg.ModelList
 	}
 
 	existingNames := make(map[string]bool)
@@ -83,14 +83,36 @@ func (l *Loader) mergeDefaultModels() {
 		existingNames[m.Name] = true
 	}
 
+	merged := make([]*config.VoiceModelConfig, len(l.cfg.ModelList))
+	copy(merged, l.cfg.ModelList)
+
 	for _, defaultModel := range defaultVoiceModels {
 		if !existingNames[defaultModel.Name] {
-			// 模型不存在，直接添加
-			l.cfg.ModelList = append(l.cfg.ModelList, defaultModel)
+			merged = append(merged, defaultModel)
 			logger.Infof("pet voice: added default model %s", defaultModel.Name)
 		} else {
-			// 模型已存在，合并 Extra 字段（补充缺失的字段）
-			l.mergeModelExtra(defaultModel)
+			l.mergeModelExtraToList(merged, defaultModel)
+		}
+	}
+	return merged
+}
+
+func (l *Loader) mergeModelExtraToList(list []*config.VoiceModelConfig, defaultModel *config.VoiceModelConfig) {
+	for _, m := range list {
+		if m.Name == defaultModel.Name && defaultModel.Extra != nil {
+			if m.Extra == nil {
+				m.Extra = make(map[string]any)
+			}
+			for k, v := range defaultModel.Extra {
+				if _, exists := m.Extra[k]; !exists {
+					m.Extra[k] = v
+					logger.DebugCF("pet-voice", "merged extra field", map[string]any{
+						"model": m.Name,
+						"field": k,
+						"value": v,
+					})
+				}
+			}
 		}
 	}
 }
@@ -123,18 +145,16 @@ func NewLoader(cfg *config.VoiceConfig) *Loader {
 
 // Load 根据配置加载并初始化TTS提供者
 func (l *Loader) Load() error {
-	// 合并默认模型：如果 cfg 中没有 minimax/doubao，自动加入
-	l.mergeDefaultModels()
+	mergedModels := l.mergeDefaultModels()
 
-	if l.cfg == nil || len(l.cfg.ModelList) == 0 {
+	if l.cfg == nil || len(mergedModels) == 0 {
 		logger.Warnf("pet voice: no voice models configured")
 		return nil
 	}
 
-	// 确定要加载的模型名称：优先使用默认模型，否则选择第一个启用的
 	modelName := l.cfg.DefaultModel
 	if modelName == "" {
-		for _, m := range l.cfg.ModelList {
+		for _, m := range mergedModels {
 			if m.Enabled {
 				modelName = m.Name
 				break
@@ -147,9 +167,8 @@ func (l *Loader) Load() error {
 		return nil
 	}
 
-	// 查找模型配置
 	var modelCfg *config.VoiceModelConfig
-	for _, m := range l.cfg.ModelList {
+	for _, m := range mergedModels {
 		if m.Name == modelName {
 			modelCfg = m
 			break

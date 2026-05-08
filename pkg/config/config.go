@@ -35,9 +35,11 @@ type Config struct {
 	Gateway   GatewayConfig   `json:"gateway"            yaml:"-"`
 	Hooks     HooksConfig     `json:"hooks,omitempty"    yaml:"-"`
 	Tools     ToolsConfig     `json:"tools"              yaml:",inline"`
-	Heartbeat HeartbeatConfig `json:"heartbeat"          yaml:"-"`
-	Devices   DevicesConfig   `json:"devices"            yaml:"-"`
-	Voice     VoiceConfig     `json:"voice"              yaml:"-"`
+	Heartbeat        HeartbeatConfig     `json:"heartbeat"            yaml:"-"`
+	Devices          DevicesConfig       `json:"devices"              yaml:"-"`
+	Voice            VoiceConfig         `json:"voice"                yaml:"-"`
+	KeyboardShortcuts KeyboardShortcuts `json:"keyboard_shortcuts"   yaml:"-"`
+
 	// BuildInfo contains build-time version information
 	BuildInfo BuildInfo `json:"build_info,omitempty" yaml:"-"`
 
@@ -591,6 +593,20 @@ type VoiceConfig struct {
 	ModelName         string `json:"model_name,omitempty"     env:"PICOCLAW_VOICE_MODEL_NAME"`
 	TTSModelName      string `json:"tts_model_name,omitempty" env:"PICOCLAW_VOICE_TTS_MODEL_NAME"`
 	EchoTranscription bool   `json:"echo_transcription"       env:"PICOCLAW_VOICE_ECHO_TRANSCRIPTION"`
+}
+
+type KeyboardShortcuts struct {
+	Enabled                 bool   `json:"enabled,omitempty"`
+	VoiceInput              string `json:"voice_input,omitempty"`
+	PetClickThrough         bool   `json:"pet_click_through,omitempty"`
+	PetClickThroughShortcut string `json:"pet_click_through_shortcut,omitempty"`
+}
+
+func DefaultKeyboardShortcuts() *KeyboardShortcuts {
+	return &KeyboardShortcuts{
+		Enabled:    true,
+		VoiceInput: "CommandOrControl+P",
+	}
 }
 
 // ModelConfig represents a model-centric provider configuration.

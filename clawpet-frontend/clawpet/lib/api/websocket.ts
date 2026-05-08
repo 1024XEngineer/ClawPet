@@ -1181,8 +1181,22 @@ export class PicoClawWebSocket {
     return this.requestAction<VoiceModelData>("voice_model_get", { name })
   }
 
+  async addVoiceModel(data: {
+    name: string
+    provider: string
+    model?: string
+    api_key?: string
+    api_base?: string
+    voice_id?: string
+    extra?: Record<string, unknown>
+    enabled?: boolean
+  }): Promise<PetResponse> {
+    return this.requestAction("voice_model_add", data)
+  }
+
   async updateVoiceModel(data: {
     name: string
+    provider?: string
     api_key?: string
     api_base?: string
     model?: string
@@ -1206,6 +1220,10 @@ export class PicoClawWebSocket {
     return this.requestAction<VoiceModelVoicesData>("voice_model_get_voices", data)
   }
 
+  async deleteVoiceModel(name: string): Promise<PetResponse> {
+    return this.requestAction("voice_model_delete", { name })
+  }
+
   async getASRModelList(): Promise<PetResponse & { data?: ASRModelListData }> {
     return this.requestAction<ASRModelListData>("asr_model_list_get")
   }
@@ -1214,8 +1232,21 @@ export class PicoClawWebSocket {
     return this.requestAction<ASRModelData>("asr_model_get", { name })
   }
 
+  async addASRModel(data: {
+    name: string
+    provider: string
+    model?: string
+    api_key?: string
+    api_base?: string
+    extra?: Record<string, unknown>
+    enabled?: boolean
+  }): Promise<PetResponse> {
+    return this.requestAction("asr_model_add", data)
+  }
+
   async updateASRModel(data: {
     name: string
+    provider?: string
     api_key?: string
     api_base?: string
     model?: string

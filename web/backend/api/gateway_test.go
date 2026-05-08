@@ -100,8 +100,11 @@ func TestGatewayStartReady_NoDefaultModel(t *testing.T) {
 	if ready {
 		t.Fatalf("gatewayStartReady() ready = true, want false")
 	}
-	if reason != "no default model configured" {
-		t.Fatalf("gatewayStartReady() reason = %q, want %q", reason, "no default model configured")
+	if reason == "" {
+		t.Fatalf("gatewayStartReady() reason is empty")
+	}
+	if reason != "no default model configured. Please set a default model in Settings > AI Models" {
+		t.Fatalf("gatewayStartReady() reason = %q, want %q", reason, "no default model configured. Please set a default model in Settings > AI Models")
 	}
 }
 
@@ -166,8 +169,8 @@ func TestGatewayStartReady_DefaultModelWithoutCredential(t *testing.T) {
 	if ready {
 		t.Fatalf("gatewayStartReady() ready = true, want false")
 	}
-	if !strings.Contains(reason, "no credentials configured") {
-		t.Fatalf("gatewayStartReady() reason = %q, want contains %q", reason, "no credentials configured")
+	if !strings.Contains(reason, "requires API credentials") {
+		t.Fatalf("gatewayStartReady() reason = %q, want contains %q", reason, "requires API credentials")
 	}
 }
 
@@ -349,8 +352,8 @@ func TestGatewayStartReady_OAuthModelRequiresStoredCredential(t *testing.T) {
 	if ready {
 		t.Fatalf("gatewayStartReady() ready = true, want false without stored credential")
 	}
-	if !strings.Contains(reason, "no credentials configured") {
-		t.Fatalf("gatewayStartReady() reason = %q, want contains %q", reason, "no credentials configured")
+	if !strings.Contains(reason, "requires API credentials") {
+		t.Fatalf("gatewayStartReady() reason = %q, want contains %q", reason, "requires API credentials")
 	}
 
 	err = auth.SetCredential(oauthProviderOpenAI, &auth.AuthCredential{
@@ -1224,19 +1227,21 @@ func TestFindPicoclawBinary_EnvOverride(t *testing.T) {
 
 	t.Setenv("PICOCLAW_BINARY", mockBinary)
 
-	got := utils.FindPicoclawBinary()
+	got, err := utils.FindPicoclawBinary()
+	if err != nil {
+		t.Fatalf("FindPicoclawBinary() error = %v", err)
+	}
 	if got != mockBinary {
 		t.Errorf("FindPicoclawBinary() = %q, want %q", got, mockBinary)
 	}
 }
 
 func TestFindPicoclawBinary_EnvOverride_InvalidPath(t *testing.T) {
-	// When PICOCLAW_BINARY points to a non-existent path, fall through to next strategy
+	// When PICOCLAW_BINARY points to a non-existent path, return an error
 	t.Setenv("PICOCLAW_BINARY", "/nonexistent/picoclaw-binary")
 
-	got := utils.FindPicoclawBinary()
-	// Should not return the invalid path; falls back to "picoclaw" or another found path
-	if got == "/nonexistent/picoclaw-binary" {
-		t.Errorf("FindPicoclawBinary() returned invalid env path %q, expected fallback", got)
+	_, err := utils.FindPicoclawBinary()
+	if err == nil {
+		t.Errorf("FindPicoclawBinary() expected error for invalid path, got nil")
 	}
 }

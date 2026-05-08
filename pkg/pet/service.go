@@ -74,11 +74,8 @@ func NewPetService(msgBus *bus.MessageBus, cfg PetServiceConfig) (*PetService, e
 		cancel:       cancel,
 	}
 	workspacePath := cfg.WorkspacePath
-	if homePath != "" {
-		// 优先使用 homePath 配置
-		logger.Debugf("pet: homePath=%s", homePath)
-		// 创建配置管理器
-		s.configManager = petconfig.NewManager(homePath)
+	if workspacePath != "" {
+		s.configManager = petconfig.NewManager(homePath, workspacePath)
 		if s.configManager == nil {
 			return nil, fmt.Errorf("failed to create config manager")
 		}
@@ -505,16 +502,22 @@ func (s *PetService) HandleRequest(connID string, req Request) error {
 		return s.handleVoiceModelListGet(sessionID, req)
 	case ActionVoiceModelGet:
 		return s.handleVoiceModelGet(sessionID, req)
+	case ActionVoiceModelAdd:
+		return s.handleVoiceModelAdd(sessionID, req)
 	case ActionVoiceModelUpdate:
 		return s.handleVoiceModelUpdate(sessionID, req)
 	case ActionVoiceModelSetDefault:
 		return s.handleVoiceModelSetDefault(sessionID, req)
 	case ActionVoiceModelGetVoices:
 		return s.handleVoiceModelGetVoices(sessionID, req)
+	case ActionVoiceModelDelete:
+		return s.handleVoiceModelDelete(sessionID, req)
 	case ActionASRModelListGet:
 		return s.handleASRModelListGet(sessionID, req)
 	case ActionASRModelGet:
 		return s.handleASRModelGet(sessionID, req)
+	case ActionASRModelAdd:
+		return s.handleASRModelAdd(sessionID, req)
 	case ActionASRModelUpdate:
 		return s.handleASRModelUpdate(sessionID, req)
 	case ActionASRModelSetDefault:
@@ -784,8 +787,6 @@ func (s *PetService) handleCharacterSwitch(sessionID string, req Request) error 
 func (s *PetService) handleConfigGet(sessionID string, req Request) error {
 	cfg := s.configManager.GetApp()
 	cfg.ASREnabled = s.configManager.GetVoice().ASREnabled
-	fmt.Printf("[DEBUG handleConfigGet] voice.ASREnabled=%v, returning cfg.ASREnabled=%v\n",
-		s.configManager.GetVoice().ASREnabled, cfg.ASREnabled)
 	return s.sendResponse(sessionID, req.Action, cfg)
 }
 
@@ -819,7 +820,6 @@ func (s *PetService) handleConfigUpdate(sessionID string, req Request) error {
 	s.configManager.SetAppConfig(cfg)
 
 	if data.ASREnabled != nil {
-		fmt.Printf("[DEBUG handleConfigUpdate] ASREnabled received: %v\n", *data.ASREnabled)
 		s.configManager.SetAsrEnabled(*data.ASREnabled)
 	}
 
@@ -1450,17 +1450,29 @@ type ASRModelListGetResponse struct {
 
 // ASRModelUpdateRequest ASR 模型更新请求
 type ASRModelUpdateRequest struct {
-	Name    string         `json:"name"`
-	APIKey  string         `json:"api_key,omitempty"`
-	APIBase string         `json:"api_base,omitempty"`
-	Model   string         `json:"model,omitempty"`
-	Enabled *bool          `json:"enabled,omitempty"`
-	Extra   map[string]any `json:"extra,omitempty"`
+	Name     string         `json:"name"`
+	Provider string         `json:"provider,omitempty"`
+	APIKey   string         `json:"api_key,omitempty"`
+	APIBase  string         `json:"api_base,omitempty"`
+	Model    string         `json:"model,omitempty"`
+	Enabled  *bool          `json:"enabled,omitempty"`
+	Extra    map[string]any `json:"extra,omitempty"`
 }
 
 // ASRModelSetDefaultRequest ASR 模型设置默认请求
 type ASRModelSetDefaultRequest struct {
 	Name string `json:"name"`
+}
+
+// ASRModelAddRequest 添加 ASR 模型请求
+type ASRModelAddRequest struct {
+	Name     string         `json:"name"`
+	Provider string         `json:"provider"`
+	Model    string         `json:"model"`
+	APIKey   string         `json:"api_key,omitempty"`
+	APIBase  string         `json:"api_base,omitempty"`
+	Extra    map[string]any `json:"extra,omitempty"`
+	Enabled  bool           `json:"enabled"`
 }
 
 func (s *PetService) handleASRModelListGet(sessionID string, req Request) error {
@@ -1470,10 +1482,6 @@ func (s *PetService) handleASRModelListGet(sessionID string, req Request) error 
 
 	models := s.configManager.GetASRModelList()
 	defaultModel := s.configManager.GetDefaultASRModelName()
-
-	fmt.Printf("[DEBUG ASR] GetASRModelList returned %d models\n", len(models))
-	fmt.Printf("[DEBUG ASR] DefaultASRModelName=%s\n", defaultModel)
-	fmt.Printf("[DEBUG ASR] configManager path=%s\n", s.configManager.GetManagerPath())
 
 	resp := ASRModelListGetResponse{
 		Models:  make([]ASRModelResponse, 0, len(models)),
@@ -1494,6 +1502,48 @@ func (s *PetService) handleASRModelListGet(sessionID string, req Request) error 
 	}
 
 	return s.sendResponse(sessionID, req.Action, resp)
+}
+
+func (s *PetService) handleASRModelAdd(sessionID string, req Request) error {
+	if s.asrLoader == nil {
+		return s.sendError(sessionID, req.Action, "ASR loader not initialized")
+	}
+
+	var data ASRModelAddRequest
+	if err := json.Unmarshal(req.Data, &data); err != nil {
+		return s.sendError(sessionID, req.Action, "invalid request data")
+	}
+
+	if data.Name == "" {
+		return s.sendError(sessionID, req.Action, "name is required")
+	}
+	if data.Provider == "" {
+		return s.sendError(sessionID, req.Action, "provider is required")
+	}
+
+	if s.configManager.GetASRModel(data.Name) != nil {
+		return s.sendError(sessionID, req.Action, fmt.Sprintf("ASR model %s already exists", data.Name))
+	}
+
+	newModel := &petconfig.ASRModelConfig{
+		Name:     data.Name,
+		Provider: data.Provider,
+		Model:    data.Model,
+		APIKey:   data.APIKey,
+		APIBase:  data.APIBase,
+		Extra:    data.Extra,
+		Enabled:  data.Enabled,
+	}
+
+	s.configManager.AppendASRModel(newModel)
+	if err := s.configManager.SaveVoiceConfig(); err != nil {
+		return s.sendError(sessionID, req.Action, err.Error())
+	}
+
+	return s.sendResponse(sessionID, req.Action, map[string]string{
+		"success": "true",
+		"name":    data.Name,
+	})
 }
 
 func (s *PetService) handleASRModelGet(sessionID string, req Request) error {
@@ -1557,6 +1607,9 @@ func (s *PetService) handleASRModelUpdate(sessionID string, req Request) error {
 	if data.Model != "" {
 		model.Model = data.Model
 	}
+	if data.Provider != "" {
+		model.Provider = data.Provider
+	}
 	if data.Enabled != nil {
 		model.Enabled = *data.Enabled
 	}
@@ -1573,7 +1626,11 @@ func (s *PetService) handleASRModelUpdate(sessionID string, req Request) error {
 		return s.sendError(sessionID, req.Action, err.Error())
 	}
 
-	needsSwitch := data.APIKey != "" || data.Extra != nil || data.Model != "" || data.APIBase != ""
+	if err := s.configManager.SaveVoiceConfig(); err != nil {
+		return s.sendError(sessionID, req.Action, err.Error())
+	}
+
+	needsSwitch := data.APIKey != "" || data.Extra != nil || data.Model != "" || data.APIBase != "" || data.Provider != ""
 	if needsSwitch && s.asrLoader.GetCurrentModel() == data.Name && model.Enabled {
 		logger.Infof("pet ASR: config changed, reloading provider for %s", data.Name)
 		if err := s.asrLoader.SwitchModel(data.Name, s.configManager); err != nil {
@@ -1663,10 +1720,11 @@ func (s *PetService) handleASRModelDelete(sessionID string, req Request) error {
 				break
 			}
 		}
-		if firstEnabled != "" {
-			if err := s.asrLoader.SwitchModel(firstEnabled, s.configManager); err != nil {
-				logger.Warnf("pet ASR: failed to switch after delete: %v", err)
-			}
+		if firstEnabled == "" {
+			return s.sendError(sessionID, req.Action, "cannot delete the last enabled model; no fallback available")
+		}
+		if err := s.asrLoader.SwitchModel(firstEnabled, s.configManager); err != nil {
+			return s.sendError(sessionID, req.Action, fmt.Sprintf("failed to switch to fallback model: %v", err))
 		}
 	}
 
@@ -1730,13 +1788,69 @@ func (s *PetService) handleVoiceModelGet(sessionID string, req Request) error {
 }
 
 type VoiceModelUpdateRequest struct {
-	Name    string         `json:"name"`
-	APIKey  string         `json:"api_key,omitempty"`
-	APIBase string         `json:"api_base,omitempty"`
-	Model   string         `json:"model,omitempty"`
-	VoiceID string         `json:"voice_id,omitempty"`
-	Enabled *bool          `json:"enabled,omitempty"`
-	Extra   map[string]any `json:"extra,omitempty"`
+	Name     string         `json:"name"`
+	Provider string         `json:"provider,omitempty"`
+	APIKey   string         `json:"api_key,omitempty"`
+	APIBase  string         `json:"api_base,omitempty"`
+	Model    string         `json:"model,omitempty"`
+	VoiceID  string         `json:"voice_id,omitempty"`
+	Enabled  *bool          `json:"enabled,omitempty"`
+	Extra    map[string]any `json:"extra,omitempty"`
+}
+
+// VoiceModelAddRequest 添加语音模型请求
+type VoiceModelAddRequest struct {
+	Name     string         `json:"name"`
+	Provider string         `json:"provider"`
+	Model    string         `json:"model"`
+	APIKey   string         `json:"api_key,omitempty"`
+	APIBase  string         `json:"api_base,omitempty"`
+	VoiceID  string         `json:"voice_id,omitempty"`
+	Extra    map[string]any `json:"extra,omitempty"`
+	Enabled  bool           `json:"enabled"`
+}
+
+func (s *PetService) handleVoiceModelAdd(sessionID string, req Request) error {
+	if s.voiceLoader == nil {
+		return s.sendError(sessionID, req.Action, "voice loader not initialized")
+	}
+
+	var data VoiceModelAddRequest
+	if err := json.Unmarshal(req.Data, &data); err != nil {
+		return s.sendError(sessionID, req.Action, "invalid request data")
+	}
+
+	if data.Name == "" {
+		return s.sendError(sessionID, req.Action, "name is required")
+	}
+	if data.Provider == "" {
+		return s.sendError(sessionID, req.Action, "provider is required")
+	}
+
+	if s.configManager.GetVoiceModel(data.Name) != nil {
+		return s.sendError(sessionID, req.Action, fmt.Sprintf("voice model %s already exists", data.Name))
+	}
+
+	newModel := &petconfig.VoiceModelConfig{
+		Name:     data.Name,
+		Provider: data.Provider,
+		Model:    data.Model,
+		APIKey:   data.APIKey,
+		APIBase:  data.APIBase,
+		VoiceID:  data.VoiceID,
+		Extra:    data.Extra,
+		Enabled:  data.Enabled,
+	}
+
+	s.configManager.AppendVoiceModel(newModel)
+	if err := s.configManager.SaveVoiceConfig(); err != nil {
+		return s.sendError(sessionID, req.Action, err.Error())
+	}
+
+	return s.sendResponse(sessionID, req.Action, map[string]string{
+		"success": "true",
+		"name":    data.Name,
+	})
 }
 
 func (s *PetService) handleVoiceModelUpdate(sessionID string, req Request) error {
@@ -1749,11 +1863,14 @@ func (s *PetService) handleVoiceModelUpdate(sessionID string, req Request) error
 		return s.sendError(sessionID, req.Action, "name is required")
 	}
 
-	model := s.voiceLoader.GetModel(data.Name)
+	model := s.configManager.GetVoiceModel(data.Name)
 	if model == nil {
 		return s.sendError(sessionID, req.Action, fmt.Sprintf("voice model %s not found", data.Name))
 	}
 
+	if data.Provider != "" {
+		model.Provider = data.Provider
+	}
 	if data.APIKey != "" {
 		model.APIKey = data.APIKey
 	}
@@ -1782,11 +1899,70 @@ func (s *PetService) handleVoiceModelUpdate(sessionID string, req Request) error
 		return s.sendError(sessionID, req.Action, err.Error())
 	}
 
-	needsSwitch := data.APIKey != "" || data.Extra != nil || data.Model != "" || data.VoiceID != ""
+	if err := s.configManager.SaveVoiceConfig(); err != nil {
+		return s.sendError(sessionID, req.Action, err.Error())
+	}
+
+	needsSwitch := data.Provider != "" || data.APIKey != "" || data.Extra != nil || data.Model != "" || data.VoiceID != ""
 	if needsSwitch && s.voiceLoader.GetCurrentModel() == data.Name {
 		logger.Infof("pet voice: config changed, reloading provider for %s", data.Name)
 		if err := s.voiceLoader.SwitchModel(data.Name, s.configManager); err != nil {
 			logger.Warnf("pet voice: failed to reload provider: %v", err)
+		}
+	}
+
+	return s.sendResponse(sessionID, req.Action, map[string]string{"status": "ok"})
+}
+
+type VoiceModelDeleteRequest struct {
+	Name string `json:"name"`
+}
+
+func (s *PetService) handleVoiceModelDelete(sessionID string, req Request) error {
+	if s.voiceLoader == nil {
+		return s.sendError(sessionID, req.Action, "voice loader not initialized")
+	}
+
+	var data VoiceModelDeleteRequest
+	if err := json.Unmarshal(req.Data, &data); err != nil {
+		return s.sendError(sessionID, req.Action, "invalid request data")
+	}
+
+	if data.Name == "" {
+		return s.sendError(sessionID, req.Action, "name is required")
+	}
+
+	models := s.configManager.GetVoiceModelList()
+	if len(models) <= 1 {
+		return s.sendError(sessionID, req.Action, "cannot delete the last model")
+	}
+
+	model := s.configManager.GetVoiceModel(data.Name)
+	if model == nil {
+		return s.sendError(sessionID, req.Action, fmt.Sprintf("voice model %s not found", data.Name))
+	}
+
+	if err := s.configManager.DeleteVoiceModel(data.Name); err != nil {
+		return s.sendError(sessionID, req.Action, err.Error())
+	}
+
+	if err := s.configManager.SaveVoiceConfig(); err != nil {
+		return s.sendError(sessionID, req.Action, err.Error())
+	}
+
+	if s.voiceLoader.GetCurrentModel() == data.Name {
+		firstEnabled := ""
+		for _, m := range models {
+			if m.Name != data.Name && m.Enabled {
+				firstEnabled = m.Name
+				break
+			}
+		}
+		if firstEnabled == "" {
+			return s.sendError(sessionID, req.Action, "cannot delete the last enabled model; no fallback available")
+		}
+		if err := s.voiceLoader.SwitchModel(firstEnabled, s.configManager); err != nil {
+			return s.sendError(sessionID, req.Action, fmt.Sprintf("failed to switch to fallback model: %v", err))
 		}
 	}
 
@@ -1798,6 +1974,10 @@ type VoiceModelSetDefaultRequest struct {
 }
 
 func (s *PetService) handleVoiceModelSetDefault(sessionID string, req Request) error {
+	if s.voiceLoader == nil {
+		return s.sendError(sessionID, req.Action, "voice loader not initialized")
+	}
+
 	var data VoiceModelSetDefaultRequest
 	if err := json.Unmarshal(req.Data, &data); err != nil {
 		return s.sendError(sessionID, req.Action, "invalid request data")
@@ -1807,8 +1987,24 @@ func (s *PetService) handleVoiceModelSetDefault(sessionID string, req Request) e
 		return s.sendError(sessionID, req.Action, "name is required")
 	}
 
-	if err := s.voiceLoader.SwitchModel(data.Name, s.configManager); err != nil {
+	model := s.configManager.GetVoiceModel(data.Name)
+	if model == nil {
+		return s.sendError(sessionID, req.Action, fmt.Sprintf("voice model %s not found", data.Name))
+	}
+
+	if !model.Enabled {
+		return s.sendError(sessionID, req.Action, "cannot set disabled model as default")
+	}
+
+	s.configManager.SelectVoiceModel(data.Name)
+	if err := s.configManager.SaveVoiceConfig(); err != nil {
 		return s.sendError(sessionID, req.Action, err.Error())
+	}
+
+	if s.voiceLoader.GetCurrentModel() != data.Name {
+		if err := s.voiceLoader.SwitchModel(data.Name, s.configManager); err != nil {
+			logger.Warnf("pet voice: failed to switch to %s: %v", data.Name, err)
+		}
 	}
 
 	return s.sendResponse(sessionID, req.Action, map[string]string{"status": "ok"})

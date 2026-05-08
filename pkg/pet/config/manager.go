@@ -23,8 +23,8 @@ type Manager struct {
 	compressionConfig      *compression.CompressionConfig
 }
 
-func NewManager(managerPath string) *Manager {
-	configLoader := NewConfigLoader(managerPath)
+func NewManager(homePath, workspacePath string) *Manager {
+	configLoader := NewConfigLoader(homePath, workspacePath)
 	err := configLoader.Load()
 	if err != nil {
 		logger.Errorf("pet config: failed to load config, err=%v", err)
@@ -38,7 +38,7 @@ func NewManager(managerPath string) *Manager {
 	}
 
 	return &Manager{
-		managerPath:            managerPath,
+		managerPath:            workspacePath,
 		configLoader:           configLoader,
 		characters:             configLoader.GetCharacters(),
 		voiceConfig:            configLoader.GetVoice(),
@@ -55,10 +55,6 @@ func (m *Manager) Save() error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
-	fmt.Printf("[DEBUG Save] voice.ASREnabled=%v, app.ASREnabled=%v\n",
-		m.voiceConfig.ASREnabled, m.appConfig.ASREnabled)
-
-	// 构建完整 PetConfig（包含 memory 和 compression 配置）
 	petCfg := &PetConfig{
 		Characters:  m.characters,
 		ActiveID:    m.activeID,
@@ -68,13 +64,7 @@ func (m *Manager) Save() error {
 		Compression: m.compressionConfig,
 	}
 
-	err := m.configLoader.SavePetConfig(petCfg)
-	if err != nil {
-		fmt.Printf("pet config: Manager.Save() failed: %v\n", err)
-	} else {
-		fmt.Println("pet config: Manager.Save() success")
-	}
-	return err
+	return m.configLoader.SavePetConfig(petCfg)
 }
 
 // GetCharacterByID 根据ID获取角色配置
@@ -213,7 +203,6 @@ func (m *Manager) SetAsrEnabled(enabled bool) {
 	m.mu.Lock()
 	m.voiceConfig.ASREnabled = enabled
 	m.mu.Unlock()
-	fmt.Printf("[DEBUG SetAsrEnabled] enabled=%v\n", enabled)
 	m.Save()
 }
 
@@ -272,6 +261,10 @@ func (m *Manager) UpdateVoiceModel(model *VoiceModelConfig) error {
 		return fmt.Errorf("voice config not initialized")
 	}
 
+	if model == nil || model.Name == "" {
+		return fmt.Errorf("invalid model: name is required")
+	}
+
 	for i, existing := range m.voiceConfig.ModelList {
 		if existing.Name == model.Name {
 			if model.Provider != "" {
@@ -302,6 +295,34 @@ func (m *Manager) UpdateVoiceModel(model *VoiceModelConfig) error {
 		}
 	}
 	return fmt.Errorf("voice model %s not found", model.Name)
+}
+
+// DeleteVoiceModel 删除语音模型
+func (m *Manager) DeleteVoiceModel(name string) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	if m.voiceConfig == nil {
+		return fmt.Errorf("voice config not initialized")
+	}
+
+	for i, model := range m.voiceConfig.ModelList {
+		if model.Name == name {
+			m.voiceConfig.ModelList = append(
+				m.voiceConfig.ModelList[:i],
+				m.voiceConfig.ModelList[i+1:]...,
+			)
+			if m.voiceConfig.DefaultModel == name {
+				if len(m.voiceConfig.ModelList) > 0 {
+					m.voiceConfig.DefaultModel = m.voiceConfig.ModelList[0].Name
+				} else {
+					m.voiceConfig.DefaultModel = ""
+				}
+			}
+			return nil
+		}
+	}
+	return fmt.Errorf("voice model %s not found", name)
 }
 
 // SaveVoiceConfig 保存语音配置到文件
@@ -383,6 +404,10 @@ func (m *Manager) UpdateASRModel(model *ASRModelConfig) error {
 
 	if m.voiceConfig == nil {
 		return fmt.Errorf("voice config not initialized")
+	}
+
+	if model == nil || model.Name == "" {
+		return fmt.Errorf("invalid model: name is required")
 	}
 
 	for i, existing := range m.voiceConfig.ASRModelList {

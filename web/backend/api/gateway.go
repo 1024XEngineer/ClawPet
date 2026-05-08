@@ -317,19 +317,19 @@ func (h *Handler) gatewayStartReady() (bool, string, error) {
 
 	modelName := strings.TrimSpace(cfg.Agents.Defaults.GetModelName())
 	if modelName == "" {
-		return false, "no default model configured", nil
+		return false, "no default model configured. Please set a default model in Settings > AI Models", nil
 	}
 
 	modelCfg := lookupModelConfig(cfg, modelName)
 	if modelCfg == nil {
-		return false, fmt.Sprintf("default model %q is invalid", modelName), nil
+		return false, fmt.Sprintf("default model %q is not found in your model configurations. Please check Settings > AI Models", modelName), nil
 	}
 
 	if !hasModelConfiguration(modelCfg) {
-		return false, fmt.Sprintf("default model %q has no credentials configured", modelName), nil
+		return false, fmt.Sprintf("default model %q requires API credentials. Please configure API keys in Settings > AI Models > %s", modelName, modelName), nil
 	}
 	if requiresRuntimeProbe(modelCfg) && !probeLocalModelAvailability(modelCfg) {
-		return false, fmt.Sprintf("default model %q is not reachable", modelName), nil
+		return false, fmt.Sprintf("default model %q is not reachable. Please check your network connection and API configuration", modelName), nil
 	}
 
 	return true, "", nil
@@ -610,8 +610,22 @@ func (h *Handler) startGatewayLocked(initialStatus string, existingPid int) (int
 	}
 	defaultModelName := strings.TrimSpace(cfg.Agents.Defaults.GetModelName())
 
+	// Check if gateway port is available before starting, with automatic fallback
+	gatewayPort := 18790
+	if cfg.Gateway.Port != 0 {
+		gatewayPort = cfg.Gateway.Port
+	}
+	portResult, err := utils.FindAvailablePortForService("gateway", gatewayPort)
+	if err != nil {
+		return 0, fmt.Errorf("cannot start gateway: %w", err)
+	}
+	if portResult.IsFallback {
+		logger.InfoC("gateway", portResult.Message())
+	}
+
 	var cmd *exec.Cmd
 	var pid int
+	var execPath string
 
 	if existingPid > 0 {
 		// Attach to existing process
@@ -627,7 +641,10 @@ func (h *Handler) startGatewayLocked(initialStatus string, existingPid int) (int
 
 	// Start new process
 	// Locate the picoclaw executable
-	execPath := utils.FindPicoclawBinary()
+	execPath, err = utils.FindPicoclawBinary()
+	if err != nil {
+		return 0, fmt.Errorf("failed to locate picoclaw binary: %w", err)
+	}
 	logger.InfoC("gateway", fmt.Sprintf("Starting gateway process (%s)", execPath))
 
 	cmd = exec.Command(execPath, h.gatewayCommandArgs()...)
@@ -650,6 +667,10 @@ func (h *Handler) startGatewayLocked(initialStatus string, existingPid int) (int
 	}
 	if host := h.gatewayHostOverride(); host != "" {
 		cmd.Env = append(cmd.Env, config.EnvGatewayHost+"="+host)
+	}
+	// Pass the actual port to gateway via environment variable if using fallback port
+	if portResult.IsFallback {
+		cmd.Env = append(cmd.Env, "PICOCLAW_GATEWAY_PORT="+strconv.Itoa(portResult.Port))
 	}
 
 	stdoutPipe, err := cmd.StdoutPipe()

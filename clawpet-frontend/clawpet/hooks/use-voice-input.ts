@@ -156,6 +156,8 @@ export function useVoiceInput(options: UseVoiceInputOptions = {}) {
   const scriptProcessCallbacksRef = useRef(0)
   const scriptProcessSampleCountRef = useRef(0)
   const stopListeningRef = useRef<(() => Promise<void>) | null>(null)
+  const startListeningRef = useRef<(() => Promise<void>) | null>(null)
+  const isListeningRef = useRef(false)
   const stopCaptureOnUnmountRef = useRef<(() => void) | null>(null)
   const lastWsErrorRef = useRef<{ message: string; at: number }>({ message: "", at: 0 })
   const visibilityHandlerRef = useRef<(() => void) | null>(null)
@@ -889,10 +891,11 @@ export function useVoiceInput(options: UseVoiceInputOptions = {}) {
       }
     }
 
-    if (document.visibilityState !== "visible") {
-      failStart("当前窗口不可见，无法开始语音输入，请切回主设置窗口。")
-      return
-    }
+    // 移除失焦保护，允许后台录音
+    // if (document.visibilityState !== "visible") {
+    //   failStart("当前窗口不可见，无法开始语音输入，请切回主设置窗口。")
+    //   return
+    // }
 
     try {
       setError(null)
@@ -1132,7 +1135,8 @@ export function useVoiceInput(options: UseVoiceInputOptions = {}) {
       }
       setPhaseState("recording")
       setIsListening(true)
-      attachFocusGuards()
+      // 移除失焦保护，允许后台录音
+      // attachFocusGuards()
       startCaptureHealthCheck()
       debugLog("backend ready", {
         startToken,
@@ -1358,6 +1362,17 @@ export function useVoiceInput(options: UseVoiceInputOptions = {}) {
     }
   }, [stopListening])
 
+  useEffect(() => {
+    startListeningRef.current = startListening
+    return () => {
+      startListeningRef.current = null
+    }
+  }, [startListening])
+
+  useEffect(() => {
+    isListeningRef.current = isListening
+  }, [isListening])
+
   const toggleListening = useCallback(() => {
     try {
       if (isListening) {
@@ -1382,6 +1397,27 @@ export function useVoiceInput(options: UseVoiceInputOptions = {}) {
       setIsListening(false)
     }
   }, [isListening, onError, setPhaseState, startListening, stopCapture, stopListening])
+
+  // 监听全局快捷键触发的语音输入
+  useEffect(() => {
+    if (!window.electronAPI?.onVoiceShortcutTriggered) {
+      return
+    }
+
+    const handler = () => {
+      if (isListeningRef.current) {
+        stopListeningRef.current?.()
+      } else {
+        startListeningRef.current?.()
+      }
+    }
+
+    window.electronAPI.onVoiceShortcutTriggered(handler)
+
+    return () => {
+      // cleanup if needed
+    }
+  }, [])
 
   return {
     isListening,

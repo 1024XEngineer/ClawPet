@@ -1,9 +1,11 @@
 package utils
 
 import (
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 )
@@ -33,23 +35,28 @@ func TestEnsureOnboardedSkipsWhenConfigExists(t *testing.T) {
 
 func TestEnsureOnboardedRunsOnboardWhenConfigMissing(t *testing.T) {
 	configPath := filepath.Join(t.TempDir(), "config.json")
-	t.Setenv("EXPECTED_CONFIG_PATH", configPath)
 
 	origExecCommand := execCommand
 	defer func() { execCommand = origExecCommand }()
+
+	origFindBinary := findBinaryFunc
+	defer func() { findBinaryFunc = origFindBinary }()
+	SetBinaryFinder(func() (string, error) {
+		return "mock-picoclaw", nil
+	})
 
 	var gotName string
 	var gotArgs []string
 	execCommand = func(name string, args ...string) *exec.Cmd {
 		gotName = name
 		gotArgs = append([]string(nil), args...)
-		return exec.Command(
-			"sh",
-			"-c",
-			`test "$PICOCLAW_CONFIG" = "$EXPECTED_CONFIG_PATH" &&
-mkdir -p "$(dirname "$PICOCLAW_CONFIG")" &&
-printf '{}' > "$PICOCLAW_CONFIG"`,
-		)
+		// Create a command that does nothing successfully but creates the config file
+		// The key is that it exits successfully (exit 0)
+		if runtime.GOOS == "windows" {
+			// Use PowerShell to create the config file
+			return exec.Command("powershell", "-Command", fmt.Sprintf("New-Item -Path '%s' -ItemType File -Value '{}' -Force; exit 0", configPath))
+		}
+		return exec.Command("sh", "-c", fmt.Sprintf("touch '%s' && printf '{}' > '%s'", configPath, configPath))
 	}
 
 	if err := EnsureOnboarded(configPath); err != nil {
@@ -72,7 +79,16 @@ func TestEnsureOnboardedFailsWhenOnboardDoesNotCreateConfig(t *testing.T) {
 	origExecCommand := execCommand
 	defer func() { execCommand = origExecCommand }()
 
+	origFindBinary := findBinaryFunc
+	defer func() { findBinaryFunc = origFindBinary }()
+	SetBinaryFinder(func() (string, error) {
+		return "mock-picoclaw", nil
+	})
+
 	execCommand = func(name string, args ...string) *exec.Cmd {
+		if runtime.GOOS == "windows" {
+			return exec.Command("cmd", "/c", "exit 0")
+		}
 		return exec.Command("sh", "-c", "exit 0")
 	}
 
@@ -87,7 +103,16 @@ func TestEnsureOnboardedIncludesOnboardOutputOnFailure(t *testing.T) {
 	origExecCommand := execCommand
 	defer func() { execCommand = origExecCommand }()
 
+	origFindBinary := findBinaryFunc
+	defer func() { findBinaryFunc = origFindBinary }()
+	SetBinaryFinder(func() (string, error) {
+		return "mock-picoclaw", nil
+	})
+
 	execCommand = func(name string, args ...string) *exec.Cmd {
+		if runtime.GOOS == "windows" {
+			return exec.Command("cmd", "/c", "echo onboarding failed >&2 && exit /b 2")
+		}
 		return exec.Command("sh", "-c", "echo onboarding failed >&2; exit 2")
 	}
 

@@ -526,6 +526,10 @@ func DefaultConfig() *Config {
 			ModelName:         "",
 			EchoTranscription: false,
 		},
+		KeyboardShortcuts: KeyboardShortcuts{
+			Enabled:    true,
+			VoiceInput: "CommandOrControl+P",
+		},
 		BuildInfo: BuildInfo{
 			Version:   Version,
 			GitCommit: GitCommit,

@@ -41,6 +41,9 @@ let onboardingLocked = false;
 let lastBubbleFingerprint = '';
 let lastBubbleAt = 0;
 
+// 语音输入快捷键
+let voiceInputShortcut = 'CommandOrControl+P';
+
 // 后端进程引用
 let gatewayProcess = null;         // Gateway 进程
 let launcherProcess = null;        // Launcher 进程
@@ -623,17 +626,75 @@ function schedulePetTopClamp(delayMs = 80) {
   }, delayMs);
 }
 
-function registerPetClickThroughShortcut() {
-  const accelerator = 'CommandOrControl+Shift+P';
-  const registered = globalShortcut.register(accelerator, () => {
+// 存储当前桌宠穿透快捷键
+let petClickThroughShortcut = 'CommandOrControl+Shift+P';
+
+function registerPetClickThroughShortcut(accelerator, enabled) {
+  // 取消旧快捷键
+  if (petClickThroughShortcut) {
+    globalShortcut.unregister(petClickThroughShortcut);
+    petClickThroughShortcut = null;
+  }
+
+  // 默认启用快捷键
+  if (enabled === undefined) {
+    enabled = true;
+  }
+
+  if (!enabled) {
+    logToFile(`[PET CLICK THROUGH SHORTCUT] disabled`);
+    return;
+  }
+
+  petClickThroughShortcut = accelerator || 'CommandOrControl+Shift+P';
+
+  const registered = globalShortcut.register(petClickThroughShortcut, () => {
+    logToFile(`[PET CLICK THROUGH SHORTCUT] triggered`);
     setPetWindowClickThrough(!petClickThroughEnabled);
   });
 
   if (!registered) {
-    logToFile(`[SHORTCUT] failed to register ${accelerator}`);
+    logToFile(`[PET CLICK THROUGH SHORTCUT] failed to register ${petClickThroughShortcut}`);
     return;
   }
-  logToFile(`[SHORTCUT] registered ${accelerator}`);
+  logToFile(`[PET CLICK THROUGH SHORTCUT] registered ${petClickThroughShortcut}`);
+}
+
+function registerVoiceInputShortcut(accelerator, enabled) {
+  // 取消旧快捷键
+  if (voiceInputShortcut) {
+    globalShortcut.unregister(voiceInputShortcut);
+    voiceInputShortcut = null;
+  }
+
+  // 默认启用快捷键
+  if (enabled === undefined) {
+    enabled = true;
+  }
+
+  if (!enabled) {
+    logToFile(`[VOICE SHORTCUT] disabled`);
+    return;
+  }
+
+  voiceInputShortcut = accelerator || 'CommandOrControl+P';
+
+  const registered = globalShortcut.register(voiceInputShortcut, () => {
+    logToFile(`[VOICE SHORTCUT] triggered`);
+    // 通知所有窗口
+    const windows = [settingsWindow, petWindow, bubbleWindow, onboardingWindow];
+    windows.forEach(win => {
+      if (win && !win.isDestroyed()) {
+        win.webContents.send('voice-shortcut-triggered');
+      }
+    });
+  });
+
+  if (!registered) {
+    logToFile(`[VOICE SHORTCUT] failed to register ${voiceInputShortcut}`);
+    return;
+  }
+  logToFile(`[VOICE SHORTCUT] registered ${voiceInputShortcut}`);
 }
 
 function updateStartupPercent() {
@@ -1540,6 +1601,18 @@ ipcMain.on('set-pet-click-through', (_event, enabled) => {
   setPetWindowClickThrough(Boolean(enabled));
 });
 
+ipcMain.on('register-voice-shortcut', (_event, data) => {
+  const { enabled, keys } = data || {};
+  logToFile(`[IPC] register-voice-shortcut enabled=${enabled} keys=${keys}`);
+  registerVoiceInputShortcut(keys, enabled);
+});
+
+ipcMain.on('register-pet-click-through-shortcut', (_event, data) => {
+  const { enabled, keys } = data || {};
+  logToFile(`[IPC] register-pet-click-through-shortcut enabled=${enabled} keys=${keys}`);
+  registerPetClickThroughShortcut(keys, enabled);
+});
+
 ipcMain.on('bubble-window-size', (_event, payload) => {
   const next = clampBubbleSize(payload?.width, payload?.height);
   if (next.width === bubbleWindowWidth && next.height === bubbleWindowHeight) {
@@ -1682,6 +1755,7 @@ ipcMain.handle('startup-state', async () => startupState);
  */
 app.whenReady().then(async () => {
   registerPetClickThroughShortcut();
+  registerVoiceInputShortcut();
   // 自动启动后端服务
   await startBackendServices();
   

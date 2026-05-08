@@ -33,6 +33,9 @@ declare global {
       onBubbleShow?: (callback: (payload: BubblePayload) => void) => void
       onForceStopMedia?: (callback: () => void) => () => void
       ensureSettingsForeground?: () => Promise<{ ok: boolean; reason?: string }>
+      onVoiceShortcutTriggered?: (callback: () => void) => void
+      registerVoiceShortcut?: (data: { enabled: boolean; keys: string }) => void
+      registerPetClickThroughShortcut?: (data: { enabled: boolean; keys: string }) => void
     }
   }
 }

@@ -84,6 +84,21 @@ export function VoiceModelsPanel({ onClose, onChanged }: VoiceModelsPanelProps) 
     onChanged?.()
   }
 
+  const handleDelete = async (modelName: string) => {
+    if (models.length <= 1) {
+      setNotice("不能删除最后一个模型")
+      return
+    }
+    try {
+      const ws = getWebSocketInstance()
+      await ws.deleteVoiceModel(modelName)
+      await fetchModels()
+      onChanged?.()
+    } catch (deleteError) {
+      setError(deleteError instanceof Error ? deleteError.message : "删除语音模型失败")
+    }
+  }
+
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/45 backdrop-blur-[1px]">
       <div className="w-full max-w-3xl max-h-[84vh] overflow-hidden rounded-[1.2rem] border border-white/80 bg-[linear-gradient(145deg,rgba(255,250,245,0.98),rgba(255,244,236,0.95))] shadow-[0_24px_50px_-28px_rgba(110,75,42,0.45)]">
@@ -157,7 +172,10 @@ export function VoiceModelsPanel({ onClose, onChanged }: VoiceModelsPanelProps) 
                           )}
                           <button
                             type="button"
-                            onClick={() => setNotice("删除语音模型暂不可用，后续版本开放。")}
+                            onClick={() => {
+                              setNotice(null)
+                              void handleDelete(model.name)
+                            }}
                             className="rounded-[0.7rem] bg-rose-100 px-3 py-2 text-sm text-rose-600 transition hover:bg-rose-200"
                           >
                             删除
@@ -271,17 +289,27 @@ function VoiceModelDialog({
     setError(null)
     try {
       const ws = getWebSocketInstance()
-      await ws.updateVoiceModel({
-        name: normalizedName,
-        api_base: form.api_base.trim() || undefined,
-        model: form.model.trim(),
-        voice_id: form.voice_id.trim() || undefined,
-        api_key: form.api_key.trim() || undefined,
-        enabled: form.enabled,
-        extra: {
+      if (editing) {
+        await ws.updateVoiceModel({
+          name: normalizedName,
           provider: form.provider.trim(),
-        },
-      })
+          api_base: form.api_base.trim() || undefined,
+          model: form.model.trim(),
+          voice_id: form.voice_id.trim() || undefined,
+          api_key: form.api_key.trim() || undefined,
+          enabled: form.enabled,
+        })
+      } else {
+        await ws.addVoiceModel({
+          name: normalizedName,
+          provider: form.provider.trim(),
+          api_base: form.api_base.trim() || undefined,
+          model: form.model.trim(),
+          voice_id: form.voice_id.trim() || undefined,
+          api_key: form.api_key.trim() || undefined,
+          enabled: form.enabled,
+        })
+      }
       onSaved()
     } catch (saveError) {
       setError(saveError instanceof Error ? saveError.message : "保存语音模型失败")
