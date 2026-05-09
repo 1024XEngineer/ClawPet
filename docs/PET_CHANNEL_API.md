@@ -1,6 +1,6 @@
 # Pet Channel API 接口文档
 
-> 版本：v2.10  
+> 版本：v2.11  
 > 日期：2026-05-08  
 > 协议：WebSocket + JSON
 
@@ -506,6 +506,89 @@ if (msg.push_type === 'error') {
             // 其他错误
             showToast(`服务错误: ${data.message}`);
     }
+}
+```
+
+### 3.9 tool_approval - 工具审批请求
+
+当 LLM 调用高风险工具（如 `exec`、`write_file` 等）时，后端主动推送给客户端请求用户审批。
+
+**推送格式**：
+
+```json
+{
+  "type": "push",
+  "push_type": "tool_approval",
+  "data": {
+    "request_id": "tool_approval_1714896000123456789",
+    "tool": "exec",
+    "arguments": {
+      "command": "ipconfig"
+    }
+  },
+  "timestamp": 1714896000
+}
+```
+
+**字段说明**：
+
+| 字段 | 类型 | 说明 |
+|------|------|------|
+| request_id | string | 审批请求ID，客户端回复时必须使用相同ID |
+| tool | string | 需要审批的工具名称 |
+| arguments | object | 工具参数（如命令、文件路径等） |
+
+**需要审批的工具列表**：
+
+| 工具 | 说明 |
+|------|------|
+| exec | 执行 Shell 命令 |
+| write_file | 写入文件 |
+| edit_file | 编辑文件 |
+| append_file | 追加文件 |
+| subagent | 启动子代理 |
+| spawn | 启动子任务 |
+
+**客户端回复格式**（通过同一条 WebSocket 连接发送）：
+
+```json
+{
+  "action": "tool_approval_response",
+  "data": {
+    "request_id": "tool_approval_1714896000123456789",
+    "approved": true
+  }
+}
+```
+
+**字段说明**：
+
+| 字段 | 类型 | 必填 | 说明 |
+|------|------|------|------|
+| action | string | 是 | 固定为 `tool_approval_response` |
+| data.request_id | string | 是 | 推送中的 `request_id`，原样返回 |
+| data.approved | bool | 是 | `true` 允许执行 / `false` 拒绝执行 |
+
+**超时处理**：如果用户 60 秒内未回复，系统自动拒绝该工具调用。
+
+**前端处理逻辑**：
+
+```javascript
+// 接收 tool_approval 推送
+if (msg.push_type === 'tool_approval') {
+    const { request_id, tool, arguments } = msg.data;
+    
+    // 弹出确认框让用户选择
+    const approved = confirm(`允许执行工具 "${tool}" 吗？\n\n参数: ${JSON.stringify(arguments)}`);
+    
+    // 通过同一条连接回复
+    ws.send(JSON.stringify({
+        action: "tool_approval_response",
+        data: {
+            request_id: request_id,
+            approved: approved
+        }
+    }));
 }
 ```
 
@@ -2812,6 +2895,7 @@ async def send_chat(ws, text):
 | text_and_audio | 语音流式合成 | 流式推送语音音频片段，按顺序播放 |
 | heartbeat | 每 30 秒 | 保活检测 |
 | error | 运行时错误 | 推送 TTS/LLM/供应商等运行时错误 |
+| tool_approval | 工具调用时 | 推送工具审批请求，需要用户确认 |
 
 ---
 
