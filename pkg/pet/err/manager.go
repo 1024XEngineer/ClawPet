@@ -4,6 +4,8 @@ import (
 	"context"
 	"sync"
 	"time"
+
+	"github.com/sipeed/picoclaw/pkg/logger"
 )
 
 type manager struct {
@@ -56,6 +58,12 @@ func (m *manager) add(e PetError) {
 }
 
 func (m *manager) processErrors() {
+	defer func() {
+		if r := recover(); r != nil {
+			logger.Errorf("pet-errors: processErrors panic: %v", r)
+			go m.processErrors()
+		}
+	}()
 	for {
 		select {
 		case <-m.ctx.Done():

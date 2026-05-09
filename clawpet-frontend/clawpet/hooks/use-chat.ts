@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useRef, useState } from "react"
 
 import { ensureBackendReadyForChat } from "@/lib/api/bootstrap"
+import { toast } from "@/hooks/use-toast"
 import {
   getWebSocketInstance,
   type ChatMessage,
@@ -15,6 +16,23 @@ import {
 
 const SESSIONS_STORAGE_KEY = "petclaw_sessions"
 const ACTIVE_SESSION_KEY = "petclaw_active_session"
+
+const ERROR_LABELS: Record<string, string> = {
+  voice_tts: "TTS 语音合成失败",
+  voice_asr: "语音识别失败",
+  voice_provider: "语音服务不可用",
+  provider_rate_limit: "供应商速率限制",
+  provider_auth: "供应商认证失败",
+  provider_timeout: "供应商请求超时",
+  provider_overload: "供应商过载",
+  provider_format: "响应格式错误",
+  provider_context: "上下文超长",
+  provider_api: "API 调用错误",
+  compression_failed: "会话存储失败",
+  service_error: "服务异常",
+  provider_llm: "LLM 调用失败",
+  provider_unknown: "供应商未知错误",
+}
 
 export interface UseChatOptions {
   onMessage?: (message: ChatMessage) => void
@@ -1067,6 +1085,30 @@ export function useChat(options: UseChatOptions = {}): UseChatResult {
             lastEmotionRef.current = event.data.trim()
           }
           break
+
+        case "push_error": {
+          const errData = event.data as Record<string, unknown> | undefined
+          if (errData) {
+            const level = String(errData.level ?? "error")
+            const code = String(errData.code ?? "")
+            const message = String(errData.message ?? "")
+            const label = ERROR_LABELS[code] || (code ? `[${code}]` : "Error")
+            const context = errData.context as Record<string, unknown> | undefined
+            const text = context?.text as string | undefined
+            let description = message
+            if (text) {
+              description += `\n文本: "${text.slice(0, 30)}"`
+            }
+            if (message || text) {
+              toast({
+                title: label,
+                description,
+                variant: level === "error" ? "destructive" : "default",
+              })
+            }
+          }
+          break
+        }
 
         case "action_trigger":
           if (typeof event.data === "string" && event.data.trim()) {

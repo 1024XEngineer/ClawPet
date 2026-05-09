@@ -19,6 +19,7 @@ const PUSH_TYPE_TEXT_AND_AUDIO = "text_and_audio"
 const PUSH_TYPE_ASR = "asr"
 const PUSH_TYPE_EMOTION_CHANGE = "emotion_change"
 const PUSH_TYPE_ACTION_TRIGGER = "action_trigger"
+const PUSH_TYPE_ERROR = "error"
 const PUSH_TYPE_PROGRESS_NUDGE = "progress_nudge"
 
 export interface ChatMessage {
@@ -141,6 +142,7 @@ export type WSEventType =
   | "reconnecting"
   | "emotion_change"
   | "action_trigger"
+  | "push_error"
   | "progress_nudge"
 
 export interface WSEvent {
@@ -492,6 +494,18 @@ export class PicoClawWebSocket {
       case PUSH_TYPE_ACTION_TRIGGER:
         this.handleActionTriggerPush(data)
         break
+      case PUSH_TYPE_ERROR: {
+        const errData = data as Record<string, unknown>
+        this.emit({ type: "push_error", data: errData })
+        if (typeof window !== "undefined" && window.electronAPI?.showErrorNotification) {
+          window.electronAPI.showErrorNotification({
+            level: String(errData.level ?? "error"),
+            code: String(errData.code ?? ""),
+            message: String(errData.message ?? ""),
+          })
+        }
+        break
+      }
       case PUSH_TYPE_PROGRESS_NUDGE:
         this.handleProgressNudgePush(data)
         break
@@ -682,6 +696,26 @@ export class PicoClawWebSocket {
     }
 
     const payload = { ...((data || {}) as Record<string, unknown>) }
+
+    if (payload.type === "error" && typeof payload.text === "string") {
+      this.emit({
+        type: "push_error",
+        data: { level: "error", code: "voice_tts", message: payload.text },
+      })
+      return
+    }
+
+    if (typeof payload.error === "string" && payload.error !== "") {
+      this.emit({
+        type: "push_error",
+        data: {
+          level: "error",
+          code: typeof payload.code === "string" ? payload.code : "voice_tts",
+          message: payload.error,
+        },
+      })
+    }
+
     this.projectAudioTextChunk(payload)
     if (forcedFinal && payload.is_final === undefined) {
       payload.is_final = true

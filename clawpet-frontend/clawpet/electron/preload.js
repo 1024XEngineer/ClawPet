@@ -257,7 +257,26 @@ contextBridge.exposeInMainWorld('electronAPI', {
    */
   registerVoiceShortcut: (data) => {
     ipcRenderer.send('register-voice-shortcut', data);
-  }
+  },
+
+  /**
+   * 显示错误通知（广播到所有窗口）
+   * @param {object} data - 错误数据
+   * @param {string} data.level - 错误级别
+   * @param {string} data.code - 错误码
+   * @param {string} data.message - 错误消息
+   */
+  showErrorNotification: (data) => {
+    ipcRenderer.send('show-error-notification', data);
+  },
+
+  /**
+   * 监听错误通知
+   * @param {function} callback - 回调函数
+   */
+  onErrorNotification: (callback) => {
+    ipcRenderer.on('error-notification', (_event, data) => callback(data));
+  },
 });
 
 function serializeForMainLog(value) {

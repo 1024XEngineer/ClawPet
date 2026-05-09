@@ -338,6 +338,14 @@ export default function DesktopPetPage() {
 
     window.electronAPI?.onBubbleShow?.(handleBubbleShow)
     window.electronAPI?.onSettingsUpdate?.(() => {})
+    window.electronAPI?.onErrorNotification?.((data) => {
+      if (audioRef.current) {
+        audioRef.current.pause()
+        audioRef.current.currentTime = 0
+      }
+      transitionTo("shakeHead")
+      setBubble(`[${data.code || "error"}] ${data.message}`)
+    })
     document.title = "PetClaw"
 
     return () => {

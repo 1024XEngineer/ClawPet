@@ -130,7 +130,12 @@ module.exports = async function beforePack() {
 
     if (newestBuiltMtime < binary.sourceMtime) {
       console.log(`[beforePack] rebuilding ${binary.label}: ${binary.outputName}`);
-      buildBinary(repoRoot, distBinaryPath, binary.buildTarget);
+      try {
+        buildBinary(repoRoot, distBinaryPath, binary.buildTarget);
+      } catch (err) {
+        console.warn(`[beforePack] failed to rebuild ${binary.label}: ${err.message}`);
+        console.warn(`[beforePack] skipping ${binary.label}, using existing binary if available`);
+      }
     }
 
     const copied = copyIfDifferent(distBinaryPath, embeddedBinaryPath);

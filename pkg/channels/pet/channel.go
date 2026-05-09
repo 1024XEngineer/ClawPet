@@ -1257,6 +1257,7 @@ func (s *petStreamer) trySendNextLocked() bool {
 		Text:      front.Text,
 		AudioData: front.AudioData,
 		Duration:  front.Duration,
+		Error:     front.Error,
 	}
 
 	// 标记为已发送并弹出

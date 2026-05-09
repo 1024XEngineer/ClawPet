@@ -31,6 +31,15 @@ export default function DesktopPetBubblePage() {
       setText("")
     })
 
+    const unsubError = window.electronAPI?.onErrorNotification?.((data) => {
+      clearHideTimer()
+      setText(`[${data.code || "error"}] ${data.message}`)
+      setVisible(true)
+      hideTimerRef.current = setTimeout(() => {
+        setVisible(false)
+      }, 6000)
+    })
+
     return () => {
       stop?.()
     }

@@ -4,6 +4,8 @@ import (
 	"regexp"
 	"strconv"
 	"strings"
+
+	perr "github.com/sipeed/picoclaw/pkg/pet/err"
 )
 
 // Synthesizer 语音合成器
@@ -60,11 +62,20 @@ func (s *Synthesizer) ParseAndSynthesize(sessionID string, chatID int64, content
 		provider := s.loader.GetProvider()
 		if provider == nil {
 			s.sender.SendError(sessionID, chatID, "no voice provider available")
+			perr.Add(perr.LevelError, CodeVoiceProvider, "no voice provider available", map[string]any{
+				"session_id": sessionID,
+				"chat_id":    chatID,
+			})
 			continue
 		}
 		ch, err := provider.Synthesize(parsed.Text, params)
 		if err != nil {
 			s.sender.SendError(sessionID, chatID, err.Error())
+			perr.Add(perr.LevelError, CodeVoiceTTS, err.Error(), map[string]any{
+				"session_id": sessionID,
+				"chat_id":    chatID,
+				"text":       parsed.Text,
+			})
 			continue
 		}
 
@@ -215,6 +226,9 @@ func (s *Synthesizer) SynthesizeToQueue(sessionID string, chatID int64, text str
 		provider := s.loader.GetProvider()
 		if provider == nil {
 			queue.UpdateSegment(seq, true, nil, 0, "no voice provider available")
+			perr.Add(perr.LevelError, CodeVoiceProvider, "no voice provider available", map[string]any{
+				"seq": seq,
+			})
 			if audioReady != nil {
 				select {
 				case audioReady <- seq:
@@ -226,9 +240,11 @@ func (s *Synthesizer) SynthesizeToQueue(sessionID string, chatID int64, text str
 
 		ch, err := provider.Synthesize(text, params)
 		if err != nil {
-			// 更新队列，标记错误
 			queue.UpdateSegment(seq, true, nil, 0, err.Error())
-			// 通知 audioReady
+			perr.Add(perr.LevelError, CodeVoiceTTS, err.Error(), map[string]any{
+				"seq":  seq,
+				"text": text,
+			})
 			if audioReady != nil {
 				select {
 				case audioReady <- seq:

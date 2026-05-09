@@ -1621,6 +1621,16 @@ ipcMain.on('register-pet-click-through-shortcut', (_event, data) => {
   registerPetClickThroughShortcut(keys, enabled);
 });
 
+ipcMain.on('show-error-notification', (_event, data) => {
+  logToFile(`[IPC] show-error-notification level=${data?.level} code=${data?.code} message=${data?.message}`);
+  const windows = BrowserWindow.getAllWindows();
+  for (const win of windows) {
+    if (!win.isDestroyed()) {
+      win.webContents.send('error-notification', data);
+    }
+  }
+});
+
 ipcMain.on('bubble-window-size', (_event, payload) => {
   const next = clampBubbleSize(payload?.width, payload?.height);
   if (next.width === bubbleWindowWidth && next.height === bubbleWindowHeight) {

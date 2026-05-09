@@ -36,6 +36,8 @@ declare global {
       onVoiceShortcutTriggered?: (callback: () => void) => void
       registerVoiceShortcut?: (data: { enabled: boolean; keys: string }) => void
       registerPetClickThroughShortcut?: (data: { enabled: boolean; keys: string }) => void
+      showErrorNotification?: (data: { level: string; code: string; message: string }) => void
+      onErrorNotification?: (callback: (data: { level: string; code: string; message: string }) => void) => void
     }
   }
 }
