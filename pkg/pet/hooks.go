@@ -925,3 +925,117 @@ func parseMemoryTags(content string) []MemoryTag {
 	}
 	return tags
 }
+
+func (h *PetHook) OnEvent(ctx context.Context, evt agent.Event) error {
+	if evt.Kind == agent.EventKindError {
+		if payload, ok := evt.Payload.(agent.ErrorPayload); ok {
+			ctx := make(map[string]any)
+			if evt.Meta.SessionKey != "" {
+				ctx["session_key"] = evt.Meta.SessionKey
+			}
+			if evt.Meta.AgentID != "" {
+				ctx["agent_id"] = evt.Meta.AgentID
+			}
+			if evt.Meta.TurnID != "" {
+				ctx["turn_id"] = evt.Meta.TurnID
+			}
+			if payload.Stage != "" {
+				ctx["stage"] = payload.Stage
+			}
+
+			if payload.Err != nil {
+				code := "agent_error"
+				if fe, ok := payload.Err.(*providers.FailoverError); ok {
+					code = mapFailoverCode(fe.Reason)
+					ctx["provider"] = fe.Provider
+					ctx["model"] = fe.Model
+					if fe.Status > 0 {
+						ctx["status"] = fe.Status
+					}
+					ctx["reason"] = string(fe.Reason)
+				}
+				perr.Add(perr.LevelError, code, payload.Err.Error(), ctx)
+			} else {
+				perr.Add(perr.LevelError, "agent_error", payload.Message, ctx)
+			}
+		}
+	}
+
+	return nil
+}
+
+func mapFailoverCode(reason providers.FailoverReason) string {
+	switch reason {
+	case providers.FailoverRateLimit:
+		return providers.CodeProviderRateLimit
+	case providers.FailoverOverloaded:
+		return providers.CodeProviderOverload
+	case providers.FailoverTimeout:
+		return providers.CodeProviderTimeout
+	case providers.FailoverContextOverflow:
+		return providers.CodeProviderContext
+	case providers.FailoverAuth:
+		return providers.CodeProviderAuth
+	case providers.FailoverFormat:
+		return providers.CodeProviderFormat
+	default:
+		return providers.CodeProviderUnknown
+	}
+}
+
+func (h *PetHook) ApproveTool(ctx context.Context, req *agent.ToolApprovalRequest) (agent.ApprovalDecision, error) {
+	if h.petService == nil {
+		return agent.ApprovalDecision{Approved: true}, nil
+	}
+
+	requestID := fmt.Sprintf("tool_approval_%d", time.Now().UnixNano())
+	push := ToolApprovalPush{
+		RequestID: requestID,
+		Tool:      req.Tool,
+		Arguments: req.Arguments,
+	}
+	rawData, _ := json.Marshal(push)
+	pushMsg := Push{
+		Type:      "push",
+		PushType:  PushTypeToolApproval,
+		Data:      rawData,
+		Timestamp: time.Now().Unix(),
+	}
+
+	if h.petService.sessionPush != nil {
+		h.petService.sessionPush(req.ChatID, pushMsg)
+	} else if h.petService.pushHandler != nil {
+		h.petService.pushHandler(pushMsg)
+	}
+
+	ch := make(chan bool, 1)
+	h.approvalMu.Lock()
+	h.pendingApprovals[requestID] = ch
+	h.approvalMu.Unlock()
+
+	defer func() {
+		h.approvalMu.Lock()
+		delete(h.pendingApprovals, requestID)
+		h.approvalMu.Unlock()
+	}()
+
+	select {
+	case approved := <-ch:
+		return agent.ApprovalDecision{Approved: approved}, nil
+	case <-time.After(60 * time.Second):
+		return agent.ApprovalDecision{Approved: false, Reason: "审批超时，已自动拒绝"}, nil
+	case <-ctx.Done():
+		return agent.ApprovalDecision{Approved: false, Reason: "上下文已取消"}, nil
+	}
+}
+
+func (h *PetHook) ResolveApproval(requestID string, approved bool) {
+	h.approvalMu.Lock()
+	ch, ok := h.pendingApprovals[requestID]
+	delete(h.pendingApprovals, requestID)
+	h.approvalMu.Unlock()
+
+	if ok {
+		ch <- approved
+	}
+}
