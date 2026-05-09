@@ -6,6 +6,8 @@ import (
 	"fmt"
 	"regexp"
 	"strings"
+	"sync"
+	"time"
 
 	"github.com/sipeed/picoclaw/pkg/agent"
 	"github.com/sipeed/picoclaw/pkg/logger"
@@ -49,6 +51,9 @@ type PetHook struct {
 	conversationStore *compression.ConversationStore // 会话存储
 	userProfileMgr    *userprofile.Manager           // 用户画像管理器
 	lastUserMessage   string                         // 最后一条用户消息，用于记录对话
+
+	approvalMu       sync.Mutex
+	pendingApprovals map[string]chan bool
 }
 
 // NewPetHook 创建PetHook实例
@@ -66,6 +71,7 @@ func NewPetHook(charManager *characters.Manager, actionManager *action.ActionMan
 		memoryStore:       memoryStore,
 		conversationStore: conversationStore,
 		userProfileMgr:    userProfileMgr,
+		pendingApprovals:  make(map[string]chan bool),
 	}
 }
 
@@ -918,61 +924,4 @@ func parseMemoryTags(content string) []MemoryTag {
 		tags = append(tags, MemoryTag{Type: m[1], Weight: weight, Summary: m[3]})
 	}
 	return tags
-}
-
-func (h *PetHook) OnEvent(ctx context.Context, evt agent.Event) error {
-	if evt.Kind == agent.EventKindError {
-		if payload, ok := evt.Payload.(agent.ErrorPayload); ok {
-			ctx := make(map[string]any)
-			if evt.Meta.SessionKey != "" {
-				ctx["session_key"] = evt.Meta.SessionKey
-			}
-			if evt.Meta.AgentID != "" {
-				ctx["agent_id"] = evt.Meta.AgentID
-			}
-			if evt.Meta.TurnID != "" {
-				ctx["turn_id"] = evt.Meta.TurnID
-			}
-			if payload.Stage != "" {
-				ctx["stage"] = payload.Stage
-			}
-
-			if payload.Err != nil {
-				code := "agent_error"
-				if fe, ok := payload.Err.(*providers.FailoverError); ok {
-					code = mapFailoverCode(fe.Reason)
-					ctx["provider"] = fe.Provider
-					ctx["model"] = fe.Model
-					if fe.Status > 0 {
-						ctx["status"] = fe.Status
-					}
-					ctx["reason"] = string(fe.Reason)
-				}
-				perr.Add(perr.LevelError, code, payload.Err.Error(), ctx)
-			} else {
-				perr.Add(perr.LevelError, "agent_error", payload.Message, ctx)
-			}
-		}
-	}
-
-	return nil
-}
-
-func mapFailoverCode(reason providers.FailoverReason) string {
-	switch reason {
-	case providers.FailoverRateLimit:
-		return providers.CodeProviderRateLimit
-	case providers.FailoverOverloaded:
-		return providers.CodeProviderOverload
-	case providers.FailoverTimeout:
-		return providers.CodeProviderTimeout
-	case providers.FailoverContextOverflow:
-		return providers.CodeProviderContext
-	case providers.FailoverAuth:
-		return providers.CodeProviderAuth
-	case providers.FailoverFormat:
-		return providers.CodeProviderFormat
-	default:
-		return providers.CodeProviderUnknown
-	}
 }

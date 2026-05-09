@@ -198,6 +198,7 @@ func Run(debug bool, homePath, configPath string, allowEmptyStartup bool) error 
 				svc := pc.Service()
 
 				petHook := pet.NewPetHook(svc.CharManager(), svc.ActionManager(), svc, svc.MemoryStore(), svc.ConversationStore(), svc.UserProfileManager())
+				svc.SetApprovalResolver(petHook.ResolveApproval)
 				agentLoop.MountHook(agent.NamedHook("pet", petHook))
 				logger.InfoCF("pet", "Pet hook registered", nil)
 			}

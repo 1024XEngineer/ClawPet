@@ -37,6 +37,7 @@ type PetService struct {
 	msgBus      *bus.MessageBus
 	config      PetServiceConfig
 	pushHandler PushHandler
+	sessionPush func(sessionID string, v any)
 	provider    providers.LLMProvider
 
 	configManager      *petconfig.Manager
@@ -58,6 +59,8 @@ type PetService struct {
 	activeSessionID     string
 	activeCharacterID   string
 	lastSessionActiveAt time.Time
+
+	resolveApproval func(requestID string, approved bool)
 
 	mu sync.RWMutex
 
@@ -742,6 +745,8 @@ func (s *PetService) HandleRequest(connID string, req Request) error {
 		return s.handleVoiceConfigGet(sessionID, req)
 	case ActionVoiceConfigUpdate:
 		return s.handleVoiceConfigUpdate(sessionID, req)
+	case ActionToolApprovalResponse:
+		return s.handleToolApprovalResponse(sessionID, req)
 	default:
 		return s.sendError(sessionID, req.Action, fmt.Sprintf("unknown action: %s", req.Action))
 	}
@@ -1127,6 +1132,25 @@ func (s *PetService) sendResponse(sessionID, action string, data interface{}) er
 		return nil
 	}
 	s.pushHandler(resp)
+	return nil
+}
+
+func (s *PetService) SetSessionPush(push func(sessionID string, v any)) {
+	s.sessionPush = push
+}
+
+func (s *PetService) SetApprovalResolver(resolver func(requestID string, approved bool)) {
+	s.resolveApproval = resolver
+}
+
+func (s *PetService) handleToolApprovalResponse(sessionID string, req Request) error {
+	var data ToolApprovalResponse
+	if err := json.Unmarshal(req.Data, &data); err != nil {
+		return s.sendError(sessionID, req.Action, "invalid tool approval response data")
+	}
+	if s.resolveApproval != nil {
+		s.resolveApproval(data.RequestID, data.Approved)
+	}
 	return nil
 }
 

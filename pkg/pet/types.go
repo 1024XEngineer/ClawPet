@@ -65,6 +65,7 @@ const (
 	ActionAudioFrame           = "audio_frame"             // 音频帧（语音输入）
 	ActionVoiceConfigGet       = "voice_config_get"        // 获取 voice 配置（model_name）
 	ActionVoiceConfigUpdate    = "voice_config_update"     // 更新 voice 配置（model_name）
+	ActionToolApprovalResponse = "tool_approval_response"  // 工具审批响应
 	PushTypeWeeklyReport  = "weekly_report_ready"
 	PushTypeProgressNudge = "progress_nudge"
 )
@@ -86,6 +87,7 @@ const (
 	PushTypeAudio           = "audio"            // 音频播放
 	PushTypeTextAndAudio    = "text_and_audio"   // 文本和音频同时推送
 	PushTypeError           = "error"            // 错误推送
+	PushTypeToolApproval    = "tool_approval"    // 工具审批请求
 )
 
 // =============================================================================
@@ -511,4 +513,17 @@ type AudioFrameRequest struct {
 	Sequence   uint64 `json:"sequence"`    // 帧序号
 	Timestamp  uint32 `json:"timestamp"`   // 时间戳（毫秒）
 	SessionKey string `json:"session_key"` // 会话隔离标识，和文本聊天一样
+}
+
+// ToolApprovalPush 工具审批推送数据
+type ToolApprovalPush struct {
+	RequestID string         `json:"request_id"` // 请求ID
+	Tool      string         `json:"tool"`       // 工具名称
+	Arguments map[string]any `json:"arguments"`  // 工具参数
+}
+
+// ToolApprovalResponse 工具审批响应数据
+type ToolApprovalResponse struct {
+	RequestID string `json:"request_id"` // 请求ID
+	Approved  bool   `json:"approved"`   // 是否允许
 }

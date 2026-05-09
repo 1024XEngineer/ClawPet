@@ -183,6 +183,7 @@ func NewPetChannel(cfg config.PetConfig, msgBus *bus.MessageBus, workspacePath s
 
 	perr.SetPushHandler(pc.handleErrorPush)
 
+	pc.service.SetSessionPush(pc.sendPushToSession)
 	pc.service.Start()
 
 	// 初始化语音合成器
@@ -216,6 +217,21 @@ func (c *PetChannel) handleServicePush(push any) {
 		}
 		if err := pc.writeJSON(push); err != nil {
 			logger.Warnf("pet: failed to push to conn_id=%s: %v", pc.id, err)
+		}
+	}
+}
+
+// sendPushToSession 发送消息到指定 session 的客户端
+func (c *PetChannel) sendPushToSession(sessionID string, v any) {
+	c.connsMu.RLock()
+	defer c.connsMu.RUnlock()
+
+	for _, pc := range c.connections {
+		if pc.sessionID == sessionID {
+			if err := pc.writeJSON(v); err != nil {
+				logger.Warnf("pet: failed to push to conn_id=%s: %v", pc.id, err)
+			}
+			return
 		}
 	}
 }
