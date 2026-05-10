@@ -41,7 +41,7 @@ type PetService struct {
 	actionManager      *action.ActionManager
 	memoryStore        *memory.Store
 	voiceLoader        *voice.Loader
-	asrLoader         *asr.Loader
+	asrLoader          *asr.Loader
 	conversationStore  *compression.ConversationStore
 	compressionSvc     *compression.CompressionService
 	modelConfigManager *modelconfig.Manager
@@ -1626,9 +1626,6 @@ func (s *PetService) handleASRModelUpdate(sessionID string, req Request) error {
 	if data.Model != "" {
 		model.Model = data.Model
 	}
-	if data.Provider != "" {
-		model.Provider = data.Provider
-	}
 	if data.Enabled != nil {
 		model.Enabled = *data.Enabled
 	}
@@ -1649,7 +1646,7 @@ func (s *PetService) handleASRModelUpdate(sessionID string, req Request) error {
 		return s.sendError(sessionID, req.Action, err.Error())
 	}
 
-	needsSwitch := data.APIKey != "" || data.Extra != nil || data.Model != "" || data.APIBase != "" || data.Provider != ""
+	needsSwitch := data.APIKey != "" || data.Extra != nil || data.Model != "" || data.APIBase != ""
 	if needsSwitch && s.asrLoader.GetCurrentModel() == data.Name && model.Enabled {
 		logger.Infof("pet ASR: config changed, reloading provider for %s", data.Name)
 		if err := s.asrLoader.SwitchModel(data.Name, s.configManager); err != nil {
@@ -2291,10 +2288,10 @@ func (s *PetService) handleAudioFrame(sessionID string, req Request) error {
 			errMsg = "语音通道未就绪，请重启应用后重试"
 		}
 		logger.ErrorCF("pet", "Failed to publish audio chunk", map[string]any{
-			"error":     err.Error(),
+			"error":      err.Error(),
 			"session_id": sessionID,
-			"sequence":  data.Sequence,
-			"chat_id":   chunk.ChatID,
+			"sequence":   data.Sequence,
+			"chat_id":    chunk.ChatID,
 		})
 		perr.Add(perr.LevelError, voice.CodeVoiceASR, err.Error(), nil)
 		return s.sendError(sessionID, req.Action, errMsg)
