@@ -14,8 +14,8 @@ import (
 	"github.com/sipeed/picoclaw/pkg/config"
 	"github.com/sipeed/picoclaw/pkg/cron"
 	"github.com/sipeed/picoclaw/pkg/logger"
-	"github.com/sipeed/picoclaw/pkg/pet/activity"
 	"github.com/sipeed/picoclaw/pkg/pet/action"
+	"github.com/sipeed/picoclaw/pkg/pet/activity"
 	"github.com/sipeed/picoclaw/pkg/pet/asr"
 	"github.com/sipeed/picoclaw/pkg/pet/characters"
 	"github.com/sipeed/picoclaw/pkg/pet/compression"
@@ -216,12 +216,16 @@ func NewPetService(msgBus *bus.MessageBus, cfg PetServiceConfig) (*PetService, e
 		if err != nil {
 			logger.WarnCF("pet", "PetService: failed to create activity store", map[string]any{"error": err.Error()})
 		}
-		// 初始化 cron 服务
-		cronStorePath := filepath.Join(workspacePath, "cron", "jobs.json")
-		s.cronService = cron.NewCronService(cronStorePath, nil)
-		logger.DebugCF("pet", "PetService: cron service initialized, store=", map[string]any{
-			"store_path": cronStorePath,
-		})
+		// 初始化 cron 服务（仅当未通过 SetCronService 注入外部实例时）
+		if s.cronService == nil {
+			cronStorePath := filepath.Join(workspacePath, "cron", "jobs.json")
+			s.cronService = cron.NewCronService(cronStorePath, nil)
+			logger.DebugCF("pet", "PetService: cron service initialized, store=", map[string]any{
+				"store_path": cronStorePath,
+			})
+		} else {
+			logger.DebugCF("pet", "PetService: using externally provided cron service", nil)
+		}
 		// 初始化 skills 管理器
 		if cfg.Config != nil {
 			var err error
@@ -367,6 +371,11 @@ func (s *PetService) UserProfileManager() *userprofile.Manager {
 
 func (s *PetService) SetPushHandler(handler PushHandler) {
 	s.pushHandler = handler
+}
+
+func (s *PetService) SetCronService(cs *cron.CronService) {
+	s.cronService = cs
+	logger.DebugCF("pet", "PetService: using externally provided cron service", nil)
 }
 
 func (s *PetService) Push(push any) {
@@ -2737,6 +2746,7 @@ func (s *PetService) handleDebugProgressNudge(sessionID string, req Request) err
 	}
 	return s.sendResponse(sessionID, req.Action, map[string]string{"status": "ok"})
 }
+
 // ensureDefaultActions 注册内置默认动作（仅在同名动作不存在时注册）
 // 这些动作对应 /pets/ 目录下的 GIF 文件，为 LLM 提供语义化动作选项。
 func ensureDefaultActions(mgr *action.ActionManager) {

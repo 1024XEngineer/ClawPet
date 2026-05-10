@@ -9,7 +9,6 @@ import {
   channelsApi,
   skillsApi,
   toolsApi,
-  cronApi,
   configApi,
   logsApi,
   type Model,
@@ -17,9 +16,9 @@ import {
   type Skill,
   type Tool,
   type CronJob,
-  type CronJobInput,
   type Config,
 } from '@/lib/api'
+import { getWebSocketInstance } from '@/lib/api'
 
 // 通用 fetcher
 const fetcher = <T>(fn: () => Promise<T>) => fn()
@@ -168,29 +167,11 @@ export function useToggleTool() {
 
 // 定时任务
 export function useCronJobs() {
-  return useSWR('cron-jobs', () => fetcher(cronApi.list))
-}
-
-export function useCronMutations() {
-  const create = useSWRMutation(
-    'cron-jobs',
-    (_, { arg }: { arg: CronJobInput }) =>
-      cronApi.create(arg)
-  )
-  const update = useSWRMutation(
-    'cron-jobs',
-    (_, { arg }: { arg: { id: string; job: Partial<CronJobInput> } }) =>
-      cronApi.update(arg.id, arg.job)
-  )
-  const remove = useSWRMutation('cron-jobs', (_, { arg }: { arg: string }) =>
-    cronApi.delete(arg)
-  )
-  const toggle = useSWRMutation(
-    'cron-jobs',
-    (_, { arg }: { arg: { id: string; enabled: boolean } }) =>
-      cronApi.toggle(arg.id, arg.enabled)
-  )
-  return { create, update, remove, toggle }
+  return useSWR('cron-jobs', async () => {
+    const ws = getWebSocketInstance()
+    const resp = await ws.listCronJobs()
+    return resp.data ?? { jobs: [] }
+  }, { refreshInterval: 10000 })
 }
 
 // 配置管理

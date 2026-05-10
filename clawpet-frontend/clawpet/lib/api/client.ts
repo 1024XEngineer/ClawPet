@@ -637,71 +637,32 @@ export const toolsApi = {
     }),
 }
 
-// 定时任务 API
+// 定时任务 API（使用 WebSocket action，cronApi 已废弃，保留类型向后兼容）
 export type CronScheduleType = 'cron' | 'every' | 'at'
 
 export interface CronJob {
   id: string
   name: string
-  description: string
-  message: string
-  scheduleType: CronScheduleType
-  schedule: string
-  cronExpr?: string
-  everySeconds?: number
-  atMs?: number
-  command?: string
   enabled: boolean
-  channel?: string
-  to?: string
-  lastRunAtMs?: number
-  nextRunAtMs?: number
-  lastStatus?: string
-  lastError?: string
-  createdAtMs?: number
-  updatedAtMs?: number
+  schedule_kind: 'at' | 'every' | 'cron'
+  every_ms: number | null
+  cron_expr: string | null
+  at_ms: number | null
+  message: string
+  channel: string
+  to: string
+  next_run_at_ms: number | null
+  last_run_at_ms: number | null
+  last_status: string
+  created_at_ms: number
 }
 
 export interface CronJobInput {
   name: string
-  description: string
-  scheduleType: CronScheduleType
-  schedule?: string
-  cronExpr?: string
-  everySeconds?: number
-  atMs?: number
-  delaySeconds?: number
-  command?: string
-  enabled?: boolean
-  channel?: string
-  to?: string
-}
-
-export const cronApi = {
-  list: () => request<{ jobs: CronJob[] }>(API_ENDPOINTS.CRON.LIST),
-
-  create: (job: CronJobInput) =>
-    request<{ job: CronJob }>(API_ENDPOINTS.CRON.CREATE, {
-      method: 'POST',
-      body: JSON.stringify(job),
-    }),
-
-  update: (id: string, job: Partial<CronJobInput>) =>
-    request<{ job: CronJob }>(API_ENDPOINTS.CRON.UPDATE(id), {
-      method: 'PUT',
-      body: JSON.stringify(job),
-    }),
-
-  delete: (id: string) =>
-    request<{ success: boolean }>(API_ENDPOINTS.CRON.DELETE(id), {
-      method: 'DELETE',
-    }),
-
-  toggle: (id: string, enabled: boolean) =>
-    request<{ success: boolean; job: CronJob }>(API_ENDPOINTS.CRON.TOGGLE(id), {
-      method: 'POST',
-      body: JSON.stringify({ enabled }),
-    }),
+  message: string
+  at_seconds?: number
+  every_seconds?: number
+  cron_expr?: string
 }
 
 // 配置 API

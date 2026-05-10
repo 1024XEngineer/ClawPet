@@ -288,13 +288,6 @@ export const API_ENDPOINTS = {
     LIST: '/api/agent/tools',
     TOGGLE: (id: string) => `/api/agent/tools/${id}/toggle`,
   },
-  CRON: {
-    LIST: '/api/cron',
-    CREATE: '/api/cron',
-    UPDATE: (id: string) => `/api/cron/${id}`,
-    DELETE: (id: string) => `/api/cron/${id}`,
-    TOGGLE: (id: string) => `/api/cron/${id}/toggle`,
-  },
   CONFIG: {
     GET: '/api/config',
     UPDATE: '/api/config',

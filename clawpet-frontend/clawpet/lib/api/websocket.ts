@@ -1344,6 +1344,27 @@ export class PicoClawWebSocket {
   async setDefaultModel(modelName: string): Promise<PetResponse> {
     return this.requestAction("model_set_default", { model_name: modelName })
   }
+
+  // ---- Cron Jobs ----
+  async listCronJobs(includeDisabled = false): Promise<PetResponse & { data?: CronListResponse }> {
+    return this.requestAction<CronListResponse>("cron_list", { include_disabled: includeDisabled })
+  }
+
+  async addCronJob(data: CronAddRequest): Promise<PetResponse & { data?: CronAddResponse }> {
+    return this.requestAction<CronAddResponse>("cron_add", data)
+  }
+
+  async removeCronJob(jobId: string): Promise<PetResponse> {
+    return this.requestAction("cron_remove", { job_id: jobId })
+  }
+
+  async enableCronJob(jobId: string): Promise<PetResponse> {
+    return this.requestAction("cron_enable", { job_id: jobId })
+  }
+
+  async disableCronJob(jobId: string): Promise<PetResponse> {
+    return this.requestAction("cron_disable", { job_id: jobId })
+  }
 }
 
 export interface VoiceModelData {
@@ -1450,6 +1471,41 @@ export interface UpdateModelRequest {
   request_timeout?: number
   thinking_level?: string | null
   extra_body?: Record<string, unknown>
+}
+
+// ---- Cron Job Types ----
+export interface CronJobInfo {
+  id: string
+  name: string
+  enabled: boolean
+  schedule_kind: "at" | "every" | "cron"
+  every_ms: number | null
+  cron_expr: string | null
+  at_ms: number | null
+  message: string
+  channel: string
+  to: string
+  next_run_at_ms: number | null
+  last_run_at_ms: number | null
+  last_status: string
+  created_at_ms: number
+}
+
+export interface CronListResponse {
+  jobs: CronJobInfo[]
+}
+
+export interface CronAddResponse {
+  job_id: string
+  name: string
+}
+
+export interface CronAddRequest {
+  name: string
+  message: string
+  at_seconds?: number
+  every_seconds?: number
+  cron_expr?: string
 }
 
 let wsInstance: PicoClawWebSocket | null = null

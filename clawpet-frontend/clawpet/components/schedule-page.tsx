@@ -2,7 +2,6 @@
 
 import { useEffect, useState } from "react"
 import {
-  AlertCircle,
   Bell,
   Calendar,
   Clock,
@@ -11,18 +10,18 @@ import {
   Play,
   Plus,
   Repeat,
-  Terminal,
   Trash2,
   X,
 } from "lucide-react"
 
-import { useCronJobs, useCronMutations } from "@/hooks/use-picoclaw"
-import type { CronJob, CronJobInput, CronScheduleType } from "@/lib/api"
+import { useCronJobs } from "@/hooks/use-picoclaw"
+import { getWebSocketInstance } from "@/lib/api"
+import type { CronJob, CronJobInput } from "@/lib/api"
 import { cn } from "@/lib/utils"
 import { Button } from "@/components/ui/button"
 import { Spinner } from "@/components/ui/spinner"
 
-const scheduleTypeOptions: Array<{ value: CronScheduleType; label: string; hint: string }> = [
+const scheduleTypeOptions: Array<{ value: string; label: string; hint: string }> = [
   { value: "cron", label: "Cron", hint: "按固定时间表达式执行" },
   { value: "every", label: "间隔", hint: "每隔 N 秒重复执行" },
   { value: "at", label: "单次", hint: "在指定时间只执行一次" },
@@ -39,7 +38,7 @@ function pad(value: number): string {
   return String(value).padStart(2, "0")
 }
 
-function formatDateTime(ms?: number): string {
+function formatDateTime(ms?: number | null): string {
   if (!ms) {
     return "尚未执行"
   }
@@ -48,7 +47,7 @@ function formatDateTime(ms?: number): string {
   return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())} ${pad(date.getHours())}:${pad(date.getMinutes())}`
 }
 
-function toDatetimeLocalValue(ms?: number): string {
+function toDatetimeLocalValue(ms?: number | null): string {
   if (!ms) {
     return ""
   }
@@ -58,7 +57,7 @@ function toDatetimeLocalValue(ms?: number): string {
   return local.toISOString().slice(0, 16)
 }
 
-function isToday(ms?: number): boolean {
+function isToday(ms?: number | null): boolean {
   if (!ms) {
     return false
   }
@@ -72,11 +71,12 @@ function isToday(ms?: number): boolean {
   )
 }
 
-function formatEveryLabel(seconds?: number): string {
-  if (!seconds || seconds <= 0) {
+function formatEveryLabel(ms?: number | null): string {
+  if (!ms || ms <= 0) {
     return "未设置"
   }
 
+  const seconds = ms / 1000
   if (seconds % 86_400 === 0) {
     return `每 ${seconds / 86_400} 天`
   }
@@ -89,7 +89,7 @@ function formatEveryLabel(seconds?: number): string {
   return `每 ${seconds} 秒`
 }
 
-function formatCronSummary(expr?: string): string {
+function formatCronSummary(expr?: string | null): string {
   if (!expr) {
     return "Cron 计划"
   }
@@ -117,26 +117,26 @@ function formatCronSummary(expr?: string): string {
 }
 
 function getScheduleLabel(job: CronJob): string {
-  switch (job.scheduleType) {
+  switch (job.schedule_kind) {
     case "every":
-      return formatEveryLabel(job.everySeconds)
+      return formatEveryLabel(job.every_ms)
     case "at":
-      return `One-time at ${formatDateTime(job.atMs)}`
+      return `单次 ${formatDateTime(job.at_ms)}`
     case "cron":
     default:
-      return formatCronSummary(job.cronExpr || job.schedule)
+      return formatCronSummary(job.cron_expr)
   }
 }
 
 function getScheduleMeta(job: CronJob): string {
-  switch (job.scheduleType) {
+  switch (job.schedule_kind) {
     case "every":
-      return "Repeats on a fixed interval"
+      return "按固定间隔重复"
     case "at":
       return "执行后自动移除"
     case "cron":
     default:
-      return job.cronExpr || job.schedule || "Cron 表达式"
+      return job.cron_expr || "Cron 表达式"
   }
 }
 
@@ -146,15 +146,13 @@ function sortJobs(jobs: CronJob[]): CronJob[] {
       return left.enabled ? -1 : 1
     }
 
-    const leftNext = left.nextRunAtMs ?? Number.MAX_SAFE_INTEGER
-    const rightNext = right.nextRunAtMs ?? Number.MAX_SAFE_INTEGER
+    const leftNext = left.next_run_at_ms ?? Number.MAX_SAFE_INTEGER
+    const rightNext = right.next_run_at_ms ?? Number.MAX_SAFE_INTEGER
     if (leftNext !== rightNext) {
       return leftNext - rightNext
     }
 
-    const leftUpdated = left.updatedAtMs ?? 0
-    const rightUpdated = right.updatedAtMs ?? 0
-    return rightUpdated - leftUpdated
+    return right.created_at_ms - left.created_at_ms
   })
 }
 
@@ -169,12 +167,11 @@ interface ScheduleDialogProps {
 
 function ScheduleDialog({ open, mode, job, submitting, onClose, onSubmit }: ScheduleDialogProps) {
   const [name, setName] = useState("")
-  const [description, setDescription] = useState("")
-  const [scheduleType, setScheduleType] = useState<CronScheduleType>("cron")
+  const [message, setMessage] = useState("")
+  const [scheduleType, setScheduleType] = useState("cron")
   const [cronExpr, setCronExpr] = useState("0 9 * * *")
   const [everySeconds, setEverySeconds] = useState("300")
   const [atValue, setAtValue] = useState("")
-  const [command, setCommand] = useState("")
 
   useEffect(() => {
     if (!open) {
@@ -183,22 +180,20 @@ function ScheduleDialog({ open, mode, job, submitting, onClose, onSubmit }: Sche
 
     if (mode === "edit" && job) {
       setName(job.name)
-      setDescription(job.description || job.message || "")
-      setScheduleType(job.scheduleType || "cron")
-      setCronExpr(job.cronExpr || job.schedule || "0 9 * * *")
-      setEverySeconds(job.everySeconds ? String(job.everySeconds) : "300")
-      setAtValue(toDatetimeLocalValue(job.atMs))
-      setCommand(job.command || "")
+      setMessage(job.message)
+      setScheduleType(job.schedule_kind || "cron")
+      setCronExpr(job.cron_expr || "0 9 * * *")
+      setEverySeconds(job.every_ms ? String(job.every_ms / 1000) : "300")
+      setAtValue(toDatetimeLocalValue(job.at_ms))
       return
     }
 
     setName("")
-    setDescription("")
+    setMessage("")
     setScheduleType("cron")
     setCronExpr("0 9 * * *")
     setEverySeconds("300")
     setAtValue("")
-    setCommand("")
   }, [job, mode, open])
 
   if (!open) {
@@ -212,7 +207,7 @@ function ScheduleDialog({ open, mode, job, submitting, onClose, onSubmit }: Sche
   const isAtValid = scheduleType !== "at" || (Number.isFinite(parsedAtMs) && parsedAtMs > Date.now())
   const canSubmit =
     name.trim().length > 0 &&
-    description.trim().length > 0 &&
+    message.trim().length > 0 &&
     isCronValid &&
     isEveryValid &&
     isAtValid
@@ -224,20 +219,22 @@ function ScheduleDialog({ open, mode, job, submitting, onClose, onSubmit }: Sche
 
     const payload: CronJobInput = {
       name: name.trim(),
-      description: description.trim(),
-      scheduleType,
-      command: command.trim() || undefined,
+      message: message.trim(),
     }
 
     if (scheduleType === "cron") {
-      payload.schedule = cronExpr.trim()
+      payload.cron_expr = cronExpr.trim()
     } else if (scheduleType === "every") {
-      payload.everySeconds = Math.floor(parsedEverySeconds)
+      payload.every_seconds = Math.floor(parsedEverySeconds)
     } else {
-      payload.atMs = parsedAtMs
+      payload.at_seconds = Math.floor((parsedAtMs - Date.now()) / 1000)
     }
 
-    await onSubmit(payload)
+    try {
+      await onSubmit(payload)
+    } catch {
+      // 错误已在父组件通过 actionError 显示
+    }
   }
 
   return (
@@ -276,8 +273,8 @@ function ScheduleDialog({ open, mode, job, submitting, onClose, onSubmit }: Sche
           <div>
             <label className="mb-1.5 block text-sm font-medium text-foreground">任务内容</label>
             <textarea
-              value={description}
-              onChange={(event) => setDescription(event.target.value)}
+              value={message}
+              onChange={(event) => setMessage(event.target.value)}
               placeholder="写下任务触发后要让 AI 做什么，或者要提醒你的内容。"
               className="h-24 w-full resize-none rounded-2xl border border-border bg-background px-3 py-2.5 text-sm text-foreground outline-none transition focus:border-orange-300 focus:ring-2 focus:ring-orange-400/20"
             />
@@ -348,20 +345,6 @@ function ScheduleDialog({ open, mode, job, submitting, onClose, onSubmit }: Sche
               <p className="mt-1 text-xs text-muted-foreground">单次任务执行完成后会自动移除。</p>
             </div>
           )}
-
-          <div>
-            <label className="mb-1.5 block text-sm font-medium text-foreground">命令（可选）</label>
-            <input
-              type="text"
-              value={command}
-              onChange={(event) => setCommand(event.target.value)}
-              placeholder="例如：echo hello"
-              className="w-full rounded-2xl border border-border bg-background px-3 py-2.5 font-mono text-sm text-foreground outline-none transition focus:border-orange-300 focus:ring-2 focus:ring-orange-400/20"
-            />
-            <p className="mt-1 text-xs text-muted-foreground">
-              留空时触发 AI 任务；填写后会直接执行这条命令。
-            </p>
-          </div>
         </div>
 
         <div className="mt-6 flex justify-end gap-3">
@@ -409,16 +392,16 @@ function ScheduleCard({
         <div
           className={cn(
             "flex h-12 w-12 shrink-0 items-center justify-center rounded-2xl text-white",
-            job.scheduleType === "every"
+            job.schedule_kind === "every"
               ? "bg-gradient-to-br from-orange-400 to-pink-500"
-              : job.scheduleType === "at"
+              : job.schedule_kind === "at"
                 ? "bg-gradient-to-br from-blue-400 to-cyan-500"
                 : "bg-gradient-to-br from-violet-500 to-indigo-500"
           )}
         >
-          {job.scheduleType === "every" ? (
+          {job.schedule_kind === "every" ? (
             <Repeat className="h-5 w-5" />
-          ) : job.scheduleType === "at" ? (
+          ) : job.schedule_kind === "at" ? (
             <Bell className="h-5 w-5" />
           ) : (
             <Clock className="h-5 w-5" />
@@ -438,24 +421,16 @@ function ScheduleCard({
             >
               {job.enabled ? "运行中" : "已暂停"}
             </span>
-            {job.lastStatus === "error" && (
+            {job.last_status === "error" && (
               <span
                 className="rounded-full border border-rose-200/80 bg-rose-50/90 px-2.5 py-1 text-xs font-medium text-rose-700"
-                title={job.lastError || "最近一次执行失败"}
               >
                 异常
               </span>
             )}
           </div>
 
-          <p className="text-sm leading-6 text-muted-foreground">{job.description || job.message}</p>
-
-          {job.command && (
-            <div className="mt-3 flex items-start gap-2 rounded-[1.2rem] border border-white/70 bg-white/72 px-3 py-2">
-              <Terminal className="mt-0.5 h-4 w-4 shrink-0 text-muted-foreground" />
-              <code className="break-all text-xs text-foreground">{job.command}</code>
-            </div>
-          )}
+          <p className="text-sm leading-6 text-muted-foreground">{job.message}</p>
 
           <div className="mt-4 flex flex-wrap items-center gap-x-4 gap-y-2 text-xs text-muted-foreground">
             <span className="flex items-center gap-1">
@@ -468,11 +443,11 @@ function ScheduleCard({
             </span>
             <span className="flex items-center gap-1">
               <Bell className="h-3.5 w-3.5" />
-              下次：{job.nextRunAtMs ? formatDateTime(job.nextRunAtMs) : "未安排"}
+              下次：{job.next_run_at_ms ? formatDateTime(job.next_run_at_ms) : "未安排"}
             </span>
             <span className="flex items-center gap-1">
               <Calendar className="h-3.5 w-3.5" />
-              上次：{job.lastRunAtMs ? formatDateTime(job.lastRunAtMs) : "从未执行"}
+              上次：{job.last_run_at_ms ? formatDateTime(job.last_run_at_ms) : "从未执行"}
             </span>
           </div>
         </div>
@@ -519,14 +494,13 @@ export function SchedulePage() {
   const [actionError, setActionError] = useState<string | null>(null)
 
   const { data: cronData, isLoading, error, mutate } = useCronJobs()
-  const { create, update, toggle, remove } = useCronMutations()
 
   const schedules = sortJobs(cronData?.jobs ?? [])
   const runningCount = schedules.filter((job) => job.enabled).length
-  const todayExecutions = schedules.filter((job) => isToday(job.lastRunAtMs)).length
+  const todayExecutions = schedules.filter((job) => isToday(job.last_run_at_ms)).length
   const nextExecution = schedules
-    .filter((job) => job.enabled && typeof job.nextRunAtMs === "number")
-    .sort((left, right) => (left.nextRunAtMs ?? Number.MAX_SAFE_INTEGER) - (right.nextRunAtMs ?? Number.MAX_SAFE_INTEGER))[0]
+    .filter((job) => job.enabled && typeof job.next_run_at_ms === "number")
+    .sort((left, right) => (left.next_run_at_ms ?? Number.MAX_SAFE_INTEGER) - (right.next_run_at_ms ?? Number.MAX_SAFE_INTEGER))[0]
 
   async function refreshJobs() {
     await mutate()
@@ -534,36 +508,51 @@ export function SchedulePage() {
 
   async function handleCreate(input: CronJobInput) {
     setActionError(null)
+    setDialogSubmitting(true)
     try {
-      await create.trigger({ ...input, enabled: true })
+      const ws = getWebSocketInstance()
+      await ws.addCronJob(input)
       setShowCreateDialog(false)
       await refreshJobs()
     } catch (createError) {
       setActionError(getErrorMessage(createError))
-      throw createError
+    } finally {
+      setDialogSubmitting(false)
     }
   }
 
-  async function handleUpdate(input: CronJobInput) {
+  async function handleEdit(input: CronJobInput) {
     if (!editingJob) {
       return
     }
 
     setActionError(null)
+    setDialogSubmitting(true)
     try {
-      await update.trigger({ id: editingJob.id, job: input })
+      const ws = getWebSocketInstance()
+      const oldId = editingJob.id
+      const addResp = await ws.addCronJob(input)
+      if (addResp.status === "ok") {
+        await ws.removeCronJob(oldId)
+      }
       setEditingJob(null)
       await refreshJobs()
-    } catch (updateError) {
-      setActionError(getErrorMessage(updateError))
-      throw updateError
+    } catch (editError) {
+      setActionError(getErrorMessage(editError))
+    } finally {
+      setDialogSubmitting(false)
     }
   }
 
   async function handleToggle(job: CronJob) {
     setActionError(null)
     try {
-      await toggle.trigger({ id: job.id, enabled: !job.enabled })
+      const ws = getWebSocketInstance()
+      if (job.enabled) {
+        await ws.disableCronJob(job.id)
+      } else {
+        await ws.enableCronJob(job.id)
+      }
       await refreshJobs()
     } catch (toggleError) {
       setActionError(getErrorMessage(toggleError))
@@ -577,7 +566,8 @@ export function SchedulePage() {
 
     setActionError(null)
     try {
-      await remove.trigger(job.id)
+      const ws = getWebSocketInstance()
+      await ws.removeCronJob(job.id)
       await refreshJobs()
     } catch (removeError) {
       setActionError(getErrorMessage(removeError))
@@ -586,7 +576,7 @@ export function SchedulePage() {
 
   const pageError = error ? getErrorMessage(error) : null
   const visibleError = actionError || pageError
-  const dialogSubmitting = create.isMutating || update.isMutating
+  const [dialogSubmitting, setDialogSubmitting] = useState(false)
 
   return (
     <section className="relative flex min-h-0 flex-1 flex-col overflow-hidden bg-[linear-gradient(180deg,rgba(255,246,237,0.78),rgba(255,249,245,0.94),rgba(255,252,249,0.98))]">
@@ -650,7 +640,7 @@ export function SchedulePage() {
               <div className="min-w-0">
                 <p className="text-sm text-muted-foreground">最近一次即将执行</p>
                 <p className="truncate text-sm font-semibold text-foreground">
-                  {nextExecution ? `${formatDateTime(nextExecution.nextRunAtMs)} · ${nextExecution.name}` : "暂无待执行任务"}
+                  {nextExecution ? `${formatDateTime(nextExecution.next_run_at_ms)} · ${nextExecution.name}` : "暂无待执行任务"}
                 </p>
               </div>
               </div>
@@ -702,6 +692,7 @@ export function SchedulePage() {
         </div>
 
         <ScheduleDialog
+          key="create"
           open={showCreateDialog}
           mode="create"
           submitting={dialogSubmitting}
@@ -710,12 +701,13 @@ export function SchedulePage() {
         />
 
         <ScheduleDialog
+          key={`edit-${editingJob?.id ?? "none"}`}
           open={Boolean(editingJob)}
           mode="edit"
           job={editingJob}
           submitting={dialogSubmitting}
           onClose={() => setEditingJob(null)}
-          onSubmit={handleUpdate}
+          onSubmit={handleEdit}
         />
       </div>
     </section>

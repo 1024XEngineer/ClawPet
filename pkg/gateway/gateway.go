@@ -204,6 +204,15 @@ func Run(debug bool, homePath, configPath string, allowEmptyStartup bool) error 
 		}
 	}
 
+	// 注入 Gateway 的 cronService 到 PetService，使定时任务通过同一实例执行
+	if runningServices.CronService != nil && cfg.Channels.Pet.Enabled {
+		if petChannel, ok := runningServices.ChannelManager.GetChannel("pet"); ok {
+			if pc, ok := petChannel.(*petchannel.PetChannel); ok {
+				pc.Service().SetCronService(runningServices.CronService)
+			}
+		}
+	}
+
 	// Setup manual reload channel for /reload endpoint
 	manualReloadChan := make(chan struct{}, 1)
 	runningServices.manualReloadChan = manualReloadChan
@@ -342,6 +351,13 @@ func setupAndStartServices(
 	if err != nil {
 		return nil, fmt.Errorf("error setting up cron service: %w", err)
 	}
+	if runningServices.CronService != nil {
+		if err = runningServices.CronService.Start(); err != nil {
+			return nil, fmt.Errorf("error starting cron service: %w", err)
+		}
+		fmt.Println("✓ Cron service started")
+	}
+
 	runningServices.HeartbeatService = heartbeat.NewHeartbeatService(
 		cfg.WorkspacePath(),
 		cfg.Heartbeat.Interval,
@@ -601,6 +617,12 @@ func restartServices(
 	if err != nil {
 		return fmt.Errorf("error restarting cron service: %w", err)
 	}
+	if runningServices.CronService != nil {
+		if err = runningServices.CronService.Start(); err != nil {
+			return fmt.Errorf("error restarting cron service: %w", err)
+		}
+		fmt.Println("  ✓ Cron service restarted")
+	}
 
 	runningServices.HeartbeatService = heartbeat.NewHeartbeatService(
 		cfg.WorkspacePath(),
@@ -670,6 +692,15 @@ func restartServices(
 						})
 					}
 				}
+			}
+		}
+	}
+
+	// 注入 Gateway 的 cronService 到 PetService
+	if runningServices.CronService != nil && cfg.Channels.Pet.Enabled {
+		if petChannel, ok := runningServices.ChannelManager.GetChannel("pet"); ok {
+			if pc, ok := petChannel.(*petchannel.PetChannel); ok {
+				pc.Service().SetCronService(runningServices.CronService)
 			}
 		}
 	}
@@ -890,26 +921,25 @@ func setupCronTool(
 	execTimeout time.Duration,
 	cfg *config.Config,
 ) (*cron.CronService, *tools.CronTool, error) {
+	if !cfg.Tools.IsToolEnabled("cron") {
+		return nil, nil
+	}
+
 	cronStorePath := filepath.Join(workspace, "cron", "jobs.json")
 
 	cronService := cron.NewCronService(cronStorePath, nil)
 
-	var cronTool *tools.CronTool
-	if cfg.Tools.IsToolEnabled("cron") {
-		var err error
-		cronTool, err = tools.NewCronTool(cronService, agentLoop, msgBus, workspace, restrict, execTimeout, cfg)
-		if err != nil {
-			return nil, nil, fmt.Errorf("critical error during CronTool initialization: %w", err)
-		}
-
-		agentLoop.RegisterTool(cronTool)
+	cronTool, err := tools.NewCronTool(cronService, agentLoop, msgBus, workspace, restrict, execTimeout, cfg)
+	if err != nil {
+		return nil, nil, fmt.Errorf("critical error during CronTool initialization: %w", err)
 	}
 
-	if cronTool != nil {
-		cronService.SetOnJob(func(job *cron.CronJob) (string, error) {
-			return cronTool.ExecuteJob(context.Background(), job)
-		})
-	}
+	agentLoop.RegisterTool(cronTool)
+
+	cronService.SetOnJob(func(job *cron.CronJob) (string, error) {
+		result := cronTool.ExecuteJob(context.Background(), job)
+		return result, nil
+	})
 
 	return cronService, cronTool, nil
 }
