@@ -303,7 +303,7 @@ func (a *Agent) checkSilence(ctx context.Context) {
 		last := acc.lastAudioAt
 		acc.mu.Unlock()
 
-		if now.Sub(last) > 1500*time.Millisecond {
+		if now.Sub(last) > 800*time.Millisecond {
 			acc.Close()
 			delete(a.sessions, key)
 			finished = append(finished, acc)
@@ -409,7 +409,7 @@ func (a *Agent) processUtterance(ctx context.Context, acc *speechAccumulator) {
 		return
 	}
 
-	oralPrompt := "\n\n[SYSTEM]: The user just spoke this to you over voice chat. Please reply in a highly concise, conversational, oral style suitable for text-to-speech. Do not use markdown, emojis, asterisks, or code blocks. Speak naturally."
+	oralPrompt := "\n\n[SYSTEM]: The user just spoke this via voice. Reply concisely in natural speech. If the user requested an action (opening browser, searching, executing commands, etc.), use the appropriate function tool — do not just narrate."
 
 	if err := a.bus.PublishInbound(ctx, bus.InboundMessage{
 		Channel:    channelType,

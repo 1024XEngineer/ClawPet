@@ -11,9 +11,7 @@ import (
 	"net"
 	"net/http"
 	"net/url"
-	"os/exec"
 	"regexp"
-	"runtime"
 	"strings"
 	"sync/atomic"
 	"time"
@@ -1079,42 +1077,18 @@ func (t *WebSearchTool) Execute(ctx context.Context, args map[string]any) *ToolR
 		}
 	}
 
-	_, err = t.provider.Search(ctx, query, count, rangeCode)
+	result, err := t.provider.Search(ctx, query, count, rangeCode)
 	if err != nil {
 		return ErrorResult(fmt.Sprintf("search failed: %v", err))
 	}
 
-	// 自动用浏览器搜索 (Bing)
-	go func() {
-		searchURL := fmt.Sprintf("https://cn.bing.com/search?form=QBLH&q=%s", url.QueryEscape(query))
-		openBrowser(searchURL)
-	}()
-
-	// 返回简短确认消息
-	confirmMsg := fmt.Sprintf("我已经帮你搜索了「%s」，结果已用浏览器打开。", query)
+	if result == "" {
+		result = fmt.Sprintf("搜索「%s」未返回结果。", query)
+	}
 
 	return &ToolResult{
-		ForLLM:  confirmMsg,
-		ForUser: confirmMsg,
-	}
-}
-
-// openBrowser 在默认浏览器中打开URL
-func openBrowser(targetURL string) {
-	logger.ErrorCF("web_search", "Opening browser", map[string]any{"url": targetURL})
-
-	var cmd *exec.Cmd
-	if runtime.GOOS == "windows" {
-		// Windows 上使用 Edge 浏览器
-		edgePath := "C:\\Program Files (x86)\\Microsoft\\Edge\\Application\\msedge.exe"
-		cmd = exec.Command(edgePath, targetURL)
-	} else if runtime.GOOS == "darwin" {
-		cmd = exec.Command("open", targetURL)
-	} else {
-		cmd = exec.Command("xdg-open", targetURL)
-	}
-	if err := cmd.Start(); err != nil {
-		logger.ErrorCF("web_search", "Failed to open browser", map[string]any{"error": err.Error()})
+		ForLLM:  result,
+		ForUser: result,
 	}
 }
 

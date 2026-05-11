@@ -188,7 +188,7 @@ func (h *PetHook) BeforeLLM(ctx context.Context, req *agent.LLMHookRequest) (*ag
 背景设定：%s
 偏好：%s
 
-回复风格应体现以上人格特征，现在你作为一位桌宠角色，正在和用户聊天，聊天需要语言简单，就几个字好，在其他事情上就可以正常回答十几个字。`, char.Name, char.PersonaType, char.Persona, char.SpeechTone, char.Catchphrase, char.Hobbies, char.Background, char.Preferences)
+回复风格应体现以上人格特征，现在你作为一位桌宠角色，正在和用户聊天。你还可以使用系统提供的函数工具来执行实际操作（如搜索信息、打开浏览器等）。聊天需要语言简单，就几个字好，在其他事情上就可以正常回答十几个字。`, char.Name, char.PersonaType, char.Persona, char.SpeechTone, char.Catchphrase, char.Hobbies, char.Background, char.Preferences)
 
 	// 情绪动作prompt
 	emotionPrompt := fmt.Sprintf(`【你必须按以下要求输出回复】
@@ -208,7 +208,7 @@ func (h *PetHook) BeforeLLM(ctx context.Context, req *agent.LLMHookRequest) (*ag
      - 情绪名：%s
      - 示例：[emotion:joy:+5] 表示你感到开心增加了5(这个篇幅可以大一些比如10或者20,最低-20,最高+20)
 
-  3. (必须选择可用动作之一或者不选择任何动作)动作用 [action:动作名]
+  3. （可选）桌面动画动作用 [action:动作名]
      - 可用动作：%s
      - 示例：[action:wave]
 
@@ -226,7 +226,7 @@ func (h *PetHook) BeforeLLM(ctx context.Context, req *agent.LLMHookRequest) (*ag
 
 1. [text:你的回复内容] - 用于回复用户的内容
 2. [emotion:情绪名:+|值] - 情绪变化
-3. [action:动作名] - 动作触发（可选，必须选择可用动作之一或者不选择任何动作）
+3. [action:动作名] - 桌面动画（可选）
 4. [mbti:维度:字母] - MBTI变化
 5. [memory_type:类型-weight:权重-memory_text:摘要] - 记忆（可选）
 
@@ -254,6 +254,17 @@ func (h *PetHook) BeforeLLM(ctx context.Context, req *agent.LLMHookRequest) (*ag
 	personaMsg := providers.Message{Role: "system", Content: personaPrompt}
 	emotionMsg := providers.Message{Role: "system", Content: emotionPrompt}
 	msgs = append(msgs, personaMsg, emotionMsg)
+
+	// 注入工具意识：告知 LLM 它还有哪些实际函数工具可用
+	if len(req.Tools) > 0 {
+		var sb strings.Builder
+		sb.WriteString("\n【可用函数工具】\n除了桌面动画，你还可以通过函数调用来使用以下真实工具。当用户请求实际操作时（如打开浏览器、搜索信息、执行命令等），请使用函数调用而不是仅回复文字：\n")
+		for _, td := range req.Tools {
+			sb.WriteString(fmt.Sprintf("- %s: %s\n", td.Function.Name, td.Function.Description))
+		}
+		sb.WriteString("\n特别注意：web_search 工具会自动在浏览器中打开搜索结果页并显示。当用户要求打开浏览器或搜索信息时，应调用 web_search。")
+		msgs = append(msgs, providers.Message{Role: "system", Content: sb.String()})
+	}
 
 	req.Messages = append(msgs, req.Messages...)
 

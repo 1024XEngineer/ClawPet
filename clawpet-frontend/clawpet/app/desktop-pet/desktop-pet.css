@@ -86,20 +86,21 @@
   left: 50%;
   transform: translateX(-50%);
   margin-top: -280px;
-  width: 180px;
+  width: 300px;
   background: rgba(255, 255, 255, 0.95);
-  border-radius: 12px;
-  padding: 8px 12px;
+  border-radius: 16px;
+  padding: 14px 20px;
   border: 2px solid #667eea;
-  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.15);
-  max-height: 400px;
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.18);
+  max-height: 600px;
   overflow-y: auto;
   z-index: 180;
   pointer-events: none;
-  font-size: 12px;
+  font-size: 14px;
   color: #444;
   text-align: center;
   word-break: break-word;
+  line-height: 1.6;
 }
 
 .desktop-pet-area {

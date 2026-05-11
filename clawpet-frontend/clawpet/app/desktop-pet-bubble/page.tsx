@@ -87,7 +87,7 @@ export default function DesktopPetBubblePage() {
       const duration =
         typeof payload?.duration_ms === "number" && payload.duration_ms > 0
           ? payload.duration_ms
-          : DEFAULT_DURATION_MS
+          : Math.max(3000, Math.min((nextText.length || 0) * 80, 30000))
 
       hideTimerRef.current = setTimeout(() => {
         setVisible(false)

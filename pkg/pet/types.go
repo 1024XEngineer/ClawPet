@@ -65,6 +65,7 @@ const (
 	ActionAudioFrame           = "audio_frame"             // 音频帧（语音输入）
 	ActionVoiceConfigGet       = "voice_config_get"        // 获取 voice 配置（model_name）
 	ActionVoiceConfigUpdate    = "voice_config_update"     // 更新 voice 配置（model_name）
+	ActionAudioDone            = "audio_done"              // 音频播放完成确认
 	PushTypeWeeklyReport  = "weekly_report_ready"
 	PushTypeProgressNudge = "progress_nudge"
 )

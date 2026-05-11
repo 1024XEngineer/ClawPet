@@ -181,12 +181,35 @@ export function ChatArea({ chat, layoutMode = "full" }: ChatAreaProps) {
                       }
                     }
 
-                    return messages.map((msg, index) => {
+                    const splitBubbles = (text: string): string[] => {
+                      const s = text.replace(/\r\n/g, "\n")
+                      const byDn = s.split(/\n\n+/).filter(Boolean)
+                      if (byDn.length > 1) return byDn
+                      const bySn = s.split(/\n+/).filter(Boolean)
+                      if (bySn.length > 1) return bySn
+                      const sentences = s.split(/(?<=[。！？.!?])/).map(x => x.trim()).filter(Boolean)
+                      if (sentences.length <= 1) return [s]
+                      const groups: string[] = []
+                      for (let i = 0; i < sentences.length; i += 3) {
+                        groups.push(sentences.slice(i, i + 3).join(""))
+                      }
+                      return groups
+                    }
+
+                    return messages.flatMap((msg, index) => {
                       const isLastAssistant =
                         msg.role === "assistant" && lastAssistantIndex === index
-                      return (
+
+                      const bubbles =
+                        msg.role === "assistant"
+                          ? splitBubbles(msg.content)
+                          : [msg.content]
+
+                      return bubbles.map((part, i) => {
+                        const partId = bubbles.length > 1 ? `${msg.id}-${i}` : msg.id
+                        return (
                     <div
-                      key={msg.id}
+                      key={partId}
                       className={cn(
                         "flex",
                         msg.role === "user" ? "justify-end" : "justify-start",
@@ -201,14 +224,15 @@ export function ChatArea({ chat, layoutMode = "full" }: ChatAreaProps) {
                         )}
                       >
                         <p className="whitespace-pre-wrap leading-7">
-                          {msg.content}
+                          {part}
+                          {isLastAssistant && i === bubbles.length - 1 && msg.streaming && isTyping && (
+                            <span className="ml-0.5 inline-block h-[1em] w-[2px] animate-pulse bg-amber-700/70 align-middle" />
+                          )}
                         </p>
-                        {isLastAssistant && msg.streaming && isTyping && (
-                          <div className="mt-1 text-xs text-[#7a5a3d]/70">思考中</div>
-                        )}
                       </div>
                     </div>
-                      )
+                        )
+                      })
                     })
                   })()}
 

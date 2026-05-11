@@ -1144,6 +1144,10 @@ export class PicoClawWebSocket {
     }
   }
 
+  sendPetRequest(action: string, data?: Record<string, unknown>): void {
+    this.sendRaw({ action, data } as PetRequest)
+  }
+
   subscribe(handler: WSEventHandler): () => void {
     this.handlers.add(handler)
     return () => this.handlers.delete(handler)

@@ -324,9 +324,10 @@ export default function DesktopPetPage() {
         tryPlayWithMime(0)
       } else {
         const hintedDuration = Number(data.duration_ms)
+        const readingTime = Math.max(3000, Math.min((data.text?.length || 0) * 80, 30000))
         const fallbackMs = Number.isFinite(hintedDuration) && hintedDuration > 0
           ? Math.min(Math.max(hintedDuration + 300, 1200), 20000)
-          : 10000
+          : readingTime
         bubbleTimerRef.current = setTimeout(() => {
           if (bubbleId === currentAudioIdRef.current) {
             setBubble("")

@@ -27,7 +27,7 @@ import (
 // 队列和超时配置默认值（当配置缺失时使用）
 const (
 	defaultAudioQueueSize   = 100             // 默认队列容量
-	defaultAudioWaitTimeout = 3 * time.Second // 默认等待超时（兜底）
+	defaultAudioWaitTimeout = 500 * time.Millisecond // 默认等待超时（兜底，前端应发 audio_done 替代）
 )
 
 // 语音分段符
@@ -48,6 +48,29 @@ func parsePureText(raw string) string {
 		}
 	}
 	return sb.String()
+}
+
+// splitSentences 按分隔符将文本分割成句子
+func splitSentences(text string) []string {
+	var sentences []string
+	runes := []rune(text)
+	start := 0
+	for i, r := range runes {
+		if strings.ContainsRune(voiceSegmentSeps, r) {
+			if i > start {
+				s := string(runes[start:i]) + string(r)
+				sentences = append(sentences, s)
+			}
+			start = i + 1
+		}
+	}
+	if start < len(runes) {
+		sentences = append(sentences, string(runes[start:]))
+	}
+	if len(sentences) == 0 {
+		sentences = append(sentences, text)
+	}
+	return sentences
 }
 
 func inferAudioMimeFromBytes(raw []byte) string {
@@ -105,6 +128,7 @@ type PetChannel struct {
 	cancel                context.CancelFunc  // 取消函数
 	service               *pet.PetService     // 桌宠服务
 	voiceSynthesizer      *voice.Synthesizer  // 语音合成器
+	activeStreamers       sync.Map            // sessionID → *petStreamer
 }
 
 // petConn 表示一个WebSocket连接
@@ -567,6 +591,11 @@ func (c *PetChannel) readLoop(pc *petConn) {
 
 // handleRequest 处理客户端请求
 func (c *PetChannel) handleRequest(pc *petConn, req Request) {
+	// 音频播放完成确认走快速路径，不经过 service
+	if req.Action == pet.ActionAudioDone {
+		c.handleAudioDone(pc.sessionID, req)
+		return
+	}
 	logger.Infof("pet: handleRequest called, action=%s, conn_id=%s", req.Action, pc.id)
 	c.service.HandleRequest(pc.id, req)
 }
@@ -667,6 +696,8 @@ func (c *PetChannel) BeginStream(ctx context.Context, sessionID string) (channel
 
 	// 启动音频播放控制 goroutine
 	go streamer.audioPlayLoop()
+
+	c.activeStreamers.Store(sessionID, streamer)
 
 	return streamer, nil
 }
@@ -775,6 +806,9 @@ func (s *petStreamer) Finalize(ctx context.Context, content string) error {
 	// 语音模式下 Update 不会持续推文本，这里补发纯文本，避免前端出现“无回复”。
 	s.chatID++
 	s.channel.sendStreamChunk(s.sessionID, s.chatID, "final", "", true)
+
+	// 从活跃流式映射中移除
+	s.channel.activeStreamers.Delete(s.sessionID)
 
 	return nil
 }
@@ -1358,6 +1392,26 @@ func (s *petStreamer) sendAudioSegmentAsync(seg *voice.AudioSegment, isFinal boo
 		s.waitTimer.Reset(defaultAudioWaitTimeout)
 	}
 	s.waitMu.Unlock()
+}
+
+// handleAudioDone 处理前端发起的 audio_done 请求
+func (c *PetChannel) handleAudioDone(sessionID string, req Request) {
+	var body struct {
+		Seq int64 `json:"seq"`
+	}
+	if req.Data != nil {
+		_ = json.Unmarshal(req.Data, &body)
+	}
+	val, ok := c.activeStreamers.Load(sessionID)
+	if !ok {
+		logger.DebugCF("pet", "handleAudioDone: no active streamer for session", map[string]any{
+			"session": sessionID,
+			"seq":     body.Seq,
+		})
+		return
+	}
+	streamer := val.(*petStreamer)
+	streamer.HandleAudioDone(body.Seq)
 }
 
 // HandleAudioDone 处理前端音频播放完毕的通知

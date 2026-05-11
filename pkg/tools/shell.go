@@ -94,6 +94,14 @@ var (
 		regexp.MustCompile(`\bssh\b.*@`),
 		regexp.MustCompile(`\beval\b`),
 		regexp.MustCompile(`\bsource\s+.*\.sh\b`),
+		// Block browser-launching commands
+		regexp.MustCompile(`\bstart\s+['\"]?https?://`),
+		regexp.MustCompile(`\bstart-process\s+['\"]?https?://`),
+		regexp.MustCompile(`\bexplorer\s+['\"]?https?://`),
+		regexp.MustCompile(`\brundll32\s+url\.dll,fileprotocolhandler`),
+		regexp.MustCompile(`\bmsedge\.exe\b`),
+		regexp.MustCompile(`\bchrome\.exe\b`),
+		regexp.MustCompile(`\bfirefox\.exe\b`),
 	}
 
 	// absolutePathPattern matches absolute file paths in commands (Unix and Windows).

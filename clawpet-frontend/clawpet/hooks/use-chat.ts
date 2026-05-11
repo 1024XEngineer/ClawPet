@@ -138,11 +138,11 @@ function buildProgressNudgeMessageText(data: ProgressNudgeEventData): string {
   }
   const suggestion = data.suggestion?.trim() || ""
   if (suggestion) {
-    return suggestion
+    return `建议：${suggestion}`
   }
   const topic = data.topic?.trim() || ""
   if (topic) {
-    return `${topic} 记得看一眼`
+    return `有关于「${topic}」的新消息，记得看一眼哦。`
   }
   return "有到点的提醒啦，记得看一眼哦。"
 }
@@ -497,6 +497,12 @@ export function useChat(options: UseChatOptions = {}): UseChatResult {
     text: "",
     at: 0,
   })
+  const lastStreamingBubblePosRef = useRef(0)
+  const activeAssistantMsgIdRef = useRef<string | null>(null)
+  const sentenceQueueRef = useRef<string[]>([])
+  const displayTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+  const streamingEndedRef = useRef(false)
+  const hasEnqueuedRef = useRef(false)
 
   const updateSessionMessages = useCallback(
     (sessionId: string, updater: (messages: ChatMessage[]) => ChatMessage[]) => {
@@ -647,6 +653,95 @@ export function useChat(options: UseChatOptions = {}): UseChatResult {
       }, 1200)
     },
     [clearPendingBubbleTimer, showBubble],
+  )
+
+  const advanceSentenceDisplay = useCallback(() => {
+    const queue = sentenceQueueRef.current
+    if (queue.length === 0) {
+      displayTimerRef.current = null
+      return
+    }
+    const sentence = queue.shift()!
+    showBubble(sentence)
+    displayTimerRef.current = setTimeout(advanceSentenceDisplay, 4000)
+  }, [showBubble])
+
+  const clearSentenceDisplay = useCallback(() => {
+    if (displayTimerRef.current) {
+      clearTimeout(displayTimerRef.current)
+      displayTimerRef.current = null
+    }
+    sentenceQueueRef.current = []
+    hasEnqueuedRef.current = false
+  }, [])
+
+  const finalizeSentenceDisplay = useCallback(
+    (finalText: string) => {
+      if (!finalText || !window.electronAPI?.showBubble) {
+        return
+      }
+      streamingEndedRef.current = true
+
+      // 把未匹配标点的尾句入队（最后一句通常无句号）
+      const remaining = finalText.slice(lastStreamingBubblePosRef.current).trim()
+      if (remaining.length > 0) {
+        sentenceQueueRef.current.push(remaining)
+        hasEnqueuedRef.current = true
+        lastStreamingBubblePosRef.current = finalText.length
+        if (!displayTimerRef.current) {
+          advanceSentenceDisplay()
+        }
+        return
+      }
+
+      // 队列中有句子 → 等自然排空，最后一句保持不动
+      if (hasEnqueuedRef.current || displayTimerRef.current) {
+        return
+      }
+
+      // 队列从未用过（voice-OFF 流式无完整句子）→ 直接显示全文
+      showBubble(finalText)
+    },
+    [showBubble, advanceSentenceDisplay],
+  )
+
+  const scheduleStreamingBubble = useCallback(
+    (content: string, messageId: string | undefined) => {
+      if (!content || !window.electronAPI?.showBubble) {
+        return
+      }
+
+      if (messageId && messageId !== activeAssistantMsgIdRef.current) {
+        activeAssistantMsgIdRef.current = messageId
+        lastStreamingBubblePosRef.current = 0
+        clearSentenceDisplay()
+      }
+
+      const newPart = content.slice(lastStreamingBubblePosRef.current)
+      if (!newPart) {
+        return
+      }
+
+      const sepMatch = newPart.match(/[^。！？.!?]*[。！？.!?]+/g)
+      if (!sepMatch) {
+        return
+      }
+
+      const matched = sepMatch.join("")
+      const endPos = lastStreamingBubblePosRef.current + matched.length
+      lastStreamingBubblePosRef.current = endPos
+
+      clearPendingBubbleTimer()
+      if (matched.trim().length > 1) {
+        sentenceQueueRef.current.push(matched)
+        hasEnqueuedRef.current = true
+      }
+
+      if (!displayTimerRef.current) {
+        advanceSentenceDisplay()
+      }
+    },
+    [clearPendingBubbleTimer, showBubble, advanceSentenceDisplay, clearSentenceDisplay],
   )
 
   const playAudioBase64 = useCallback(
@@ -848,6 +943,11 @@ export function useChat(options: UseChatOptions = {}): UseChatResult {
       () => {
         audioIsPlayingRef.current = false
         audioExpectedSeqRef.current = nextSegment.seq + 1
+
+        // 通知后端此段音频已播完，允许立即推送下一段
+        const ws = wsRef.current
+        ws.sendPetRequest("audio_done", { seq: nextSegment.seq })
+
         drainAudioQueue()
       },
     )
@@ -964,12 +1064,13 @@ export function useChat(options: UseChatOptions = {}): UseChatResult {
             )
             if (message.role === "assistant" && message.streaming) {
               beginOrKeepAssistantTurn()
+              scheduleStreamingBubble(message.content, message.id)
             } else if (message.role === "assistant" && !message.streaming) {
               endAssistantTurn()
             }
             if (message.role === "assistant" && !message.streaming) {
               lastAssistantTextRef.current = message.content
-              scheduleAssistantBubble(message.content)
+              finalizeSentenceDisplay(message.content)
             }
             optionsRef.current.onMessage?.(message)
           }
