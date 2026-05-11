@@ -8,6 +8,7 @@ declare global {
     animation?: string
     animationHints?: string[]
     audio?: string
+    audio_mime?: string
     duration_ms?: number
   }
 

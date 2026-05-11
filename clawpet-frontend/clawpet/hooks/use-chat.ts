@@ -97,6 +97,23 @@ interface ResolvedAudioChunkPayload {
   audioMime?: string
 }
 
+function estimateBubblePlaybackMs(
+  text: string,
+  explicitDurationMs?: number,
+): number {
+  if (Number.isFinite(explicitDurationMs) && (explicitDurationMs || 0) > 0) {
+    return Math.min(Math.max((explicitDurationMs || 0) + 240, 900), 20000)
+  }
+
+  const normalizedText = text.trim()
+  if (!normalizedText) {
+    return 1800
+  }
+
+  const estimated = 1200 + normalizedText.length * 180
+  return Math.min(Math.max(estimated, 1800), 14000)
+}
+
 interface ToolStatusEventData {
   status?: "busy" | "done" | "error"
   text?: string
@@ -595,20 +612,35 @@ export function useChat(options: UseChatOptions = {}): UseChatResult {
   }, [])
 
   const showBubble = useCallback(
-    (text: string | null, audio?: string, durationMs?: number) => {
+    (
+      payloadOrText: BubblePayload | string | null,
+      audio?: string,
+      durationMs?: number,
+    ) => {
+      const payload =
+        payloadOrText && typeof payloadOrText === "object"
+          ? payloadOrText
+          : {
+              text: payloadOrText,
+              emotion: lastEmotionRef.current,
+              animation: lastActionRef.current || undefined,
+              audio,
+              duration_ms:
+                typeof durationMs === "number" ? durationMs : undefined,
+            }
+
       lastBubbleTextRef.current = {
-        text: text?.trim() || "",
+        text: payload.text?.trim() || "",
         at: Date.now(),
       }
-      const animation = lastActionRef.current || undefined
+      if (!payload.emotion) {
+        payload.emotion = lastEmotionRef.current
+      }
+      if (!payload.animation && lastActionRef.current) {
+        payload.animation = lastActionRef.current
+      }
       lastActionRef.current = ""
-      window.electronAPI?.showBubble?.({
-        text,
-        emotion: lastEmotionRef.current,
-        animation,
-        audio,
-        duration_ms: typeof durationMs === "number" ? durationMs : undefined,
-      })
+      window.electronAPI?.showBubble?.(payload)
     },
     [],
   )
@@ -644,7 +676,7 @@ export function useChat(options: UseChatOptions = {}): UseChatResult {
           showBubble(bubbleText)
         }
         pendingBubbleTimerRef.current = null
-      }, 1200)
+      }, 180)
     },
     [clearPendingBubbleTimer, showBubble],
   )
@@ -676,12 +708,37 @@ export function useChat(options: UseChatOptions = {}): UseChatResult {
         at: Date.now(),
       }
 
+      let settled = false
+      const settleOnce = () => {
+        if (!settled) {
+          settled = true
+          onSettled?.()
+        }
+      }
+
       clearPendingBubbleTimer()
 
       if (window.electronAPI?.showBubble) {
-        // Keep bubble text sync, but always play audio via HTMLAudio to ensure
-        // deterministic ordered playback in chat runtime.
-        showBubble(bubbleText ?? (lastAssistantTextRef.current || null), undefined, durationMs)
+        const syncedText = bubbleText ?? (lastAssistantTextRef.current || null)
+        const settleDelay = estimateBubblePlaybackMs(
+          syncedText || "",
+          durationMs,
+        )
+        clearAudioAdvanceTimer()
+        showBubble({
+          text: syncedText,
+          emotion: lastEmotionRef.current,
+          animation: lastActionRef.current || undefined,
+          audio: audioBase64,
+          audio_mime: audioMimeHint,
+          duration_ms: settleDelay,
+        })
+        lastActionRef.current = ""
+        audioAdvanceTimerRef.current = setTimeout(() => {
+          audioAdvanceTimerRef.current = null
+          settleOnce()
+        }, settleDelay)
+        return
       }
 
       const decoded = decodeBase64Chunk(audioBase64)
@@ -723,14 +780,6 @@ export function useChat(options: UseChatOptions = {}): UseChatResult {
       }
       if (currentAudioRef.current) {
         currentAudioRef.current.pause()
-      }
-
-      let settled = false
-      const settleOnce = () => {
-        if (!settled) {
-          settled = true
-          onSettled?.()
-        }
       }
 
       const tryPlayWithMime = (index: number) => {
@@ -1044,6 +1093,9 @@ export function useChat(options: UseChatOptions = {}): UseChatResult {
               typeof event.data === "string" ? event.data === "true" : true
             if (typing) {
               beginOrKeepAssistantTurn()
+              if (window.electronAPI?.showBubble) {
+                showBubble("我在整理回复，马上回来。", undefined, 1800)
+              }
             } else {
               finalizeStreamingAssistantMessages()
               endAssistantTurn()
@@ -1057,6 +1109,15 @@ export function useChat(options: UseChatOptions = {}): UseChatResult {
           if (status === "busy" || status === "done" || status === "error") {
             beginOrKeepAssistantTurn()
             setToolStatus(status)
+            if (window.electronAPI?.showBubble) {
+              const fallbackText =
+                status === "error"
+                  ? "工具调用失败，正在恢复。"
+                  : status === "done"
+                    ? "工具调用完成，正在整理结果。"
+                    : "我正在调用工具处理你的请求。"
+              showBubble(data.text?.trim() || fallbackText, undefined, 2200)
+            }
           }
           break
         }
@@ -1221,6 +1282,9 @@ export function useChat(options: UseChatOptions = {}): UseChatResult {
         setIsTurnActive(true)
         setToolStatus("idle")
         setError(null)
+        if (window.electronAPI?.showBubble) {
+          showBubble("收到，正在处理你的请求。", undefined, 1600)
+        }
 
         wsRef.current.send(outbound, activeSessionIdRef.current)
       } catch (err) {

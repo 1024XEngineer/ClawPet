@@ -203,6 +203,14 @@ contextBridge.exposeInMainWorld('electronAPI', {
   onBubbleShow: (callback) => {
     ipcRenderer.on('bubble-show', (_event, data) => callback(data));
   },
+
+  onForceStopMedia: (callback) => {
+    const listener = () => callback();
+    ipcRenderer.on('force-stop-media', listener);
+    return () => {
+      ipcRenderer.removeListener('force-stop-media', listener);
+    };
+  },
   
   /**
    * 监听连接活跃状态
