@@ -296,7 +296,11 @@ export class PicoClawWebSocket {
         candidate.authMode === "launcher"
           ? withLauncherAuthRequest(endpoint, { method: "GET" })
           : { method: "GET", credentials: "omit" }
+      const controller = new AbortController()
+      const timeoutId = setTimeout(() => controller.abort(), 5000)
+      requestInit.signal = controller.signal
       const res = await fetch(endpoint, requestInit).catch(() => null)
+      clearTimeout(timeoutId)
 
       if (!res) {
         lastError = `Token endpoint failed (${candidate.tokenPath}): network error`
@@ -1365,6 +1369,10 @@ export class PicoClawWebSocket {
   async disableCronJob(jobId: string): Promise<PetResponse> {
     return this.requestAction("cron_disable", { job_id: jobId })
   }
+
+  async updateCronJob(data: CronUpdateRequest): Promise<PetResponse> {
+    return this.requestAction("cron_update", data)
+  }
 }
 
 export interface VoiceModelData {
@@ -1477,18 +1485,25 @@ export interface UpdateModelRequest {
 export interface CronJobInfo {
   id: string
   name: string
+  description?: string
   enabled: boolean
+  schedule_type?: string
   schedule_kind: "at" | "every" | "cron"
+  schedule?: string
   every_ms: number | null
+  every_seconds?: number | null
   cron_expr: string | null
   at_ms: number | null
   message: string
+  command?: string
   channel: string
   to: string
   next_run_at_ms: number | null
   last_run_at_ms: number | null
   last_status: string
+  last_error?: string
   created_at_ms: number
+  updated_at_ms?: number
 }
 
 export interface CronListResponse {
@@ -1498,14 +1513,38 @@ export interface CronListResponse {
 export interface CronAddResponse {
   job_id: string
   name: string
+  job?: CronJobInfo
 }
 
 export interface CronAddRequest {
   name: string
   message: string
+  description?: string
+  schedule_type?: string
   at_seconds?: number
   every_seconds?: number
   cron_expr?: string
+  at_ms?: number
+  command?: string
+  enabled?: boolean
+  channel?: string
+  to?: string
+}
+
+export interface CronUpdateRequest {
+  job_id: string
+  name?: string
+  message?: string
+  description?: string
+  schedule_type?: string
+  at_seconds?: number
+  every_seconds?: number
+  cron_expr?: string
+  at_ms?: number
+  command?: string
+  enabled?: boolean
+  channel?: string
+  to?: string
 }
 
 let wsInstance: PicoClawWebSocket | null = null

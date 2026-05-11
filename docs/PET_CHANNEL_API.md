@@ -1667,14 +1667,8 @@ WebSocket 连接: session=user_001
   "action": "cron_add",
   "data": {
     "name": "开会提醒",
-    "description": "10分钟后要开会了",
     "message": "10分钟后要开会了",
-    "schedule_type": "at",
-    "at_ms": 1713001234567,
-    "command": "",
-    "enabled": true,
-    "channel": "pet",
-    "to": "default"
+    "at_seconds": 600
   }
 }
 ```
@@ -1687,27 +1681,7 @@ WebSocket 连接: session=user_001
   "action": "cron_add",
   "data": {
     "job_id": "abc123def456",
-    "name": "开会提醒",
-    "job": {
-      "id": "abc123def456",
-      "name": "开会提醒",
-      "description": "10分钟后要开会了",
-      "message": "10分钟后要开会了",
-      "enabled": true,
-      "schedule_type": "at",
-      "schedule_kind": "at",
-      "schedule": "at:1713001234567",
-      "at_ms": 1713001234567,
-      "command": "",
-      "channel": "pet",
-      "to": "default",
-      "next_run_at_ms": 1713001234567,
-      "last_run_at_ms": null,
-      "last_status": "",
-      "last_error": "",
-      "created_at_ms": 1713000634567,
-      "updated_at_ms": 1713000634567
-    }
+    "name": "开会提醒"
   }
 }
 ```
@@ -1717,90 +1691,18 @@ WebSocket 连接: session=user_001
 | 字段 | 类型 | 必填 | 说明 |
 |------|------|------|------|
 | name | string | 是 | 任务名称 |
-| description | string | 否 | 展示描述；如果未提供 `message`，后端会回退使用该字段 |
-| message | string | 否 | 触发时发送的消息内容；与 `description` 至少提供一个 |
-| schedule_type | string | 否 | 调度类型：`at` / `every` / `cron` |
-| schedule | string | 否 | 统一计划字段；当前主要用于兼容 cron 文本计划 |
-| at_seconds | int | 否 | 一次性任务：从现在起多少秒后触发（兼容旧字段） |
-| at_ms | int | 否 | 一次性任务：绝对触发时间戳（毫秒） |
-| every_seconds | int | 否 | 周期性任务：每多少秒执行一次 |
-| cron_expr | string | 否 | Cron 表达式：如 `"0 9 * * *"` 表示每天 9 点执行 |
-| command | string | 否 | 可选命令；不为空时任务触发后会执行命令 |
-| enabled | bool | 否 | 创建后是否启用，默认 true |
-| channel | string | 否 | 目标渠道，默认 `pet` |
-| to | string | 否 | 目标接收者/会话，默认当前 session |
+| message | string | 是 | 触发时发送的消息内容 |
+| at_seconds | int | 否 | 一次性任务：从现在起多少秒后触发（与 every_seconds/cron_expr 互斥） |
+| every_seconds | int | 否 | 周期性任务：每多少秒执行一次（与 at_seconds/cron_expr 互斥） |
+| cron_expr | string | 否 | Cron 表达式：如 `"0 9 * * *"` 表示每天 9 点执行（与 at_seconds/every_seconds 互斥） |
 
 **任务类型说明**：
 
 | 类型 | 字段 | 示例 | 说明 |
 |------|------|------|------|
-| 一次性 | `at_ms` / `at_seconds` | `1713001234567` / `600` | 到点后执行一次，然后自动删除 |
+| 一次性 | `at_seconds` | `600` | 600 秒后执行一次，然后自动删除 |
 | 周期性 | `every_seconds` | `3600` | 每 3600 秒（1 小时）执行一次 |
 | Cron | `cron_expr` | `"0 9 * * *"` | 每天 9:00 执行 |
-
----
-
-### 4.17.1 cron_update - 更新定时任务
-
-更新一个已有的定时任务。当前实现支持修改名称、消息、调度方式、命令、目标渠道、目标接收者和启用状态。
-
-**请求**：
-
-```json
-{
-  "action": "cron_update",
-  "data": {
-    "job_id": "abc123def456",
-    "name": "开会提醒（更新）",
-    "description": "每 5 分钟提醒一次",
-    "schedule_type": "every",
-    "every_seconds": 300,
-    "command": "",
-    "enabled": true,
-    "channel": "pet",
-    "to": "default"
-  }
-}
-```
-
-**响应**：
-
-```json
-{
-  "status": "ok",
-  "action": "cron_update",
-  "data": {
-    "job": {
-      "id": "abc123def456",
-      "name": "开会提醒（更新）",
-      "description": "每 5 分钟提醒一次",
-      "message": "每 5 分钟提醒一次",
-      "enabled": true,
-      "schedule_type": "every",
-      "schedule_kind": "every",
-      "schedule": "every:300",
-      "every_ms": 300000,
-      "every_seconds": 300,
-      "command": "",
-      "channel": "pet",
-      "to": "default",
-      "next_run_at_ms": 1713004234567,
-      "last_run_at_ms": 1713000634567,
-      "last_status": "ok",
-      "last_error": "",
-      "created_at_ms": 1713000634567,
-      "updated_at_ms": 1713000834567
-    }
-  }
-}
-```
-
-**字段说明**：
-
-| 字段 | 类型 | 必填 | 说明 |
-|------|------|------|------|
-| job_id | string | 是 | 要更新的任务 ID |
-| 其余字段 | 同 `cron_add` | 否 | 仅更新请求中显式提供的字段 |
 
 ---
 
@@ -1830,43 +1732,30 @@ WebSocket 连接: session=user_001
       {
         "id": "abc123def456",
         "name": "开会提醒",
-        "description": "10分钟后要开会了",
-        "message": "10分钟后要开会了",
         "enabled": true,
-        "schedule_type": "at",
         "schedule_kind": "at",
-        "schedule": "at:1713001234567",
         "at_ms": 1713001234567,
-        "command": "",
+        "message": "10分钟后要开会了",
         "channel": "pet",
         "to": "default",
         "next_run_at_ms": 1713001234567,
         "last_run_at_ms": null,
         "last_status": "",
-        "last_error": "",
-        "created_at_ms": 1713000634567,
-        "updated_at_ms": 1713000634567
+        "created_at_ms": 1713000634567
       },
       {
         "id": "xyz789ghi012",
         "name": "每小时提醒",
-        "description": "站起来活动一下吧",
-        "message": "站起来活动一下吧",
         "enabled": true,
-        "schedule_type": "every",
         "schedule_kind": "every",
-        "schedule": "every:3600",
         "every_ms": 3600000,
-        "every_seconds": 3600,
-        "command": "",
+        "message": "站起来活动一下吧",
         "channel": "pet",
         "to": "default",
         "next_run_at_ms": 1713004234567,
         "last_run_at_ms": 1713000634567,
         "last_status": "ok",
-        "last_error": "",
-        "created_at_ms": 1713000634567,
-        "updated_at_ms": 1713000634567
+        "created_at_ms": 1713000634567
       }
     ]
   }
@@ -1886,25 +1775,18 @@ WebSocket 连接: session=user_001
 | jobs | array | 任务列表 |
 | jobs[].id | string | 任务ID |
 | jobs[].name | string | 任务名称 |
-| jobs[].description | string | 展示描述 |
-| jobs[].message | string | 触发时发送的消息 |
 | jobs[].enabled | bool | 是否启用 |
-| jobs[].schedule_type | string | 统一调度类型：`at` / `every` / `cron` |
 | jobs[].schedule_kind | string | 调度类型：`at`(一次性) / `every`(周期性) / `cron`(Cron 表达式) |
-| jobs[].schedule | string | 统一计划字段，便于前端直接展示 |
 | jobs[].at_ms | int | 一次性任务触发时间戳（毫秒） |
 | jobs[].every_ms | int | 周期性任务间隔（毫秒） |
-| jobs[].every_seconds | int | 周期性任务间隔（秒） |
 | jobs[].cron_expr | string | Cron 表达式 |
-| jobs[].command | string | 命令内容（如有） |
+| jobs[].message | string | 触发时发送的消息 |
 | jobs[].channel | string | 目标渠道（通常为 `pet`） |
 | jobs[].to | string | 目标接收者（session ID） |
 | jobs[].next_run_at_ms | int | 下次触发时间戳（毫秒） |
 | jobs[].last_run_at_ms | int | 上次触发时间戳（毫秒） |
 | jobs[].last_status | string | 上次执行状态：`ok` / `error` |
-| jobs[].last_error | string | 上次错误信息 |
 | jobs[].created_at_ms | int | 创建时间戳（毫秒） |
-| jobs[].updated_at_ms | int | 更新时间戳（毫秒） |
 
 ---
 
@@ -1968,27 +1850,7 @@ WebSocket 连接: session=user_001
   "action": "cron_enable",
   "data": {
     "job_id": "abc123def456",
-    "enabled": true,
-    "job": {
-      "id": "abc123def456",
-      "name": "开会提醒",
-      "description": "10分钟后要开会了",
-      "message": "10分钟后要开会了",
-      "enabled": true,
-      "schedule_type": "at",
-      "schedule_kind": "at",
-      "schedule": "at:1713001234567",
-      "at_ms": 1713001234567,
-      "command": "",
-      "channel": "pet",
-      "to": "default",
-      "next_run_at_ms": 1713001234567,
-      "last_run_at_ms": null,
-      "last_status": "",
-      "last_error": "",
-      "created_at_ms": 1713000634567,
-      "updated_at_ms": 1713000634567
-    }
+    "enabled": true
   }
 }
 ```
@@ -2026,27 +1888,7 @@ WebSocket 连接: session=user_001
   "action": "cron_disable",
   "data": {
     "job_id": "abc123def456",
-    "enabled": false,
-    "job": {
-      "id": "abc123def456",
-      "name": "开会提醒",
-      "description": "10分钟后要开会了",
-      "message": "10分钟后要开会了",
-      "enabled": false,
-      "schedule_type": "at",
-      "schedule_kind": "at",
-      "schedule": "at:1713001234567",
-      "at_ms": 1713001234567,
-      "command": "",
-      "channel": "pet",
-      "to": "default",
-      "next_run_at_ms": null,
-      "last_run_at_ms": null,
-      "last_status": "",
-      "last_error": "",
-      "created_at_ms": 1713000634567,
-      "updated_at_ms": 1713000634567
-    }
+    "enabled": false
   }
 }
 ```

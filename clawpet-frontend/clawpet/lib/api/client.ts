@@ -643,26 +643,40 @@ export type CronScheduleType = 'cron' | 'every' | 'at'
 export interface CronJob {
   id: string
   name: string
+  description?: string
   enabled: boolean
   schedule_kind: 'at' | 'every' | 'cron'
+  schedule_type?: string
+  schedule?: string
   every_ms: number | null
+  every_seconds?: number | null
   cron_expr: string | null
   at_ms: number | null
   message: string
+  command?: string
   channel: string
   to: string
   next_run_at_ms: number | null
   last_run_at_ms: number | null
   last_status: string
+  last_error?: string
   created_at_ms: number
+  updated_at_ms?: number
 }
 
 export interface CronJobInput {
   name: string
   message: string
+  description?: string
+  schedule_type?: string
   at_seconds?: number
   every_seconds?: number
   cron_expr?: string
+  at_ms?: number
+  command?: string
+  enabled?: boolean
+  channel?: string
+  to?: string
 }
 
 // 配置 API

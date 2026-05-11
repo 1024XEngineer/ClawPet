@@ -394,9 +394,17 @@ func (t *CronTool) ExecuteJob(ctx context.Context, job *cron.CronJob) (string, e
 		channel,
 		chatID,
 	)
-	if err != nil {
-		return "", err
-	}
+		if err != nil {
+			fmt.Printf("[cron] LLM processing failed for job '%s', delivering raw message: %v\n", job.Name, err)
+			pubCtx, pubCancel := context.WithTimeout(context.Background(), 5*time.Second)
+			defer pubCancel()
+			t.msgBus.PublishOutbound(pubCtx, bus.OutboundMessage{
+				Channel: channel,
+				ChatID:  chatID,
+				Content: job.Payload.Message,
+			})
+			return "ok", nil
+		}
 
 	if response != "" {
 		t.executor.PublishResponseIfNeeded(ctx, channel, chatID, response)

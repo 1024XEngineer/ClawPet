@@ -171,7 +171,7 @@ export function useCronJobs() {
     const ws = getWebSocketInstance()
     const resp = await ws.listCronJobs()
     return resp.data ?? { jobs: [] }
-  }, { refreshInterval: 10000 })
+  }, { refreshInterval: 5000 })
 }
 
 // 配置管理

@@ -559,6 +559,15 @@ func (s *PetService) isCurrentSessionBusy(now time.Time) bool {
 	return now.Sub(s.lastSessionActiveAt) < 90*time.Second
 }
 
+func (s *PetService) TriggerTaskDeadlineReminderWithRetry(sessionID string, jobID string, delay time.Duration) error {
+	if s.proactiveManager == nil {
+		return fmt.Errorf("proactive manager not initialized")
+	}
+	reason := "task_deadline:" + jobID
+	_ = s.proactiveManager.EvaluateNow(reason)
+	return nil
+}
+
 func (s *PetService) EvaluateTaskDeadlineReminder(sessionID string, jobID string, retryCount int) proactive.EvaluationResult {
 	if sessionID != "" {
 		s.markSessionInteraction(sessionID)
@@ -681,6 +690,8 @@ func (s *PetService) HandleRequest(connID string, req Request) error {
 		return s.handleModelSetDefault(sessionID, req)
 	case ActionCronAdd:
 		return s.handleCronAdd(sessionID, req)
+	case ActionCronUpdate:
+		return s.handleCronUpdate(sessionID, req)
 	case ActionCronList:
 		return s.handleCronList(sessionID, req)
 	case ActionCronRemove:
@@ -1556,12 +1567,27 @@ func (s *PetService) handleCronAdd(sessionID string, req Request) error {
 	if r.Name == "" {
 		return s.sendError(sessionID, req.Action, "name is required")
 	}
-	if r.Message == "" {
-		return s.sendError(sessionID, req.Action, "message is required")
+	message := r.Message
+	if message == "" {
+		message = r.Description
+	}
+	if message == "" {
+		return s.sendError(sessionID, req.Action, "message or description is required")
+	}
+
+	channel := r.Channel
+	if channel == "" {
+		channel = "pet"
+	}
+	to := r.To
+	if to == "" {
+		to = sessionID
 	}
 
 	var schedule cron.CronSchedule
-	if r.AtSeconds > 0 {
+	if r.AtMS != nil && *r.AtMS > 0 {
+		schedule = cron.CronSchedule{Kind: "at", AtMS: r.AtMS}
+	} else if r.AtSeconds > 0 {
 		atMS := time.Now().UnixMilli() + r.AtSeconds*1000
 		schedule = cron.CronSchedule{Kind: "at", AtMS: &atMS}
 	} else if r.EverySeconds > 0 {
@@ -1570,18 +1596,81 @@ func (s *PetService) handleCronAdd(sessionID string, req Request) error {
 	} else if r.CronExpr != "" {
 		schedule = cron.CronSchedule{Kind: "cron", Expr: r.CronExpr}
 	} else {
-		return s.sendError(sessionID, req.Action, "one of at_seconds, every_seconds, or cron_expr is required")
+		return s.sendError(sessionID, req.Action, "one of at_seconds/at_ms, every_seconds, or cron_expr is required")
 	}
 
-	job, err := s.cronService.AddJob(r.Name, schedule, r.Message, "pet", sessionID)
+	job, err := s.cronService.AddJob(r.Name, schedule, message, channel, to)
 	if err != nil {
 		return s.sendError(sessionID, req.Action, fmt.Sprintf("failed to add cron job: %v", err))
 	}
+	if r.Description != "" {
+		job.Payload.Description = r.Description
+	}
+	if r.Command != "" {
+		job.Payload.Command = r.Command
+	}
+	if r.Description != "" || r.Command != "" {
+		_ = s.cronService.UpdateJob(job)
+	}
+	enabled := true
+	if r.Enabled != nil {
+		enabled = *r.Enabled
+	}
+	if !enabled {
+		s.cronService.EnableJob(job.ID, false)
+	}
 
+	info := toCronJobInfo(job)
 	return s.sendResponse(sessionID, req.Action, CronAddResponse{
 		JobID: job.ID,
 		Name:  job.Name,
+		Job:   info,
 	})
+}
+
+func toCronJobInfo(job *cron.CronJob) *CronJobInfo {
+	if job == nil {
+		return nil
+	}
+	info := &CronJobInfo{
+		ID:           job.ID,
+		Name:         job.Name,
+		Description:  job.Payload.Description,
+		Enabled:      job.Enabled,
+		ScheduleKind: job.Schedule.Kind,
+		EveryMS:      job.Schedule.EveryMS,
+		CronExpr:     job.Schedule.Expr,
+		AtMS:         job.Schedule.AtMS,
+		Message:      job.Payload.Message,
+		Command:      job.Payload.Command,
+		Channel:      job.Payload.Channel,
+		To:           job.Payload.To,
+		NextRunAtMS:  job.State.NextRunAtMS,
+		LastRunAtMS:  job.State.LastRunAtMS,
+		LastStatus:   job.State.LastStatus,
+		LastError:    job.State.LastError,
+		CreatedAtMS:  job.CreatedAtMS,
+		UpdatedAtMS:  job.UpdatedAtMS,
+	}
+	if job.Schedule.EveryMS != nil {
+		everySec := *job.Schedule.EveryMS / 1000
+		info.EverySeconds = &everySec
+	}
+	// Build schedule label
+	switch job.Schedule.Kind {
+	case "at":
+		if job.Schedule.AtMS != nil {
+			info.Schedule = fmt.Sprintf("at:%d", *job.Schedule.AtMS)
+		}
+	case "every":
+		if job.Schedule.EveryMS != nil {
+			info.Schedule = fmt.Sprintf("every:%d", *job.Schedule.EveryMS)
+		}
+	case "cron":
+		info.Schedule = fmt.Sprintf("cron:%s", job.Schedule.Expr)
+	}
+	info.ScheduleType = job.Schedule.Kind
+	return info
 }
 
 func (s *PetService) handleCronList(sessionID string, req Request) error {
@@ -1603,22 +1692,10 @@ func (s *PetService) handleCronList(sessionID string, req Request) error {
 
 	var jobInfos []CronJobInfo
 	for _, job := range jobs {
-		jobInfos = append(jobInfos, CronJobInfo{
-			ID:           job.ID,
-			Name:         job.Name,
-			Enabled:      job.Enabled,
-			ScheduleKind: job.Schedule.Kind,
-			EveryMS:      job.Schedule.EveryMS,
-			CronExpr:     job.Schedule.Expr,
-			AtMS:         job.Schedule.AtMS,
-			Message:      job.Payload.Message,
-			Channel:      job.Payload.Channel,
-			To:           job.Payload.To,
-			NextRunAtMS:  job.State.NextRunAtMS,
-			LastRunAtMS:  job.State.LastRunAtMS,
-			LastStatus:   job.State.LastStatus,
-			CreatedAtMS:  job.CreatedAtMS,
-		})
+		info := toCronJobInfo(&job)
+		if info != nil {
+			jobInfos = append(jobInfos, *info)
+		}
 	}
 
 	return s.sendResponse(sessionID, req.Action, CronListResponse{Jobs: jobInfos})
@@ -1645,6 +1722,90 @@ func (s *PetService) handleCronRemove(sessionID string, req Request) error {
 	return s.sendResponse(sessionID, req.Action, map[string]string{"job_id": r.JobID})
 }
 
+func (s *PetService) handleCronUpdate(sessionID string, req Request) error {
+	if s.cronService == nil {
+		return s.sendError(sessionID, req.Action, "cron service not initialized")
+	}
+
+	var r CronUpdateRequest
+	if err := json.Unmarshal(req.Data, &r); err != nil {
+		return s.sendError(sessionID, req.Action, "invalid cron update data")
+	}
+
+	if r.JobID == "" {
+		return s.sendError(sessionID, req.Action, "job_id is required")
+	}
+
+	// 先获取原任务
+	oldJob := s.cronService.GetJob(r.JobID)
+	if oldJob == nil {
+		return s.sendError(sessionID, req.Action, fmt.Sprintf("job %s not found", r.JobID))
+	}
+
+	// 原地更新字段
+	if r.Name != "" {
+		oldJob.Name = r.Name
+	}
+	if r.Description != "" {
+		oldJob.Payload.Description = r.Description
+	}
+	message := r.Message
+	if message == "" {
+		message = r.Description
+	}
+	if message != "" {
+		oldJob.Payload.Message = message
+	}
+	if r.Command != "" {
+		oldJob.Payload.Command = r.Command
+	}
+	if r.Channel != "" {
+		oldJob.Payload.Channel = r.Channel
+	}
+	if r.To != "" {
+		oldJob.Payload.To = r.To
+	}
+	if r.Enabled != nil {
+		oldJob.Enabled = *r.Enabled
+	}
+
+	// 更新调度
+	if r.AtMS != nil && *r.AtMS > 0 {
+		oldJob.Schedule = cron.CronSchedule{Kind: "at", AtMS: r.AtMS}
+	} else if r.AtSeconds > 0 {
+		atMS := time.Now().UnixMilli() + r.AtSeconds*1000
+		oldJob.Schedule = cron.CronSchedule{Kind: "at", AtMS: &atMS}
+	} else if r.EverySeconds > 0 {
+		everyMS := r.EverySeconds * 1000
+		oldJob.Schedule = cron.CronSchedule{Kind: "every", EveryMS: &everyMS}
+	} else if r.CronExpr != "" {
+		oldJob.Schedule = cron.CronSchedule{Kind: "cron", Expr: r.CronExpr}
+	}
+
+	if err := s.cronService.UpdateJob(oldJob); err != nil {
+		return s.sendError(sessionID, req.Action, fmt.Sprintf("failed to update cron job: %v", err))
+	}
+
+	// 如果 enabled 被设为 false，额外调用 Disable 以确保状态更新
+	if r.Enabled != nil && !*r.Enabled {
+		s.cronService.EnableJob(r.JobID, false)
+	}
+
+	info := toCronJobInfo(oldJob)
+	resp := struct {
+		Job *CronJobInfo `json:"job"`
+	}{Job: info}
+	return s.sendResponse(sessionID, req.Action, resp)
+}
+
+func enableDisableResponse(job *cron.CronJob) map[string]any {
+	return map[string]any{
+		"job_id":  job.ID,
+		"enabled": job.Enabled,
+		"job":     toCronJobInfo(job),
+	}
+}
+
 func (s *PetService) handleCronEnable(sessionID string, req Request) error {
 	if s.cronService == nil {
 		return s.sendError(sessionID, req.Action, "cron service not initialized")
@@ -1664,7 +1825,7 @@ func (s *PetService) handleCronEnable(sessionID string, req Request) error {
 		return s.sendError(sessionID, req.Action, fmt.Sprintf("job %s not found", r.JobID))
 	}
 
-	return s.sendResponse(sessionID, req.Action, map[string]any{"job_id": job.ID, "enabled": job.Enabled})
+	return s.sendResponse(sessionID, req.Action, enableDisableResponse(job))
 }
 
 func (s *PetService) handleCronDisable(sessionID string, req Request) error {
@@ -1686,7 +1847,7 @@ func (s *PetService) handleCronDisable(sessionID string, req Request) error {
 		return s.sendError(sessionID, req.Action, fmt.Sprintf("job %s not found", r.JobID))
 	}
 
-	return s.sendResponse(sessionID, req.Action, map[string]any{"job_id": job.ID, "enabled": job.Enabled})
+	return s.sendResponse(sessionID, req.Action, enableDisableResponse(job))
 }
 
 // VoiceModelResponse 语音模型响应结构

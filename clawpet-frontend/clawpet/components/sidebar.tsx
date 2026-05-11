@@ -135,7 +135,7 @@ export function Sidebar({
 
   const handleSwitchSession = (sessionId: string) => {
     setActiveNav("聊天")
-    void chat.switchSession(sessionId)
+    void chat.switchSession(sessionId).catch(() => {})
     setHistoryOpen(false)
   }
 
@@ -200,7 +200,7 @@ export function Sidebar({
                         </button>
 
                         <button
-                          onClick={() => void chat.deleteSession(session.id)}
+onClick={() => void chat.deleteSession(session.id).catch(() => {})}
                           className="rounded-full border border-white/75 bg-white/85 p-2 text-[#8a6b50] transition hover:border-rose-200 hover:bg-rose-50 hover:text-rose-700"
                           title="删除会话"
                         >
@@ -239,7 +239,7 @@ export function Sidebar({
             <button
               onClick={() => {
                 setActiveNav("聊天")
-                void chat.newChat()
+                void chat.newChat().catch(() => {})
               }}
               title="新建聊天"
               className="dashboard-enter dashboard-card flex h-11 w-11 items-center justify-center rounded-2xl border border-white/80 bg-white/85 text-[#6a452a]"
@@ -366,7 +366,7 @@ export function Sidebar({
             <button
               onClick={() => {
                 setActiveNav("聊天")
-                void chat.newChat()
+                void chat.newChat().catch(() => {})
               }}
               className={cn("dashboard-enter dashboard-card group flex flex-col items-center justify-center rounded-[1.4rem] border border-white/80 bg-[linear-gradient(140deg,rgba(255,255,255,0.9),rgba(255,245,235,0.82))] text-center shadow-[0_16px_30px_-24px_rgba(125,81,36,0.48)] transition hover:border-amber-200 hover:shadow-[0_22px_34px_-24px_rgba(217,119,6,0.4)]", isCompact ? "p-2.5" : "p-3")}
             >
@@ -468,7 +468,7 @@ export function Sidebar({
                       <button
                         onClick={() => {
                           setActiveNav("聊天")
-                          void chat.switchSession(session.id)
+                          void chat.switchSession(session.id).catch(() => {})
                         }}
                         className="flex min-w-0 flex-1 items-start gap-3 text-left"
                       >
@@ -488,9 +488,9 @@ export function Sidebar({
                       </button>
 
                       <button
-                        onClick={() => void chat.deleteSession(session.id)}
-                        className="rounded-full border border-white/75 bg-white/85 p-2 text-[#8a6b50] transition hover:border-rose-200 hover:bg-rose-50 hover:text-rose-700"
-                        title="删除会话"
+                        onClick={() => void chat.deleteSession(session.id).catch(() => {})}
+                          className="rounded-full border border-white/75 bg-white/85 p-2 text-[#8a6b50] transition hover:border-rose-200 hover:bg-rose-50 hover:text-rose-700"
+                          title="删除会话"
                       >
                         <Trash2 className="h-3.5 w-3.5" />
                       </button>

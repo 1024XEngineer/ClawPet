@@ -25,11 +25,12 @@ type CronSchedule struct {
 }
 
 type CronPayload struct {
-	Kind    string `json:"kind"`
-	Message string `json:"message"`
-	Command string `json:"command,omitempty"`
-	Channel string `json:"channel,omitempty"`
-	To      string `json:"to,omitempty"`
+	Kind        string `json:"kind"`
+	Message     string `json:"message"`
+	Description string `json:"description,omitempty"`
+	Command     string `json:"command,omitempty"`
+	Channel     string `json:"channel,omitempty"`
+	To          string `json:"to,omitempty"`
 }
 
 type CronJobState struct {
@@ -612,6 +613,19 @@ func (cs *CronService) EnableJob(jobID string, enabled bool) *CronJob {
 		}
 	}
 
+	return nil
+}
+
+func (cs *CronService) GetJob(jobID string) *CronJob {
+	cs.mu.RLock()
+	defer cs.mu.RUnlock()
+
+	for i := range cs.store.Jobs {
+		if cs.store.Jobs[i].ID == jobID {
+			job := cs.store.Jobs[i]
+			return &job
+		}
+	}
 	return nil
 }
 

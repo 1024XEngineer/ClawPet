@@ -217,9 +217,11 @@ function ScheduleDialog({ open, mode, job, submitting, onClose, onSubmit }: Sche
       return
     }
 
+    const trimmedMessage = message.trim()
     const payload: CronJobInput = {
       name: name.trim(),
-      message: message.trim(),
+      message: trimmedMessage,
+      description: trimmedMessage,
     }
 
     if (scheduleType === "cron") {
@@ -388,7 +390,7 @@ function ScheduleCard({
           : "border-dashed border-amber-200/70 opacity-80"
       )}
     >
-      <div className="flex items-start gap-4">
+      <div className="flex flex-col sm:flex-row items-start gap-4">
         <div
           className={cn(
             "flex h-12 w-12 shrink-0 items-center justify-center rounded-2xl text-white",
@@ -430,9 +432,9 @@ function ScheduleCard({
             )}
           </div>
 
-          <p className="text-sm leading-6 text-muted-foreground">{job.message}</p>
+          <p className="break-words text-sm leading-6 text-muted-foreground">{job.message}</p>
 
-          <div className="mt-4 flex flex-wrap items-center gap-x-4 gap-y-2 text-xs text-muted-foreground">
+          <div className="mt-4 flex flex-wrap items-center gap-x-4 gap-y-2 text-xs text-muted-foreground min-w-0">
             <span className="flex items-center gap-1">
               <Clock className="h-3.5 w-3.5" />
               {label}
@@ -452,7 +454,7 @@ function ScheduleCard({
           </div>
         </div>
 
-        <div className="flex shrink-0 items-center gap-1">
+        <div className="flex shrink-0 items-center gap-1 self-end sm:self-center">
           <Button
             variant="ghost"
             size="icon"
@@ -579,35 +581,28 @@ export function SchedulePage() {
   const [dialogSubmitting, setDialogSubmitting] = useState(false)
 
   return (
-    <section className="relative flex min-h-0 flex-1 flex-col overflow-hidden bg-[linear-gradient(180deg,rgba(255,246,237,0.78),rgba(255,249,245,0.94),rgba(255,252,249,0.98))]">
+    <section className="relative flex min-h-0 flex-1 flex-col overflow-y-auto bg-[linear-gradient(180deg,rgba(255,246,237,0.78),rgba(255,249,245,0.94),rgba(255,252,249,0.98))]">
       <div className="pointer-events-none absolute inset-0 bg-[radial-gradient(circle_at_16%_12%,rgba(255,255,255,0.84),transparent_28%),radial-gradient(circle_at_84%_12%,rgba(191,219,254,0.18),transparent_24%),radial-gradient(circle_at_82%_78%,rgba(254,205,211,0.16),transparent_28%)]" />
 
-      <div className="relative flex min-h-0 flex-1 flex-col overflow-auto px-6 py-5">
-        <div className="dashboard-enter dashboard-card rounded-[2rem] border border-white/75 bg-[linear-gradient(145deg,rgba(255,251,246,0.95),rgba(255,245,237,0.9),rgba(255,250,245,0.92))] px-6 py-6 shadow-[0_24px_58px_-36px_rgba(118,83,43,0.42)]">
+      <div className="relative flex min-h-0 flex-1 flex-col overflow-visible px-3 sm:px-6 py-3 sm:py-5">
+        <div className="shrink-0 dashboard-enter dashboard-card rounded-[2rem] border border-white/75 bg-[linear-gradient(145deg,rgba(255,251,246,0.95),rgba(255,245,237,0.9),rgba(255,250,245,0.92))] px-6 py-6 shadow-[0_24px_58px_-36px_rgba(118,83,43,0.42)]">
           <div className="flex flex-wrap items-start justify-between gap-4">
             <div>
-              <div className="inline-flex items-center gap-2 rounded-full border border-white/75 bg-white/82 px-3 py-1.5 text-sm font-medium text-[#7f5a38]">
-                <Clock className="h-4 w-4 text-amber-600" />
+              <h1 className="text-2xl sm:text-3xl font-semibold tracking-tight text-[#3d2718]">
                 时间舱
-              </div>
-              <h1 className="mt-5 text-4xl font-semibold tracking-tight text-[#3d2718]">
-                让自动化像一条有呼吸的时间轨道
               </h1>
-              <p className="mt-3 max-w-3xl text-base leading-8 text-[#816451]">
-                在这里管理提醒、循环自动化和单次任务。它不再是僵硬的后台列表，而是一块更柔和的时间舞台。
-              </p>
             </div>
 
             <Button
               onClick={() => setShowCreateDialog(true)}
-              className="rounded-full border-0 bg-[linear-gradient(135deg,#9a5929_0%,#c87734_48%,#e1a05b_100%)] px-5 text-amber-50 shadow-[0_18px_26px_-18px_rgba(154,89,41,0.75)] hover:brightness-105"
+              className="w-full sm:w-auto rounded-full border-0 bg-[linear-gradient(135deg,#9a5929_0%,#c87734_48%,#e1a05b_100%)] px-5 text-amber-50 shadow-[0_18px_26px_-18px_rgba(154,89,41,0.75)] hover:brightness-105"
             >
               <Plus className="mr-2 h-4 w-4" />
               新建任务
             </Button>
           </div>
 
-          <div className="mt-8 grid gap-3 md:grid-cols-3">
+          <div className="mt-8 grid gap-3 grid-cols-1 sm:grid-cols-3 min-w-0">
             <div className="rounded-[1.4rem] border border-emerald-200/80 bg-gradient-to-r from-emerald-100 via-emerald-50 to-white p-4 shadow-sm">
               <div className="flex items-center gap-3">
                 <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-green-100 text-green-700">
@@ -654,13 +649,13 @@ export function SchedulePage() {
           </div>
         )}
 
-        <div className="mt-5 flex-1">
+        <div className="mt-5 min-h-0 flex-1 flex flex-col">
         {isLoading ? (
           <div className="flex h-40 items-center justify-center">
             <Spinner className="h-8 w-8 text-orange-500" />
           </div>
         ) : schedules.length === 0 ? (
-          <div className="dashboard-enter rounded-[2rem] border border-dashed border-amber-200/80 bg-[linear-gradient(145deg,rgba(255,249,241,0.94),rgba(255,245,237,0.86))] px-6 py-12 text-center shadow-[0_20px_40px_-34px_rgba(118,80,42,0.22)]">
+          <div className="flex-1 flex flex-col items-center justify-center dashboard-enter rounded-[2rem] border border-dashed border-amber-200/80 bg-[linear-gradient(145deg,rgba(255,249,241,0.94),rgba(255,245,237,0.86))] px-6 py-12 text-center shadow-[0_20px_40px_-34px_rgba(118,80,42,0.22)]">
             <div className="dashboard-float-slow mx-auto mb-4 flex h-14 w-14 items-center justify-center rounded-2xl bg-white/88 text-orange-500 shadow-sm">
               <Bell className="h-6 w-6" />
             </div>

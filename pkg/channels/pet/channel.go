@@ -367,7 +367,7 @@ func (c *PetChannel) sendToClient(sessionID, content string) {
 		logger.Infof("pet: checking connection conn_id=%s, sessionID=%s", connID, pc.sessionID)
 		if pc.sessionID == sessionID || sessionID == "broadcast" {
 			logger.Infof("pet: matched! sending to conn_id=%s", connID)
-			data, _ := json.Marshal(content)
+			data, _ := json.Marshal(map[string]string{"text": content})
 			pc.writeJSON(Response{
 				Status: pet.StatusOK,
 				Action: pet.ActionChat,

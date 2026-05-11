@@ -830,26 +830,26 @@ func bindPetCronDeliveryResolver(runningServices *services) {
 		channel string,
 		chatID string,
 	) (string, string, error) {
-		if job == nil || channel != "pet" || job.Schedule.Kind != "at" {
+		if job == nil || channel != "pet" {
 			return channel, chatID, nil
 		}
 		if runningServices.ChannelManager == nil {
-			return "", "", fmt.Errorf("%w: pet channel manager unavailable", cron.ErrJobDeferred)
+			return channel, chatID, nil
 		}
 
 		ch, ok := runningServices.ChannelManager.GetChannel("pet")
 		if !ok {
-			return "", "", fmt.Errorf("%w: pet channel unavailable", cron.ErrJobDeferred)
+			return channel, chatID, nil
 		}
 
 		pc, ok := ch.(*petchannel.PetChannel)
 		if !ok || pc.Service() == nil {
-			return "", "", fmt.Errorf("%w: pet service unavailable", cron.ErrJobDeferred)
+			return channel, chatID, nil
 		}
 
 		sessionID := pc.Service().ResolveReminderDeliverySession()
 		if sessionID == "" {
-			return "", "", fmt.Errorf("%w: no active pet session", cron.ErrJobDeferred)
+			return channel, chatID, nil
 		}
 
 		return channel, sessionID, nil
@@ -892,7 +892,7 @@ func bindPetCronDeliveryResolver(runningServices *services) {
 			}
 			return false, cron.NewDeferredError(result.RetryAfter, fmt.Errorf("pet deadline reminder waiting for interruptible state"))
 		}
-		return true, nil
+		return false, nil
 	})
 }
 
@@ -922,7 +922,7 @@ func setupCronTool(
 	cfg *config.Config,
 ) (*cron.CronService, *tools.CronTool, error) {
 	if !cfg.Tools.IsToolEnabled("cron") {
-		return nil, nil
+		return nil, nil, nil
 	}
 
 	cronStorePath := filepath.Join(workspace, "cron", "jobs.json")
@@ -937,8 +937,8 @@ func setupCronTool(
 	agentLoop.RegisterTool(cronTool)
 
 	cronService.SetOnJob(func(job *cron.CronJob) (string, error) {
-		result := cronTool.ExecuteJob(context.Background(), job)
-		return result, nil
+		result, execErr := cronTool.ExecuteJob(context.Background(), job)
+		return result, execErr
 	})
 
 	return cronService, cronTool, nil

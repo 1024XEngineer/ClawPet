@@ -880,24 +880,23 @@ export function useChat(options: UseChatOptions = {}): UseChatResult {
     setIsTurnActive(false)
     setToolStatus("idle")
 
-    const bootstrap = await ensureBackendReadyForChat()
-    if (!bootstrap.ok) {
-      const reason = bootstrap.reason || "Backend not ready for chat"
-      setIsConnected(false)
-      setError(reason)
-      optionsRef.current.onConnectionChange?.(false)
-      optionsRef.current.onError?.(reason)
-      return
-    }
-
-    wsRef.current.resetReconnectAttempts()
-
     try {
+      const bootstrap = await ensureBackendReadyForChat()
+      if (!bootstrap.ok) {
+        const reason = bootstrap.reason || "Backend not ready for chat"
+        setIsConnected(false)
+        setError(reason)
+        optionsRef.current.onConnectionChange?.(false)
+        optionsRef.current.onError?.(reason)
+        return
+      }
+
+      wsRef.current.resetReconnectAttempts()
       await wsRef.current.connect()
     } catch (err) {
       const message = err instanceof Error ? err.message : "连接失败"
       setError(message)
-      console.error("WebSocket connection failed:", err)
+      console.error("Backend or WebSocket connection failed:", err)
     }
   }, [])
 
@@ -1271,7 +1270,11 @@ export function useChat(options: UseChatOptions = {}): UseChatResult {
     })
     setActiveSessionId(nextSessionId)
 
-    await connectWithBootstrap()
+    try {
+      await connectWithBootstrap()
+    } catch {
+      console.error("connect after newChat failed")
+    }
   }, [clearPendingBubbleTimer, connectWithBootstrap, resetAudioQueue])
 
   const switchSession = useCallback(
@@ -1284,7 +1287,11 @@ export function useChat(options: UseChatOptions = {}): UseChatResult {
       saveSessionsToStorage(sessionsState, sessionId)
 
       // Load session history from backend
-      await loadSessionHistory(sessionId)
+      try {
+        await loadSessionHistory(sessionId)
+      } catch {
+        console.error("loadSessionHistory failed:", sessionId)
+      }
 
       wsRef.current.disconnect()
       if (currentAudioRef.current) {
@@ -1301,7 +1308,11 @@ export function useChat(options: UseChatOptions = {}): UseChatResult {
       setError(null)
       setActiveSessionId(sessionId)
 
-      await connectWithBootstrap()
+      try {
+        await connectWithBootstrap()
+      } catch {
+        console.error("connect after switchSession failed:", sessionId)
+      }
     },
     [
       clearPendingBubbleTimer,
@@ -1324,7 +1335,12 @@ export function useChat(options: UseChatOptions = {}): UseChatResult {
         return
       }
 
-      const deleted = await deleteSessionOnServer(sessionId)
+      let deleted = false
+      try {
+        deleted = await deleteSessionOnServer(sessionId)
+      } catch {
+        console.error("deleteSessionOnServer failed:", sessionId)
+      }
       if (!deleted) {
         setError("删除会话失败，请稍后重试")
         return
@@ -1358,7 +1374,11 @@ export function useChat(options: UseChatOptions = {}): UseChatResult {
         setIsTurnActive(false)
         setToolStatus("idle")
         setError(null)
-        await connectWithBootstrap()
+        try {
+          await connectWithBootstrap()
+        } catch {
+          console.error("reconnect after deleteSession failed")
+        }
       }
     },
     [clearPendingBubbleTimer, connectWithBootstrap, resetAudioQueue, sessionsState],
