@@ -588,14 +588,18 @@ func (c *PetChannel) handleAudioDoneRequest(pc *petConn, req Request) {
 	}
 
 	streamer := getActivePetStreamer(pc.sessionID)
-	if streamer != nil {
+	if streamer != nil && (data.StreamID == "" || data.StreamID == streamer.streamID) {
 		streamer.HandleAudioDone(data.Seq)
 	}
 
 	_ = pc.writeJSON(Response{
 		Status:    pet.StatusOK,
 		Action:    req.Action,
-		Data:      mustMarshal(map[string]any{"received": streamer != nil, "seq": data.Seq}),
+		Data: mustMarshal(map[string]any{
+		"received":  streamer != nil && (data.StreamID == "" || data.StreamID == streamer.streamID),
+		"seq":       data.Seq,
+		"stream_id": data.StreamID,
+	}),
 		RequestID: req.RequestID,
 	})
 }
@@ -642,6 +646,7 @@ func mustMarshal(v interface{}) json.RawMessage {
 type petStreamer struct {
 	channel          *PetChannel
 	sessionID        string
+	streamID         string
 	lastLen          int
 	buffer           string
 	chatID           int64
@@ -668,6 +673,7 @@ type petStreamer struct {
 	streamingEnded     bool              // 流式是否已结束
 	hasSentFirst       bool              // 是否已发送第一个音频
 	hasReadyAudioCount int               // 等待发送的音频数量
+	waitingAudioSeq    int64
 	audioPlayDone      chan struct{}     // audioPlayLoop 结束信号
 	voiceEnabled       bool              // 当前语音开关状态
 	audioDone          chan int64        // audio_done 通知 channel
@@ -681,6 +687,7 @@ func (c *PetChannel) BeginStream(ctx context.Context, sessionID string) (channel
 	streamer := &petStreamer{
 		channel:          c,
 		sessionID:        sessionID,
+		streamID:         fmt.Sprintf("stream-%d", time.Now().UnixNano()),
 		chatID:           0,
 		voiceSynthesizer: c.voiceSynthesizer,
 		// 语音优先队列初始化
@@ -1364,6 +1371,7 @@ func (s *petStreamer) sendAudioSegmentAsync(seg *voice.AudioSegment, isFinal boo
 
 	data := map[string]any{
 		"seq":        seg.Seq,
+		"stream_id":  s.streamID,
 		"text":       seg.Text,
 		"audio":      encoded,
 		"audio_mime": mimeType,
@@ -1398,6 +1406,12 @@ func (s *petStreamer) sendAudioSegmentAsync(seg *voice.AudioSegment, isFinal boo
 
 // HandleAudioDone 处理前端音频播放完毕的通知
 func (s *petStreamer) HandleAudioDone(seq int64) {
+	s.waitMu.Lock()
+	waitingSeq := s.waitingAudioSeq
+	s.waitMu.Unlock()
+	if waitingSeq > 0 && seq != waitingSeq {
+		return
+	}
 	select {
 	case s.audioDone <- seq:
 	default:

@@ -79,6 +79,7 @@ interface AudioPushData {
   audio_mime?: string
   duration?: number
   seq?: number
+  stream_id?: string
   error?: string
   is_final?: boolean
 }
@@ -86,6 +87,7 @@ interface AudioPushData {
 interface AudioSegmentItem {
   chatId: number | null
   seq: number
+  streamId: string | null
   text: string
   audioBase64: string
   audioMime?: string
@@ -475,6 +477,7 @@ export function useChat(options: UseChatOptions = {}): UseChatResult {
   const audioExpectedSeqRef = useRef<number | null>(null)
   const audioArrivalSeqRef = useRef(0)
   const audioActiveChatIdRef = useRef<number | null>(null)
+  const audioActiveStreamIdRef = useRef<string | null>(null)
   const audioIsPlayingRef = useRef(false)
   const audioSeenSeqRef = useRef<Set<string>>(new Set())
   const currentAudioRef = useRef<HTMLAudioElement | null>(null)
@@ -825,6 +828,9 @@ export function useChat(options: UseChatOptions = {}): UseChatResult {
       const settleOnce = () => {
         if (!settled) {
           settled = true
+          if (typeof seq === "number" && Number.isFinite(seq)) {
+            wsRef.current.sendAudioDone(seq, nextSegment.streamId)
+          }
           onSettled?.()
         }
       }
@@ -903,6 +909,7 @@ export function useChat(options: UseChatOptions = {}): UseChatResult {
     audioExpectedSeqRef.current = null
     audioArrivalSeqRef.current = 0
     audioActiveChatIdRef.current = null
+    audioActiveStreamIdRef.current = null
     audioSeenSeqRef.current = new Set()
     audioIsPlayingRef.current = false
     lastQueuedSegmentRef.current = { chatId: null, seq: null }
@@ -957,7 +964,7 @@ export function useChat(options: UseChatOptions = {}): UseChatResult {
   const enqueueAudioSegment = useCallback(
     (segment: AudioSegmentItem) => {
       const audioFingerprint = segment.audioBase64.slice(0, 24)
-      const seqKey = `${segment.chatId ?? "na"}:${segment.seq}:${audioFingerprint}`
+      const seqKey = `${segment.streamId ?? segment.chatId ?? "na"}:${segment.seq}:${audioFingerprint}`
       if (audioSeenSeqRef.current.has(seqKey)) {
         return
       }
@@ -1097,6 +1104,10 @@ export function useChat(options: UseChatOptions = {}): UseChatResult {
 
           const parsedChatId = Number(data.chat_id)
           const incomingChatId = Number.isFinite(parsedChatId) ? parsedChatId : null
+          const incomingStreamId =
+            typeof data.stream_id === "string" && data.stream_id.trim()
+              ? data.stream_id.trim()
+              : null
 
           if (
             incomingChatId !== null &&
@@ -1109,6 +1120,26 @@ export function useChat(options: UseChatOptions = {}): UseChatResult {
             audioActiveChatIdRef.current = incomingChatId
           }
 
+          if (
+            incomingStreamId &&
+            audioActiveStreamIdRef.current &&
+            incomingStreamId !== audioActiveStreamIdRef.current
+          ) {
+            if (currentAudioRef.current) {
+              currentAudioRef.current.pause()
+              currentAudioRef.current = null
+            }
+            if (currentAudioUrlRef.current) {
+              URL.revokeObjectURL(currentAudioUrlRef.current)
+              currentAudioUrlRef.current = null
+            }
+            resetAudioQueue()
+            lastPlayedAudioRef.current = { value: "", at: 0 }
+          }
+          if (incomingStreamId) {
+            audioActiveStreamIdRef.current = incomingStreamId
+          }
+
           const audioChunkPayload = resolveAudioChunkPayload(data)
           const parsedSeq = Number(data.seq)
           const seq = Number.isFinite(parsedSeq)
@@ -1117,10 +1148,28 @@ export function useChat(options: UseChatOptions = {}): UseChatResult {
           const parsedDuration = Number(data.duration)
           const durationMs = Number.isFinite(parsedDuration) ? parsedDuration : 0
 
+          // Pet channel audio pushes do not currently include chat_id, so the
+          // sequence resetting to 1 is our best signal that a new spoken turn
+          // has started. Reset dedupe/queue state here so later turns do not
+          // get dropped as "duplicates" because they share the same seq=1 and
+          // MP3 header prefix as the first successful reply.
+          if (seq === 1 && incomingChatId === null && !incomingStreamId) {
+            if (currentAudioRef.current) {
+              currentAudioRef.current.pause()
+              currentAudioRef.current = null
+            }
+            if (currentAudioUrlRef.current) {
+              URL.revokeObjectURL(currentAudioUrlRef.current)
+              currentAudioUrlRef.current = null
+            }
+            resetAudioQueue()
+            lastPlayedAudioRef.current = { value: "", at: 0 }
+          }
           if (audioChunkPayload) {
             enqueueAudioSegment({
               chatId: incomingChatId,
               seq,
+              streamId: incomingStreamId,
               text: typeof data.text === "string" ? data.text : "",
               audioBase64: audioChunkPayload.audioBase64,
               audioMime: audioChunkPayload.audioMime,

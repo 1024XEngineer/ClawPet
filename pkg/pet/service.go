@@ -759,7 +759,6 @@ func (s *PetService) handleChat(sessionID string, req Request) error {
 		logger.WarnCF("pet", "PetService: handleChat invalid chat data", map[string]any{
 			"session_id": sessionID,
 			"request_id": req.RequestID,
-			"raw_data":   string(req.Data),
 			"error":      err.Error(),
 		})
 		return s.sendError(sessionID, req.Action, "invalid chat data")
@@ -769,7 +768,6 @@ func (s *PetService) handleChat(sessionID string, req Request) error {
 		"request_id":       req.RequestID,
 		"session_key":      chatReq.SessionKey,
 		"text_len":         len(chatReq.Text),
-		"text_preview":     chatReq.Text,
 		"text_is_empty":    chatReq.Text == "",
 		"session_key_empty": chatReq.SessionKey == "",
 	})
@@ -808,7 +806,6 @@ func (s *PetService) handleChat(sessionID string, req Request) error {
 		"session_key":  chatReq.SessionKey,
 		"peer_kind":    char.ID,
 		"content_len":  len(chatReq.Text),
-		"content_text": chatReq.Text,
 	})
 
 	if err := s.msgBus.PublishInbound(context.Background(), inbound); err != nil {

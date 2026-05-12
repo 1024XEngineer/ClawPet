@@ -113,7 +113,8 @@ type Response struct {
 }
 
 type AudioDoneRequest struct {
-	Seq int64 `json:"seq"`
+	Seq      int64  `json:"seq"`
+	StreamID string `json:"stream_id,omitempty"`
 }
 // Push 推送消息结构
 type Push struct {

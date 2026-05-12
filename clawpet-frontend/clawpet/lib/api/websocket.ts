@@ -1110,7 +1110,7 @@ export class PicoClawWebSocket {
     return true
   }
 
-  sendAudioDone(sequence: number): boolean {
+  sendAudioDone(sequence: number, streamId?: string | null): boolean {
     if (!Number.isFinite(sequence) || sequence <= 0) {
       return false
     }
@@ -1121,7 +1121,13 @@ export class PicoClawWebSocket {
 
     this.sendRaw({
       action: AUDIO_DONE_ACTION,
-      data: { seq: sequence },
+      data: {
+        seq: sequence,
+        stream_id:
+          typeof streamId === "string" && streamId.trim()
+            ? streamId.trim()
+            : undefined,
+      },
       request_id: `req-${++this.msgIdCounter}-${Date.now()}`,
     })
     return true
