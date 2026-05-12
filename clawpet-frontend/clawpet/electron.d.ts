@@ -9,6 +9,8 @@ declare global {
     animationHints?: string[]
     audio?: string
     duration_ms?: number
+    persist?: boolean      // set animation as overlay, no auto-revert
+    clearOverlay?: boolean // clear current overlay, restore base state
   }
 
   interface Window {

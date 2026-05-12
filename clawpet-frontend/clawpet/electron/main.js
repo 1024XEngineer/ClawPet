@@ -1365,6 +1365,10 @@ function createPetWindow() {
       return;
     }
 
+    if (!petDragActive) {
+      // Send move animation directly to pet window, bypassing show-bubble dedup
+      petWindow.webContents.send('bubble-show', { text: null, animation: 'move', emotion: '', persist: true });
+    }
     petDragActive = true;
     clearPetTopCorrectionTimer();
 
@@ -1391,6 +1395,10 @@ function createPetWindow() {
     petDragActive = false;
     schedulePetTopClamp(40);
     syncBubbleWindowToPet({ show: bubbleWindow && !bubbleWindow.isDestroyed() && bubbleWindow.isVisible() });
+    // Restore whatever state was active before dragging started
+    if (petWindow && !petWindow.isDestroyed()) {
+      petWindow.webContents.send('bubble-show', { text: null, emotion: '', clearOverlay: true });
+    }
   });
 
   petWindow.on('move', () => {
@@ -2044,19 +2052,26 @@ ipcMain.on('show-bubble', (_event, data) => {
   const text = typeof data?.text === 'string' ? data.text.trim() : '';
   const emotion = typeof data?.emotion === 'string' ? data.emotion.trim() : '';
   const animation = typeof data?.animation === 'string' ? data.animation.trim() : '';
-  const fingerprint = `${audio}|${text}|${emotion}|${animation}`;
+  const isPetOverlay = data?.persist === true || data?.clearOverlay === true;
+  const fingerprint = `${audio}|${text}|${emotion}|${animation}|${data?.clearOverlay ? '1' : ''}`;
   const now = Date.now();
   const hasDetachedBubbleWindow = bubbleWindow && !bubbleWindow.isDestroyed();
 
-  if (fingerprint && fingerprint === lastBubbleFingerprint && now - lastBubbleAt < 2500) {
+  // Pet overlay signals (persist/clearOverlay) always pass through — don't dedup them
+  if (!isPetOverlay && fingerprint && fingerprint === lastBubbleFingerprint && now - lastBubbleAt < 2500) {
     logToFile('[IPC] show-bubble dropped duplicated payload');
     return;
+  }
+
+  if (isPetOverlay) {
+    logToFile(`[IPC] show-bubble pet-overlay: animation=${animation} persist=${data?.persist} clearOverlay=${data?.clearOverlay}`);
   }
 
   lastBubbleFingerprint = fingerprint;
   lastBubbleAt = now;
 
   if (!hasDetachedBubbleWindow && petWindow && !petWindow.isDestroyed()) {
+    logToFile(`[IPC] forwarding bubble-show to petWindow: animation=${animation} persist=${data?.persist}`);
     petWindow.webContents.send('bubble-show', data);
   }
 

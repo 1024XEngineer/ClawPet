@@ -16,6 +16,8 @@ type PetState =
   | "stayOut"
   | "think"
   | "search"
+  | "sleep"
+  | "move"
 
 interface BubbleData {
   text: string | null
@@ -26,6 +28,8 @@ interface BubbleData {
   audio?: string
   audio_mime?: string
   duration_ms?: number
+  persist?: boolean
+  clearOverlay?: boolean
 }
 
 function normalizeAudioMimeType(mime?: string): string | null {
@@ -64,7 +68,17 @@ function decodeBase64Audio(value: string): Uint8Array | null {
 }
 
 const happyImages = ["/pets/happy1.gif", "/pets/happy2.gif"]
-const standbyImages = ["/pets/standby1.gif", "/pets/standby2.gif", "/pets/standby3.gif", "/pets/sleep.gif", "/pets/move.gif"]
+const standbyImages = ["/pets/standby1.gif", "/pets/standby2.gif", "/pets/standby3.gif"]
+
+// Overlay states have explicit priority; base states (standby/sleep/idle) are the fallback
+const STATE_PRIORITY: Record<string, number> = {
+  sleep: 0, idle: 1, standby: 2,
+  sad: 3, happy: 3, listen: 3, celebrate: 3, shakeHead: 3, stayOut: 3,
+  think: 4, search: 5, move: 6,
+}
+const OVERLAY_STATES: ReadonlySet<string> = new Set(["think", "search", "move"])
+const BASE_STATES: ReadonlySet<string> = new Set(["standby", "sleep", "idle"])
+const SLEEP_TIMEOUT_MS = 5 * 60 * 1000
 
 const getPetImage = (state: PetState, prevImage?: string): string => {
   switch (state) {
@@ -86,6 +100,10 @@ const getPetImage = (state: PetState, prevImage?: string): string => {
       return "/pets/think.gif"
     case "search":
       return "/pets/search.gif"
+    case "sleep":
+      return "/pets/sleep.gif"
+    case "move":
+      return "/pets/move.gif"
     case "standby": {
       let img = standbyImages[Math.floor(Math.random() * standbyImages.length)]
       if (prevImage && standbyImages.includes(prevImage) && standbyImages.length > 1) {
@@ -129,6 +147,8 @@ const animationToPetState: Record<string, PetState> = {
   "init.png": "idle",
   think: "think",
   search: "search",
+  sleep: "sleep",
+  move: "move",
 }
 
 const resolvePetState = (data: BubbleData): PetState => {
@@ -155,7 +175,9 @@ const resolvePetState = (data: BubbleData): PetState => {
       candidate === "shakeHead" ||
       candidate === "stayOut" ||
       candidate === "think" ||
-      candidate === "search"
+      candidate === "search" ||
+      candidate === "sleep" ||
+      candidate === "move"
     ) {
       return candidate
     }
@@ -177,20 +199,69 @@ export default function DesktopPetPage() {
   const bubbleTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   const bubbleRef = useRef<HTMLDivElement | null>(null)
   const currentAudioIdRef = useRef<number>(0)
+  const baseStateRef = useRef<PetState>("standby")
+  const overlayStateRef = useRef<PetState | null>(null)
+  const overlayLockedUntilRef = useRef<number>(0)
+  const isDraggingRef = useRef<boolean>(false)
+  const sleepTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
 
   currentImageRef.current = currentImage
 
-  const transitionTo = useCallback((newState: PetState, delay?: number) => {
+  const transitionTo = useCallback((newState: PetState) => {
     const prevImage = currentImageRef.current
     setPetState(newState)
     setCurrentImage(getPetImage(newState, prevImage))
-    if (delay) {
-      setTimeout(() => {
-        setPetState("standby")
-        setCurrentImage(getPetImage("standby", currentImageRef.current))
-      }, delay)
+  }, [])
+
+  // Restore whatever state is currently correct (overlay if active, else base)
+  const applyCurrentState = useCallback(() => {
+    const target = overlayStateRef.current ?? baseStateRef.current
+    const prevImage = currentImageRef.current
+    setPetState(target)
+    setCurrentImage(getPetImage(target, prevImage))
+  }, [])
+
+  // Set the base state (lowest layer; shown when no overlay is active)
+  const setBaseState = useCallback((state: PetState) => {
+    baseStateRef.current = state
+    if (!overlayStateRef.current) {
+      const prevImage = currentImageRef.current
+      setPetState(state)
+      setCurrentImage(getPetImage(state, prevImage))
     }
   }, [])
+
+  // Set an overlay state with priority enforcement and optional minimum hold duration
+  const setOverlayState = useCallback((state: PetState, minMs = 0) => {
+    const now = Date.now()
+    const current = overlayStateRef.current
+    const currentPrio = current !== null ? (STATE_PRIORITY[current] ?? 0) : -1
+    const newPrio = STATE_PRIORITY[state] ?? 0
+    if (current === null || newPrio >= currentPrio || now >= overlayLockedUntilRef.current) {
+      overlayStateRef.current = state
+      overlayLockedUntilRef.current = minMs > 0 ? now + minMs : 0
+      const prevImage = currentImageRef.current
+      setPetState(state)
+      setCurrentImage(getPetImage(state, prevImage))
+    }
+  }, [])
+
+  // Clear current overlay and restore the base state
+  const clearOverlayState = useCallback(() => {
+    overlayStateRef.current = null
+    overlayLockedUntilRef.current = 0
+    isDraggingRef.current = false
+    applyCurrentState()
+  }, [applyCurrentState])
+
+  const resetSleepTimer = useCallback(() => {
+    if (sleepTimerRef.current) clearTimeout(sleepTimerRef.current)
+    sleepTimerRef.current = setTimeout(() => {
+      if (!isDraggingRef.current && !overlayStateRef.current) {
+        setBaseState("sleep")
+      }
+    }, SLEEP_TIMEOUT_MS)
+  }, [setBaseState])
 
   useEffect(() => {
     const handleBubbleShow = (data: BubbleData) => {
@@ -205,18 +276,46 @@ export default function DesktopPetPage() {
         audioRef.current = null
       }
 
+      resetSleepTimer()
+
       console.log('[petclaw] handleBubbleShow:', {
         bubbleId,
         text: data.text,
         hasAudio: !!data.audio,
+        persist: data.persist,
+        clearOverlay: data.clearOverlay,
+        animation: data.animation,
         timestamp: Date.now()
       })
+
+      // clearOverlay: restore base state, don't start bubble
+      if (data.clearOverlay) {
+        if (data.text !== null) setBubble(data.text || "")
+        clearOverlayState()
+        return
+      }
 
       if (data.text !== null) {
         setBubble(data.text || "")
       }
 
-      transitionTo(resolvePetState(data))
+      const resolvedState = resolvePetState(data)
+
+      // persist: set as permanent overlay, no auto-revert timer
+      if (data.persist) {
+        const minMs = resolvedState === "search" ? 800 : resolvedState === "think" ? 500 : 0
+        if (resolvedState === "move") isDraggingRef.current = true
+        setOverlayState(resolvedState, minMs)
+        return
+      }
+
+      // Normal bubble: update visual directly (don't touch overlayStateRef)
+      // On completion, applyCurrentState() restores the overlay or base
+      if (BASE_STATES.has(resolvedState)) {
+        setBaseState(resolvedState)
+      } else {
+        transitionTo(resolvedState)
+      }
 
       if (data.audio) {
         const rawAudio = data.audio.trim()
@@ -240,7 +339,7 @@ export default function DesktopPetPage() {
           })
           if (bubbleId === currentAudioIdRef.current) {
             setBubble("")
-            transitionTo("standby")
+            applyCurrentState()
           }
           return
         }
@@ -275,7 +374,7 @@ export default function DesktopPetPage() {
             })
             if (bubbleId === currentAudioIdRef.current) {
               setBubble("")
-              transitionTo("standby")
+              applyCurrentState()
             }
             return
           }
@@ -293,7 +392,7 @@ export default function DesktopPetPage() {
             })
             if (bubbleId === currentAudioIdRef.current) {
               setBubble("")
-              transitionTo("standby")
+              applyCurrentState()
             }
           }
           audio.onerror = (errorEvent) => {
@@ -343,11 +442,11 @@ export default function DesktopPetPage() {
         bubbleTimerRef.current = setTimeout(() => {
           if (bubbleId === currentAudioIdRef.current) {
             setBubble("")
-            transitionTo("standby")
+            applyCurrentState()
           }
         }, fallbackMs)
       }
-}
+    }
 
     window.electronAPI?.onBubbleShow?.(handleBubbleShow)
     window.electronAPI?.onSettingsUpdate?.(() => {})
@@ -372,8 +471,11 @@ export default function DesktopPetPage() {
         URL.revokeObjectURL(audioObjectUrlRef.current)
         audioObjectUrlRef.current = null
       }
-}
-  }, [transitionTo])
+      if (sleepTimerRef.current) {
+        clearTimeout(sleepTimerRef.current)
+      }
+    }
+  }, [transitionTo, applyCurrentState, setBaseState, setOverlayState, clearOverlayState, resetSleepTimer])
 
   useEffect(() => {
     const handlePointerMove = (event: globalThis.MouseEvent) => {
@@ -409,6 +511,11 @@ export default function DesktopPetPage() {
       window.removeEventListener("mouseleave", handleWindowLeave as EventListener)
     }
   }, [])
+
+  // Start sleep timer on mount
+  useEffect(() => {
+    resetSleepTimer()
+  }, [resetSleepTimer])
 
   const openChatPanel = () => {
     try {

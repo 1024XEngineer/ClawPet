@@ -487,6 +487,7 @@ export function useChat(options: UseChatOptions = {}): UseChatResult {
   })
   const lastAssistantTextRef = useRef("")
   const assistantTurnActiveRef = useRef(false)
+  const isToolBusyRef = useRef(false)
   const lastEmotionRef = useRef("neutral")
   const lastActionRef = useRef("")
   const lastPlayedAudioRef = useRef<{ value: string; at: number }>({
@@ -1028,11 +1029,18 @@ export function useChat(options: UseChatOptions = {}): UseChatResult {
       })
     }
 
+    const sendPetOverlay = (data: { animation?: string; persist?: boolean; clearOverlay?: boolean }) => {
+      console.log('[petclaw:sendPetOverlay]', data)
+      window.electronAPI?.showBubble?.({ text: null, emotion: '', ...data } as BubblePayload)
+    }
+
     const endAssistantTurn = () => {
       assistantTurnActiveRef.current = false
+      isToolBusyRef.current = false
       setIsTyping(false)
       setIsTurnActive(false)
       setToolStatus("idle")
+      sendPetOverlay({ clearOverlay: true })
     }
 
     const beginOrKeepAssistantTurn = () => {
@@ -1144,7 +1152,9 @@ export function useChat(options: UseChatOptions = {}): UseChatResult {
               typeof event.data === "string" ? event.data === "true" : true
             if (typing) {
               beginOrKeepAssistantTurn()
-              window.electronAPI?.showBubble?.({ text: null, animation: "think" })
+              if (!isToolBusyRef.current) {
+                sendPetOverlay({ animation: "think", persist: true })
+              }
             } else {
               finalizeStreamingAssistantMessages()
               endAssistantTurn()
@@ -1155,7 +1165,15 @@ export function useChat(options: UseChatOptions = {}): UseChatResult {
         case "tool_status": {
           const data = (event.data || {}) as ToolStatusEventData
           const status = data.status || "busy"
-          if (status === "busy" || status === "done" || status === "error") {
+          if (status === "busy") {
+            isToolBusyRef.current = true
+            sendPetOverlay({ animation: "search", persist: true })
+            beginOrKeepAssistantTurn()
+            setToolStatus(status)
+          } else if (status === "done" || status === "error") {
+            isToolBusyRef.current = false
+            // Tool finished; LLM is still processing — revert to think
+            sendPetOverlay({ animation: "think", persist: true })
             beginOrKeepAssistantTurn()
             setToolStatus(status)
           }
@@ -1348,6 +1366,9 @@ export function useChat(options: UseChatOptions = {}): UseChatResult {
         setIsTurnActive(true)
         setToolStatus("idle")
         setError(null)
+
+        // Trigger think animation in sync with the blinking dot
+        window.electronAPI?.showBubble?.({ text: null, emotion: '', animation: 'think', persist: true } as BubblePayload)
 
         wsRef.current.send(outbound, activeSessionIdRef.current)
         window.electronAPI?.showBubble?.({ text: null, animation: "think" })
