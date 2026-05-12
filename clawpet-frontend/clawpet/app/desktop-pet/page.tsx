@@ -33,6 +33,24 @@ interface BubbleData {
   popOverlay?: boolean
 }
 
+type PetRuntimeState =
+  | "idle"
+  | "listening"
+  | "recognizing"
+  | "thinking"
+  | "tool_running"
+  | "speaking"
+  | "done"
+  | "error"
+  | "stalled"
+
+interface PetRuntimeStatePayload {
+  state?: PetRuntimeState
+  text?: string
+  source?: "voice" | "chat"
+  sticky_ms?: number
+}
+
 function normalizeAudioMimeType(mime?: string): string | null {
   if (!mime) return null
   const normalized = mime.trim().toLowerCase()
@@ -191,13 +209,16 @@ export default function DesktopPetPage() {
   const [petState, setPetState] = useState<PetState>("standby")
   const [currentImage, setCurrentImage] = useState("/pets/standby1.gif")
   const [bubble, setBubble] = useState("")
+  const [runtimeHint, setRuntimeHint] = useState("")
   const [showControls, setShowControls] = useState(false)
+  const [voicePhase, setVoicePhase] = useState<"idle" | "recording" | "recognizing" | "error">("idle")
   const stackRef = useRef<HTMLDivElement | null>(null)
   const controlsVisibleRef = useRef(false)
   const currentImageRef = useRef(currentImage)
   const audioRef = useRef<HTMLAudioElement | null>(null)
   const audioObjectUrlRef = useRef<string | null>(null)
   const bubbleTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+  const runtimeHintTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   const bubbleRef = useRef<HTMLDivElement | null>(null)
   const currentAudioIdRef = useRef<number>(0)
   const baseStateRef = useRef<PetState>("standby")
@@ -375,9 +396,10 @@ export default function DesktopPetPage() {
           audioUrl = `data:${mimeType};base64,${audioUrl}`
         }
 
-        if (audioRef.current) {
-          audioRef.current.pause()
-          audioRef.current.onended = null
+        const activeAudio = audioRef.current
+        if (activeAudio) {
+          ;(activeAudio as HTMLAudioElement | null)?.pause?.()
+          ;(activeAudio as HTMLAudioElement | null)!.onended = null
         }
         const rawCandidates = Array.from(
           new Set([mimeType, "audio/mpeg", "audio/ogg", "audio/wav"]),
@@ -505,6 +527,104 @@ export default function DesktopPetPage() {
   }, [transitionTo, applyCurrentState, setBaseState, setOverlayState, clearOverlayState, popOverlayState, resetSleepTimer])
 
   useEffect(() => {
+    const unsubscribe = window.electronAPI?.onVoiceInputStateChanged?.((payload) => {
+      const nextPhase =
+        payload?.phase === "recording" ||
+        payload?.phase === "recognizing" ||
+        payload?.phase === "error"
+          ? payload.phase
+          : "idle"
+      setVoicePhase(nextPhase)
+
+      if (nextPhase === "recording" || nextPhase === "recognizing") {
+        setPetState("listen")
+        setCurrentImage("/pets/listening.gif")
+        return
+      }
+
+      if (!bubble) {
+        setPetState("standby")
+        setCurrentImage(getPetImage("standby", currentImageRef.current))
+      }
+    })
+
+    return () => {
+      if (typeof unsubscribe === "function") {
+        unsubscribe()
+      }
+    }
+  }, [bubble])
+
+  useEffect(() => {
+    const unsubscribe = window.electronAPI?.onPetRuntimeStateChanged?.((payload: PetRuntimeStatePayload) => {
+      const nextState = payload?.state || "idle"
+      const hint = payload?.text?.trim() || ""
+      const stickyMs = Number(payload?.sticky_ms) || 0
+
+      if (runtimeHintTimerRef.current) {
+        clearTimeout(runtimeHintTimerRef.current)
+        runtimeHintTimerRef.current = null
+      }
+
+      if (hint && bubble) {
+        setRuntimeHint(hint)
+        if (stickyMs > 0) {
+          runtimeHintTimerRef.current = setTimeout(() => {
+            setRuntimeHint("")
+          }, stickyMs)
+        }
+      } else if (nextState === "idle" || !bubble) {
+        setRuntimeHint("")
+      }
+
+      if (nextState === "listening" || nextState === "recognizing") {
+        setPetState("listen")
+        setCurrentImage("/pets/listening.gif")
+        return
+      }
+
+      if (nextState === "thinking" || nextState === "tool_running") {
+        transitionTo("standby")
+        return
+      }
+
+      if (nextState === "speaking") {
+        transitionTo("happy")
+        return
+      }
+
+      if (nextState === "error") {
+        transitionTo("shakeHead", stickyMs || 2200)
+        return
+      }
+
+      if (nextState === "stalled") {
+        transitionTo("stayOut", stickyMs || 2600)
+        return
+      }
+
+      if (nextState === "done") {
+        transitionTo("happy", stickyMs || 1600)
+        return
+      }
+
+      if (!bubble) {
+        setPetState("standby")
+        setCurrentImage(getPetImage("standby", currentImageRef.current))
+      }
+    })
+
+    return () => {
+      if (typeof unsubscribe === "function") {
+        unsubscribe()
+      }
+      if (runtimeHintTimerRef.current) {
+        clearTimeout(runtimeHintTimerRef.current)
+      }
+    }
+  }, [bubble, transitionTo])
+
+  useEffect(() => {
     const handlePointerMove = (event: globalThis.MouseEvent) => {
       const stack = stackRef.current
       if (!stack) {
@@ -613,9 +733,9 @@ export default function DesktopPetPage() {
           {bubble ? (
           <div
             ref={bubbleRef}
-            className="desktop-pet-bubble"
+            className={runtimeHint ? "desktop-pet-bubble desktop-pet-bubble--voice" : "desktop-pet-bubble"}
           >
-            <span>{bubble}</span>
+            <span>{runtimeHint || bubble}</span>
           </div>
         ) : null}
         </div>
@@ -623,3 +743,4 @@ export default function DesktopPetPage() {
     </div>
   )
 }
+

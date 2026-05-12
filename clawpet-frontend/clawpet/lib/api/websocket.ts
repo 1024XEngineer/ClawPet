@@ -10,6 +10,7 @@ import {
 
 const CHAT_ACTION = "chat"
 const AUDIO_FRAME_ACTION = "audio_frame"
+const AUDIO_DONE_ACTION = "audio_done"
 const DEBUG_WS = process.env.NODE_ENV !== "production"
 
 const PUSH_TYPE_AI_CHAT = "ai_chat"
@@ -1106,6 +1107,23 @@ export class PicoClawWebSocket {
       },
       { queueIfDisconnected: false },
     )
+    return true
+  }
+
+  sendAudioDone(sequence: number): boolean {
+    if (!Number.isFinite(sequence) || sequence <= 0) {
+      return false
+    }
+
+    if (this.wsMode !== "pet" || this.ws?.readyState !== WebSocket.OPEN) {
+      return false
+    }
+
+    this.sendRaw({
+      action: AUDIO_DONE_ACTION,
+      data: { seq: sequence },
+      request_id: `req-${++this.msgIdCounter}-${Date.now()}`,
+    })
     return true
   }
 

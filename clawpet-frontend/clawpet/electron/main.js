@@ -1936,6 +1936,18 @@ ipcMain.on('register-voice-shortcut', (_event, data) => {
   registerVoiceInputShortcut(keys, enabled, mode);
 });
 
+ipcMain.on('voice-input-state', (_event, payload) => {
+  if (petWindow && !petWindow.isDestroyed()) {
+    petWindow.webContents.send('voice-input-state-changed', payload || {});
+  }
+});
+
+ipcMain.on('pet-runtime-state', (_event, payload) => {
+  if (petWindow && !petWindow.isDestroyed()) {
+    petWindow.webContents.send('pet-runtime-state-changed', payload || {});
+  }
+});
+
 ipcMain.on('register-pet-click-through-shortcut', (_event, data) => {
   const { enabled, keys, mode } = data || {};
   logToFile(`[IPC] register-pet-click-through-shortcut enabled=${enabled} keys=${keys} mode=${mode}`);
@@ -1987,6 +1999,10 @@ ipcMain.on('window-toggle-maximize', (event) => {
 ipcMain.on('window-close', (event) => {
   const target = BrowserWindow.fromWebContents(event.sender);
   if (target && !target.isDestroyed()) {
+    if (target === settingsWindow) {
+      target.hide();
+      return;
+    }
     target.close();
   }
 });
@@ -2028,7 +2044,7 @@ ipcMain.on('maximize-settings', () => {
 // 设置窗口关闭
 ipcMain.on('close-settings', () => {
   if (settingsWindow && !settingsWindow.isDestroyed()) {
-    settingsWindow.close();
+    settingsWindow.hide();
   }
 });
 

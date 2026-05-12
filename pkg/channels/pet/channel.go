@@ -27,7 +27,7 @@ import (
 // 队列和超时配置默认值（当配置缺失时使用）
 const (
 	defaultAudioQueueSize   = 100             // 默认队列容量
-	defaultAudioWaitTimeout = 500 * time.Millisecond // 默认等待超时（兜底，前端应发 audio_done 替代）
+	defaultAudioWaitTimeout = 3 * time.Second // 默认等待超时（兜底）
 )
 
 // 语音分段符
@@ -48,29 +48,6 @@ func parsePureText(raw string) string {
 		}
 	}
 	return sb.String()
-}
-
-// splitSentences 按分隔符将文本分割成句子
-func splitSentences(text string) []string {
-	var sentences []string
-	runes := []rune(text)
-	start := 0
-	for i, r := range runes {
-		if strings.ContainsRune(voiceSegmentSeps, r) {
-			if i > start {
-				s := string(runes[start:i]) + string(r)
-				sentences = append(sentences, s)
-			}
-			start = i + 1
-		}
-	}
-	if start < len(runes) {
-		sentences = append(sentences, string(runes[start:]))
-	}
-	if len(sentences) == 0 {
-		sentences = append(sentences, text)
-	}
-	return sentences
 }
 
 func inferAudioMimeFromBytes(raw []byte) string {
@@ -128,7 +105,6 @@ type PetChannel struct {
 	cancel                context.CancelFunc  // 取消函数
 	service               *pet.PetService     // 桌宠服务
 	voiceSynthesizer      *voice.Synthesizer  // 语音合成器
-	activeStreamers       sync.Map            // sessionID → *petStreamer
 }
 
 // petConn 表示一个WebSocket连接
@@ -391,7 +367,7 @@ func (c *PetChannel) sendToClient(sessionID, content string) {
 		logger.Infof("pet: checking connection conn_id=%s, sessionID=%s", connID, pc.sessionID)
 		if pc.sessionID == sessionID || sessionID == "broadcast" {
 			logger.Infof("pet: matched! sending to conn_id=%s", connID)
-			data, _ := json.Marshal(map[string]string{"text": content})
+			data, _ := json.Marshal(content)
 			pc.writeJSON(Response{
 				Status: pet.StatusOK,
 				Action: pet.ActionChat,
@@ -591,13 +567,37 @@ func (c *PetChannel) readLoop(pc *petConn) {
 
 // handleRequest 处理客户端请求
 func (c *PetChannel) handleRequest(pc *petConn, req Request) {
-	// 音频播放完成确认走快速路径，不经过 service
 	if req.Action == pet.ActionAudioDone {
-		c.handleAudioDone(pc.sessionID, req)
+		c.handleAudioDoneRequest(pc, req)
 		return
 	}
 	logger.Infof("pet: handleRequest called, action=%s, conn_id=%s", req.Action, pc.id)
 	c.service.HandleRequest(pc.id, req)
+}
+
+func (c *PetChannel) handleAudioDoneRequest(pc *petConn, req Request) {
+	var data pet.AudioDoneRequest
+	if err := json.Unmarshal(req.Data, &data); err != nil || data.Seq <= 0 {
+		_ = pc.writeJSON(Response{
+			Status:    pet.StatusError,
+			Action:    req.Action,
+			Error:     "invalid audio_done data",
+			RequestID: req.RequestID,
+		})
+		return
+	}
+
+	streamer := getActivePetStreamer(pc.sessionID)
+	if streamer != nil {
+		streamer.HandleAudioDone(data.Seq)
+	}
+
+	_ = pc.writeJSON(Response{
+		Status:    pet.StatusOK,
+		Action:    req.Action,
+		Data:      mustMarshal(map[string]any{"received": streamer != nil, "seq": data.Seq}),
+		RequestID: req.RequestID,
+	})
 }
 
 // writeJSON 发送JSON到客户端
@@ -696,8 +696,7 @@ func (c *PetChannel) BeginStream(ctx context.Context, sessionID string) (channel
 
 	// 启动音频播放控制 goroutine
 	go streamer.audioPlayLoop()
-
-	c.activeStreamers.Store(sessionID, streamer)
+	setActivePetStreamer(sessionID, streamer)
 
 	return streamer, nil
 }
@@ -758,6 +757,9 @@ func (s *petStreamer) Update(ctx context.Context, content string) error {
 // 注意：不再发送重复文本，只发送情绪状态汇总
 // 流式结束后等待剩余音频发送完毕
 func (s *petStreamer) Finalize(ctx context.Context, content string) error {
+	if s != nil && s.channel != nil {
+		defer clearActivePetStreamer(s.sessionID, s)
+	}
 
 	logger.DebugCF("pet", "Finalize called", map[string]any{
 		"content": content,
@@ -807,9 +809,6 @@ func (s *petStreamer) Finalize(ctx context.Context, content string) error {
 	s.chatID++
 	s.channel.sendStreamChunk(s.sessionID, s.chatID, "final", "", true)
 
-	// 从活跃流式映射中移除
-	s.channel.activeStreamers.Delete(s.sessionID)
-
 	return nil
 }
 
@@ -826,6 +825,7 @@ func (s *petStreamer) Cancel(ctx context.Context) {
 	if s.audioQueue != nil {
 		s.audioQueue.Clear()
 	}
+	clearActivePetStreamer(s.sessionID, s)
 }
 
 // findSegment 查找第一个完整的段落（以换行或句号结尾）
@@ -1323,6 +1323,7 @@ func (s *petStreamer) sendAudioSegmentAsync(seg *voice.AudioSegment, isFinal boo
 			"seq":  seg.Seq,
 			"text": seg.Text,
 		})
+		s.HandleAudioDone(seg.Seq)
 		return
 	}
 
@@ -1338,6 +1339,7 @@ func (s *petStreamer) sendAudioSegmentAsync(seg *voice.AudioSegment, isFinal boo
 			"seq":  seg.Seq,
 			"text": seg.Text,
 		})
+		s.HandleAudioDone(seg.Seq)
 		return
 	}
 	encoded := base64.StdEncoding.EncodeToString(seg.AudioData)
@@ -1392,26 +1394,6 @@ func (s *petStreamer) sendAudioSegmentAsync(seg *voice.AudioSegment, isFinal boo
 		s.waitTimer.Reset(defaultAudioWaitTimeout)
 	}
 	s.waitMu.Unlock()
-}
-
-// handleAudioDone 处理前端发起的 audio_done 请求
-func (c *PetChannel) handleAudioDone(sessionID string, req Request) {
-	var body struct {
-		Seq int64 `json:"seq"`
-	}
-	if req.Data != nil {
-		_ = json.Unmarshal(req.Data, &body)
-	}
-	val, ok := c.activeStreamers.Load(sessionID)
-	if !ok {
-		logger.DebugCF("pet", "handleAudioDone: no active streamer for session", map[string]any{
-			"session": sessionID,
-			"seq":     body.Seq,
-		})
-		return
-	}
-	streamer := val.(*petStreamer)
-	streamer.HandleAudioDone(body.Seq)
 }
 
 // HandleAudioDone 处理前端音频播放完毕的通知

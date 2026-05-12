@@ -480,6 +480,12 @@ func (s *PetService) PushToolEnd(tool string, data json.RawMessage) {
 func (s *PetService) RegisterSession(connID, sessionID string) {
 	s.mu.Lock()
 	s.connSessions[connID] = sessionID
+	if sessionID != "" && s.activeSessionID == "" {
+		s.activeSessionID = sessionID
+		if s.charManager != nil {
+			s.activeCharacterID = s.charManager.GetCurrentID()
+		}
+	}
 	s.mu.Unlock()
 }
 
@@ -750,16 +756,36 @@ func (s *PetService) HandleRequest(connID string, req Request) error {
 func (s *PetService) handleChat(sessionID string, req Request) error {
 	var chatReq ChatRequest
 	if err := json.Unmarshal(req.Data, &chatReq); err != nil {
+		logger.WarnCF("pet", "PetService: handleChat invalid chat data", map[string]any{
+			"session_id": sessionID,
+			"request_id": req.RequestID,
+			"raw_data":   string(req.Data),
+			"error":      err.Error(),
+		})
 		return s.sendError(sessionID, req.Action, "invalid chat data")
 	}
+	logger.InfoCF("pet", "PetService: handleChat received", map[string]any{
+		"session_id":       sessionID,
+		"request_id":       req.RequestID,
+		"session_key":      chatReq.SessionKey,
+		"text_len":         len(chatReq.Text),
+		"text_preview":     chatReq.Text,
+		"text_is_empty":    chatReq.Text == "",
+		"session_key_empty": chatReq.SessionKey == "",
+	})
 
 	char := s.charManager.GetCurrent()
 	if char == nil {
+		logger.WarnCF("pet", "PetService: handleChat no active character", map[string]any{
+			"session_id": sessionID,
+			"request_id": req.RequestID,
+		})
 		return s.sendError(sessionID, req.Action, "no active character")
 	}
 
 	// 用户一说话，就顺手记一笔活动记录，
 	// 同时触发一次主动性“即时评估”。
+	s.markSessionInteraction(sessionID)
 	s.recordUserActivity(sessionID, chatReq.Text)
 	if s.proactiveManager != nil {
 		s.proactiveManager.Trigger("user_message")
@@ -776,10 +802,29 @@ func (s *PetService) handleChat(sessionID string, req Request) error {
 		Content:  chatReq.Text,
 		Metadata: map[string]string{"type": "chat", "conn_id": req.RequestID},
 	}
+	logger.InfoCF("pet", "PetService: handleChat publishing inbound", map[string]any{
+		"session_id":   sessionID,
+		"request_id":   req.RequestID,
+		"session_key":  chatReq.SessionKey,
+		"peer_kind":    char.ID,
+		"content_len":  len(chatReq.Text),
+		"content_text": chatReq.Text,
+	})
 
 	if err := s.msgBus.PublishInbound(context.Background(), inbound); err != nil {
+		logger.WarnCF("pet", "PetService: handleChat publish inbound failed", map[string]any{
+			"session_id":  sessionID,
+			"request_id":  req.RequestID,
+			"session_key": chatReq.SessionKey,
+			"error":       err.Error(),
+		})
 		return s.sendError(sessionID, req.Action, err.Error())
 	}
+	logger.InfoCF("pet", "PetService: handleChat publish inbound succeeded", map[string]any{
+		"session_id":  sessionID,
+		"request_id":  req.RequestID,
+		"session_key": chatReq.SessionKey,
+	})
 
 	return s.sendResponse(sessionID, req.Action, map[string]string{"session_key": chatReq.SessionKey})
 }

@@ -130,6 +130,18 @@
   display: block;
 }
 
+.desktop-pet-bubble--voice {
+  margin-top: -244px;
+  width: auto;
+  min-width: 116px;
+  max-width: 190px;
+  padding: 7px 12px;
+  border-color: #f3b34f;
+  color: #8b5a22;
+  font-weight: 600;
+  box-shadow: 0 10px 24px -18px rgba(168, 110, 38, 0.7);
+}
+
 .desktop-pet-state {
   display: none;
 }

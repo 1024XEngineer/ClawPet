@@ -252,10 +252,10 @@ export function ChatArea({ chat, layoutMode = "full" }: ChatAreaProps) {
                     <div className="flex justify-start">
                       <div className="rounded-[1.2rem] border border-white/75 bg-white/82 px-4 py-2 text-sm text-[#6f533a] shadow-sm">
                         {toolStatus === "error"
-                          ? "工具调用失败，正在尝试恢复…"
+                          ? "工具调用失败，正在尝试恢复..."
                           : toolStatus === "done"
-                            ? "工具调用完成，正在整理结果…"
-                            : "我正在调用工具处理你的请求…"}
+                            ? "工具调用完成，正在整理结果..."
+                            : "我正在调用工具处理你的请求..."}
                       </div>
                     </div>
                   )}
@@ -478,7 +478,7 @@ export function ChatArea({ chat, layoutMode = "full" }: ChatAreaProps) {
                   <div className="text-amber-700">录音中...</div>
                 )}
                 {voicePhase === "recognizing" && (
-                  <div className="text-[#7b5b3f]">语音识别中...</div>
+                  <div className="text-[#7b5b3f]">识别中...</div>
                 )}
                 {voiceError && (
                   <div className="text-rose-700">{voiceError}</div>
@@ -494,3 +494,4 @@ export function ChatArea({ chat, layoutMode = "full" }: ChatAreaProps) {
     </section>
   )
 }
+

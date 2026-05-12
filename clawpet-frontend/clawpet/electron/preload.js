@@ -273,6 +273,18 @@ contextBridge.exposeInMainWorld('electronAPI', {
     return () => ipcRenderer.removeListener('voice-shortcut-released', handler);
   },
 
+  onVoiceInputStateChanged: (callback) => {
+    const listener = (_event, payload) => callback(payload);
+    ipcRenderer.on('voice-input-state-changed', listener);
+    return () => ipcRenderer.removeListener('voice-input-state-changed', listener);
+  },
+
+  onPetRuntimeStateChanged: (callback) => {
+    const listener = (_event, payload) => callback(payload);
+    ipcRenderer.on('pet-runtime-state-changed', listener);
+    return () => ipcRenderer.removeListener('pet-runtime-state-changed', listener);
+  },
+
   /**
    * 注册/更新语音输入快捷键
    * @param {object} data - 快捷键配置
@@ -284,20 +296,28 @@ contextBridge.exposeInMainWorld('electronAPI', {
     ipcRenderer.send('register-voice-shortcut', data);
   },
 
+  reportVoiceInputState: (data) => {
+    ipcRenderer.send('voice-input-state', data);
+  },
+
+  reportPetRuntimeState: (data) => {
+    ipcRenderer.send('pet-runtime-state', data);
+  },
+
   /**
-   * 显示错误通知（广播到所有窗口）
-   * @param {object} data - 错误数据
-   * @param {string} data.level - 错误级别
-   * @param {string} data.code - 错误码
-   * @param {string} data.message - 错误消息
+   * ???????????????
+   * @param {object} data - ????
+   * @param {string} data.level - ????
+   * @param {string} data.code - ???
+   * @param {string} data.message - ????
    */
   showErrorNotification: (data) => {
     ipcRenderer.send('show-error-notification', data);
   },
 
   /**
-   * 监听错误通知
-   * @param {function} callback - 回调函数
+   * ??????
+   * @param {function} callback - ????
    */
   onErrorNotification: (callback) => {
     ipcRenderer.on('error-notification', (_event, data) => callback(data));
