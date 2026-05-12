@@ -1395,9 +1395,9 @@ function createPetWindow() {
     petDragActive = false;
     schedulePetTopClamp(40);
     syncBubbleWindowToPet({ show: bubbleWindow && !bubbleWindow.isDestroyed() && bubbleWindow.isVisible() });
-    // Restore whatever state was active before dragging started
+    // Restore previous overlay (think/search) if one was active before drag started
     if (petWindow && !petWindow.isDestroyed()) {
-      petWindow.webContents.send('bubble-show', { text: null, emotion: '', clearOverlay: true });
+      petWindow.webContents.send('bubble-show', { text: null, emotion: '', popOverlay: true });
     }
   });
 
@@ -2052,8 +2052,8 @@ ipcMain.on('show-bubble', (_event, data) => {
   const text = typeof data?.text === 'string' ? data.text.trim() : '';
   const emotion = typeof data?.emotion === 'string' ? data.emotion.trim() : '';
   const animation = typeof data?.animation === 'string' ? data.animation.trim() : '';
-  const isPetOverlay = data?.persist === true || data?.clearOverlay === true;
-  const fingerprint = `${audio}|${text}|${emotion}|${animation}|${data?.clearOverlay ? '1' : ''}`;
+  const isPetOverlay = data?.persist === true || data?.clearOverlay === true || data?.popOverlay === true;
+  const fingerprint = `${audio}|${text}|${emotion}|${animation}|${data?.clearOverlay ? '1' : ''}|${data?.popOverlay ? '1' : ''}`;
   const now = Date.now();
   const hasDetachedBubbleWindow = bubbleWindow && !bubbleWindow.isDestroyed();
 

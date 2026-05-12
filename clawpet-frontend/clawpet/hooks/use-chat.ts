@@ -1373,7 +1373,9 @@ export function useChat(options: UseChatOptions = {}): UseChatResult {
         wsRef.current.send(outbound, activeSessionIdRef.current)
         window.electronAPI?.showBubble?.({ text: null, animation: "think" })
       } catch (err) {
+        window.electronAPI?.showBubble?.({ text: null, emotion: '', clearOverlay: true } as BubblePayload)
         assistantTurnActiveRef.current = false
+        isToolBusyRef.current = false
         setIsTyping(false)
         setIsTurnActive(false)
         setToolStatus("idle")

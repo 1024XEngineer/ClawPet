@@ -30,6 +30,7 @@ interface BubbleData {
   duration_ms?: number
   persist?: boolean
   clearOverlay?: boolean
+  popOverlay?: boolean
 }
 
 function normalizeAudioMimeType(mime?: string): string | null {
@@ -201,6 +202,7 @@ export default function DesktopPetPage() {
   const currentAudioIdRef = useRef<number>(0)
   const baseStateRef = useRef<PetState>("standby")
   const overlayStateRef = useRef<PetState | null>(null)
+  const prevOverlayStateRef = useRef<PetState | null>(null)
   const overlayLockedUntilRef = useRef<number>(0)
   const isDraggingRef = useRef<boolean>(false)
   const sleepTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
@@ -231,13 +233,18 @@ export default function DesktopPetPage() {
     }
   }, [])
 
-  // Set an overlay state with priority enforcement and optional minimum hold duration
+  // Set an overlay state with priority enforcement and optional minimum hold duration.
+  // When "move" displaces an existing overlay, the displaced overlay is saved so drag-end
+  // can restore it via popOverlayState() instead of falling all the way back to base.
   const setOverlayState = useCallback((state: PetState, minMs = 0) => {
     const now = Date.now()
     const current = overlayStateRef.current
     const currentPrio = current !== null ? (STATE_PRIORITY[current] ?? 0) : -1
     const newPrio = STATE_PRIORITY[state] ?? 0
     if (current === null || newPrio >= currentPrio || now >= overlayLockedUntilRef.current) {
+      if (state === "move" && current !== null) {
+        prevOverlayStateRef.current = current
+      }
       overlayStateRef.current = state
       overlayLockedUntilRef.current = minMs > 0 ? now + minMs : 0
       const prevImage = currentImageRef.current
@@ -246,13 +253,27 @@ export default function DesktopPetPage() {
     }
   }, [])
 
-  // Clear current overlay and restore the base state
+  // Clear ALL overlays and restore the base state (used when a turn fully ends)
   const clearOverlayState = useCallback(() => {
     overlayStateRef.current = null
+    prevOverlayStateRef.current = null
     overlayLockedUntilRef.current = 0
     isDraggingRef.current = false
     applyCurrentState()
   }, [applyCurrentState])
+
+  // Pop only the topmost overlay (used when drag ends: restores think/search if active)
+  const popOverlayState = useCallback(() => {
+    const restored = prevOverlayStateRef.current
+    prevOverlayStateRef.current = null
+    overlayStateRef.current = restored
+    overlayLockedUntilRef.current = 0
+    isDraggingRef.current = false
+    const target = restored ?? baseStateRef.current
+    const prevImage = currentImageRef.current
+    setPetState(target)
+    setCurrentImage(getPetImage(target, prevImage))
+  }, [])
 
   const resetSleepTimer = useCallback(() => {
     if (sleepTimerRef.current) clearTimeout(sleepTimerRef.current)
@@ -288,7 +309,13 @@ export default function DesktopPetPage() {
         timestamp: Date.now()
       })
 
-      // clearOverlay: restore base state, don't start bubble
+      // popOverlay: drag ended — restore previous overlay (think/search) if any
+      if (data.popOverlay) {
+        popOverlayState()
+        return
+      }
+
+      // clearOverlay: turn fully ended — clear all overlays, restore base
       if (data.clearOverlay) {
         if (data.text !== null) setBubble(data.text || "")
         clearOverlayState()
@@ -475,7 +502,7 @@ export default function DesktopPetPage() {
         clearTimeout(sleepTimerRef.current)
       }
     }
-  }, [transitionTo, applyCurrentState, setBaseState, setOverlayState, clearOverlayState, resetSleepTimer])
+  }, [transitionTo, applyCurrentState, setBaseState, setOverlayState, clearOverlayState, popOverlayState, resetSleepTimer])
 
   useEffect(() => {
     const handlePointerMove = (event: globalThis.MouseEvent) => {

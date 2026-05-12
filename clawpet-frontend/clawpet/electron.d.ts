@@ -10,7 +10,8 @@ declare global {
     audio?: string
     duration_ms?: number
     persist?: boolean      // set animation as overlay, no auto-revert
-    clearOverlay?: boolean // clear current overlay, restore base state
+    clearOverlay?: boolean // clear ALL overlays, restore base state
+    popOverlay?: boolean   // pop top overlay only (e.g. drag ended, restore previous overlay)
   }
 
   interface Window {
