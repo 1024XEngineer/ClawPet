@@ -182,7 +182,7 @@ export function useConfig() {
 export function useUpdateConfig() {
   return useSWRMutation(
     'config',
-    (_, { arg }: { arg: Partial<Config> }) => configApi.update(arg)
+    (_, { arg }: { arg: Partial<Config> }) => configApi.patch(arg)
   )
 }
 

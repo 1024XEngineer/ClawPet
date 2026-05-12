@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useRef, useState } from "react"
 
-import { getWebSocketInstance, type WSEvent } from "@/lib/api"
+import { getWebSocketInstance, configApi, type WSEvent } from "@/lib/api"
 
 interface UseVoiceInputOptions {
   onResult?: (text: string) => void
@@ -25,6 +25,8 @@ const STOP_LISTENING_EXTRA_WAIT_MS = 400
 const POLL_TICK_LOG_INTERVAL = 12
 const SCRIPT_BACKEND_BOOT_MS = 700
 const RECOGNIZING_NO_PROGRESS_MS = 15000
+const CAPTURE_HEALTH_CHECK_MS = 5000
+const MIN_FRAMES_BEFORE_STOP = 5
 const VOICE_BUILD_TAG = "voice-v2026-05-04-worklet-first"
 
 function resolveScriptProcessorForce(): { forced: boolean; reason: string } {
@@ -102,7 +104,12 @@ function downsampleTo16k(input: Float32Array, sourceSampleRate: number): Float32
 
 export function useVoiceInput(options: UseVoiceInputOptions = {}) {
   const { onResult, onError, canRecord = true, sessionKey = "" } = options
-  const [isListening, setIsListening] = useState(false)
+  const [isListening, _setIsListening] = useState(false)
+  const isListeningRef = useRef(false)
+  const setIsListening = useCallback((v: boolean) => {
+    isListeningRef.current = v
+    _setIsListening(v)
+  }, [])
   const [isSupported, setIsSupported] = useState(false)
   const [phase, setPhase] = useState<VoicePhase>("idle")
   const [error, setError] = useState<string | null>(null)
@@ -150,7 +157,6 @@ export function useVoiceInput(options: UseVoiceInputOptions = {}) {
   const scriptProcessSampleCountRef = useRef(0)
   const stopListeningRef = useRef<(() => Promise<void>) | null>(null)
   const startListeningRef = useRef<(() => Promise<void>) | null>(null)
-  const isListeningRef = useRef(false)
   const stopCaptureOnUnmountRef = useRef<(() => void) | null>(null)
   const lastWsErrorRef = useRef<{ message: string; at: number }>({ message: "", at: 0 })
   const visibilityHandlerRef = useRef<(() => void) | null>(null)
@@ -159,6 +165,8 @@ export function useVoiceInput(options: UseVoiceInputOptions = {}) {
   const initializingRef = useRef(false)
   const startingRef = useRef(false)
   const stoppingRef = useRef(false)
+  const holdStartedAtRef = useRef(0)
+  const holdActiveRef = useRef(false)
 
   const debugLog = useCallback((message: string, data?: Record<string, unknown>) => {
     if (!DEBUG_VOICE) {
@@ -1350,21 +1358,11 @@ export function useVoiceInput(options: UseVoiceInputOptions = {}) {
 
   useEffect(() => {
     stopListeningRef.current = stopListening
-    return () => {
-      stopListeningRef.current = null
-    }
   }, [stopListening])
 
   useEffect(() => {
     startListeningRef.current = startListening
-    return () => {
-      startListeningRef.current = null
-    }
   }, [startListening])
-
-  useEffect(() => {
-    isListeningRef.current = isListening
-  }, [isListening])
 
   const toggleListening = useCallback(() => {
     try {
@@ -1391,13 +1389,18 @@ export function useVoiceInput(options: UseVoiceInputOptions = {}) {
     }
   }, [isListening, onError, setPhaseState, startListening, stopCapture, stopListening])
 
-  // 监听全局快捷键触发的语音输入
+  // 监听全局快捷键触发的语音输入（Toggle 模式）
   useEffect(() => {
     if (!window.electronAPI?.onVoiceShortcutTriggered) {
       return
     }
 
     const handler = () => {
+      // Hold 模式 fallback 防冲突：刚由 onHeld 启动的录制，500ms 内忽略 toggle
+      if (isListeningRef.current && Date.now() - holdStartedAtRef.current < 500) {
+        console.warn('[voice-input] toggle suppressed: within hold cooldown')
+        return
+      }
       if (isListeningRef.current) {
         stopListeningRef.current?.()
       } else {
@@ -1405,11 +1408,61 @@ export function useVoiceInput(options: UseVoiceInputOptions = {}) {
       }
     }
 
-    window.electronAPI.onVoiceShortcutTriggered(handler)
+    const cleanupTriggered = window.electronAPI.onVoiceShortcutTriggered(handler)
+    return () => { cleanupTriggered?.() }
+  }, [])
+
+  // 监听快捷键 Hold 模式（按住录音，松手停止）
+  useEffect(() => {
+    const api = window.electronAPI
+    if (!api?.onVoiceShortcutHeld || !api?.onVoiceShortcutReleased) return
+
+    const onHeld = () => {
+      console.warn('[voice-input] hold: onHeld triggered, isListeningRef=', isListeningRef.current, 'holdActiveRef=', holdActiveRef.current)
+      if (holdActiveRef.current) {
+        console.warn('[voice-input] hold: key repeat ignored')
+        return
+      }
+      holdActiveRef.current = true
+      if (!isListeningRef.current) {
+        isListeningRef.current = true
+        holdStartedAtRef.current = Date.now()
+        console.warn('[voice-input] hold: starting listening')
+        startListeningRef.current?.()
+      }
+    }
+    const onReleased = () => {
+      console.warn('[voice-input] hold: onReleased triggered, holdActiveRef cleared')
+      holdActiveRef.current = false
+      if (isListeningRef.current) {
+        isListeningRef.current = false
+        console.warn('[voice-input] hold: stopping listening')
+        stopListeningRef.current?.()
+      }
+    }
+
+    const cleanupHeld = api.onVoiceShortcutHeld(onHeld)
+    const cleanupReleased = api.onVoiceShortcutReleased(onReleased)
 
     return () => {
-      // cleanup if needed
+      cleanupHeld?.()
+      cleanupReleased?.()
     }
+  }, [])
+
+  // 页面加载时自动注册已保存的快捷键到 Electron 主进程
+  useEffect(() => {
+    if (!window.electronAPI?.registerVoiceShortcut) return
+    configApi.get().then(res => {
+      const ks = (res as Record<string, unknown>).keyboard_shortcuts as Record<string, unknown> | undefined
+      if (!ks) return
+      const normalize = (s: string) => s.trim().replace(/Ctrl/gi, 'CommandOrControl').replace(/Cmd/gi, 'Command').replace(/Control/gi, 'Control')
+      window.electronAPI!.registerVoiceShortcut!({
+        enabled: ks.enabled !== false,
+        keys: normalize((ks.voice_input as string) || 'Ctrl+P'),
+        mode: (ks.voice_input_mode as string) || 'toggle',
+      })
+    }).catch(() => {})
   }, [])
 
   return {

@@ -14,6 +14,8 @@ type PetState =
   | "celebrate"
   | "shakeHead"
   | "stayOut"
+  | "think"
+  | "search"
 
 interface BubbleData {
   text: string | null
@@ -62,7 +64,7 @@ function decodeBase64Audio(value: string): Uint8Array | null {
 }
 
 const happyImages = ["/pets/happy1.gif", "/pets/happy2.gif"]
-const standbyImages = ["/pets/standby1.gif", "/pets/standby2.gif", "/pets/standby3.gif"]
+const standbyImages = ["/pets/standby1.gif", "/pets/standby2.gif", "/pets/standby3.gif", "/pets/sleep.gif", "/pets/move.gif"]
 
 const getPetImage = (state: PetState, prevImage?: string): string => {
   switch (state) {
@@ -80,6 +82,10 @@ const getPetImage = (state: PetState, prevImage?: string): string => {
       return "/pets/shake-head_out.gif"
     case "stayOut":
       return "/pets/stay_out.gif"
+    case "think":
+      return "/pets/think.gif"
+    case "search":
+      return "/pets/search.gif"
     case "standby": {
       let img = standbyImages[Math.floor(Math.random() * standbyImages.length)]
       if (prevImage && standbyImages.includes(prevImage) && standbyImages.length > 1) {
@@ -121,6 +127,8 @@ const animationToPetState: Record<string, PetState> = {
   "shake-head": "shakeHead",
   "stay-out": "stayOut",
   "init.png": "idle",
+  think: "think",
+  search: "search",
 }
 
 const resolvePetState = (data: BubbleData): PetState => {
@@ -145,7 +153,9 @@ const resolvePetState = (data: BubbleData): PetState => {
       candidate === "standby" ||
       candidate === "celebrate" ||
       candidate === "shakeHead" ||
-      candidate === "stayOut"
+      candidate === "stayOut" ||
+      candidate === "think" ||
+      candidate === "search"
     ) {
       return candidate
     }
@@ -322,6 +332,8 @@ export default function DesktopPetPage() {
         }
 
         tryPlayWithMime(0)
+      } else if (data.text === null && data.animation && data.duration_ms == null) {
+        // 纯动画事件（无定时器），等待后续 bubble-show 覆盖
       } else {
         const hintedDuration = Number(data.duration_ms)
         const readingTime = Math.max(3000, Math.min((data.text?.length || 0) * 80, 30000))

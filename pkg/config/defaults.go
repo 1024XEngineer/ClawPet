@@ -527,8 +527,10 @@ func DefaultConfig() *Config {
 			EchoTranscription: false,
 		},
 		KeyboardShortcuts: KeyboardShortcuts{
-			Enabled:    true,
-			VoiceInput: "CommandOrControl+P",
+			Enabled:             true,
+			VoiceInput:          "CommandOrControl+P",
+			VoiceInputMode:      "toggle",
+			PetClickThroughMode: "toggle",
 		},
 		BuildInfo: BuildInfo{
 			Version:   Version,

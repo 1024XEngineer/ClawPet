@@ -33,6 +33,7 @@ import {
 } from "@/lib/api"
 import { openOnboardingPopup } from "@/lib/onboarding"
 import { cn } from "@/lib/utils"
+import { KeyCapture } from "./key-capture"
 import { ModelsPanel } from "./models-panel"
 import { VoiceModelsPanel } from "./voice-models-panel"
 import { AsrModelsPanel } from "./asr-models-panel"
@@ -186,12 +187,15 @@ export function ConfigPage() {
   const [showAsrModelsPanel, setShowAsrModelsPanel] = useState(false)
   const [voiceInputShortcut, setVoiceInputShortcut] = useState("Ctrl+P")
   const [voiceInputShortcutEnabled, setVoiceInputShortcutEnabled] = useState(true)
+  const [voiceInputMode, setVoiceInputMode] = useState<"toggle" | "hold">("toggle")
   const [petClickThroughShortcut, setPetClickThroughShortcut] = useState("Ctrl+Shift+P")
   const [petClickThroughEnabled, setPetClickThroughEnabled] = useState(true)
+  const [petClickThroughMode, setPetClickThroughMode] = useState<"toggle" | "hold">("toggle")
+  const [shortcutSaving, setShortcutSaving] = useState(false)
 
   useEffect(() => {
-    if (configData?.config?.keyboard_shortcuts) {
-      const ks = configData.config.keyboard_shortcuts
+    if (configData?.keyboard_shortcuts) {
+      const ks = configData.keyboard_shortcuts
       if (ks.enabled !== undefined) {
         setVoiceInputShortcutEnabled(ks.enabled)
       }
@@ -204,15 +208,25 @@ export function ConfigPage() {
       if (ks.pet_click_through_shortcut !== undefined && ks.pet_click_through_shortcut !== "") {
         setPetClickThroughShortcut(simplifyShortcut(ks.pet_click_through_shortcut))
       }
+      if (ks.voice_input_mode === "hold") {
+        setVoiceInputMode("hold")
+      } else {
+        setVoiceInputMode("toggle")
+      }
+      if (ks.pet_click_through_mode === "hold") {
+        setPetClickThroughMode("hold")
+      } else {
+        setPetClickThroughMode("toggle")
+      }
     }
   }, [configData])
 
   useEffect(() => {
-    if (!configData?.config || hasChanges) {
+    if (!configData || hasChanges) {
       return
     }
-    setFormData(mapConfigToForm(configData.config))
-    setRawJson(stringifyConfig(configData.config))
+    setFormData(mapConfigToForm(configData))
+    setRawJson(stringifyConfig(configData))
   }, [configData, hasChanges])
 
   useEffect(() => {
@@ -339,7 +353,7 @@ export function ConfigPage() {
   }, [gatewayStatus])
 
   function applySnapshot(config?: Config) {
-    const nextConfig = config ?? configData?.config
+    const nextConfig = config ?? configData
     setFormData(mapConfigToForm(nextConfig))
     setRawJson(stringifyConfig(nextConfig))
     setHasChanges(false)
@@ -464,14 +478,22 @@ export function ConfigPage() {
           keyboard_shortcuts: {
             enabled: voiceInputShortcutEnabled,
             voice_input: normalizeShortcut(voiceInputShortcut),
+            voice_input_mode: voiceInputMode,
             pet_click_through: petClickThroughEnabled,
             pet_click_through_shortcut: normalizeShortcut(petClickThroughShortcut),
+            pet_click_through_mode: petClickThroughMode,
           },
         })
 
         window.electronAPI?.registerVoiceShortcut?.({
           enabled: voiceInputShortcutEnabled,
           keys: normalizeShortcut(voiceInputShortcut),
+          mode: voiceInputMode,
+        })
+        window.electronAPI?.registerPetClickThroughShortcut?.({
+          enabled: petClickThroughEnabled,
+          keys: normalizeShortcut(petClickThroughShortcut),
+          mode: petClickThroughMode,
         })
         window.electronAPI?.registerPetClickThroughShortcut?.({
           enabled: petClickThroughEnabled,
@@ -485,7 +507,7 @@ export function ConfigPage() {
       }
 
       const refreshed = await mutate()
-      applySnapshot(refreshed?.config ?? configData?.config)
+      applySnapshot(refreshed ?? configData)
       setActionState({ type: "success", message: "配置已保存。" })
     } catch (saveError) {
       setActionState({
@@ -887,19 +909,41 @@ export function ConfigPage() {
                       </div>
                       {voiceInputShortcutEnabled && (
                         <div className="dashboard-card rounded-[1rem] border border-white/80 bg-white/82 px-3 py-3">
-                          <input
-                            type="text"
+                          <KeyCapture
                             value={voiceInputShortcut}
-                            onChange={(e) => {
-                              setVoiceInputShortcut(e.target.value)
+                            onChange={(v) => {
+                              setVoiceInputShortcut(v)
                               setHasChanges(true)
                             }}
-                            placeholder="Ctrl+P"
-                            className="mt-1 w-full rounded-lg border border-amber-200 bg-amber-50/50 px-3 py-2 text-xs text-[#4f3725] placeholder-[#9b7b62] focus:border-amber-400 focus:outline-none focus:ring-1 focus:ring-amber-300"
                           />
-                          <p className="mt-1 text-xs text-[#9b7b62]">
-                            格式: Ctrl+P, Ctrl+Shift+P, Alt+A
-                          </p>
+                          <div className="mt-3 flex items-center gap-4">
+                            <label className="flex items-center gap-2 text-xs text-[#4f3725] cursor-pointer">
+                              <input
+                                type="radio"
+                                name="voice-input-mode"
+                                checked={voiceInputMode === "toggle"}
+                                onChange={() => {
+                                  setVoiceInputMode("toggle")
+                                  setHasChanges(true)
+                                }}
+                                className="accent-amber-600"
+                              />
+                              按一下切换
+                            </label>
+                            <label className="flex items-center gap-2 text-xs text-[#4f3725] cursor-pointer">
+                              <input
+                                type="radio"
+                                name="voice-input-mode"
+                                checked={voiceInputMode === "hold"}
+                                onChange={() => {
+                                  setVoiceInputMode("hold")
+                                  setHasChanges(true)
+                                }}
+                                className="accent-amber-600"
+                              />
+                              按住录音
+                            </label>
+                          </div>
                         </div>
                       )}
 
@@ -936,25 +980,104 @@ export function ConfigPage() {
                       </div>
                       {petClickThroughEnabled && (
                         <div className="dashboard-card rounded-[1rem] border border-white/80 bg-white/82 px-3 py-3">
-                          <input
-                            type="text"
+                          <KeyCapture
                             value={petClickThroughShortcut}
-                            onChange={(e) => {
-                              setPetClickThroughShortcut(e.target.value)
+                            onChange={(v) => {
+                              setPetClickThroughShortcut(v)
                               setHasChanges(true)
                             }}
-                            placeholder="Ctrl+Shift+P"
-                            className="mt-1 w-full rounded-lg border border-amber-200 bg-amber-50/50 px-3 py-2 text-xs text-[#4f3725] placeholder-[#9b7b62] focus:border-amber-400 focus:outline-none focus:ring-1 focus:ring-amber-300"
                           />
-                          <p className="mt-1 text-xs text-[#9b7b62]">
-                            格式: Ctrl+Shift+P, Ctrl+Alt+T
-                          </p>
+                          <div className="mt-3 flex items-center gap-4">
+                            <label className="flex items-center gap-2 text-xs text-[#4f3725] cursor-pointer">
+                              <input
+                                type="radio"
+                                name="pet-click-mode"
+                                checked={petClickThroughMode === "toggle"}
+                                onChange={() => {
+                                  setPetClickThroughMode("toggle")
+                                  setHasChanges(true)
+                                }}
+                                className="accent-amber-600"
+                              />
+                              按一下切换
+                            </label>
+                            <label className="flex items-center gap-2 text-xs text-[#4f3725] cursor-pointer">
+                              <input
+                                type="radio"
+                                name="pet-click-mode"
+                                checked={petClickThroughMode === "hold"}
+                                onChange={() => {
+                                  setPetClickThroughMode("hold")
+                                  setHasChanges(true)
+                                }}
+                                className="accent-amber-600"
+                              />
+                              按住穿透
+                            </label>
+                          </div>
                         </div>
                       )}
+                      <div className="dashboard-card rounded-[1rem] border border-white/80 bg-white/82 px-3 py-3 mt-3">
+                        <button
+                          type="button"
+                          onClick={async () => {
+                            if (shortcutSaving) return
+                            setShortcutSaving(true)
+                            setActionState(null)
+                            try {
+                              const token = window.electronAPI?.getLauncherToken?.() || 'goclaw-local-token'
+                              const res = await fetch('http://127.0.0.1:18800/api/config', {
+                                method: 'PATCH',
+                                headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + token },
+                                body: JSON.stringify({
+                                  keyboard_shortcuts: {
+                                    enabled: voiceInputShortcutEnabled,
+                                    voice_input: normalizeShortcut(voiceInputShortcut),
+                                    voice_input_mode: voiceInputMode,
+                                    pet_click_through: petClickThroughEnabled,
+                                    pet_click_through_shortcut: normalizeShortcut(petClickThroughShortcut),
+                                    pet_click_through_mode: petClickThroughMode,
+                                  }
+                                }),
+                              })
+                              if (res.ok) {
+                                window.electronAPI?.registerVoiceShortcut?.({
+                                  enabled: voiceInputShortcutEnabled,
+                                  keys: normalizeShortcut(voiceInputShortcut),
+                                  mode: voiceInputMode,
+                                })
+                                window.electronAPI?.registerPetClickThroughShortcut?.({
+                                  enabled: petClickThroughEnabled,
+                                  keys: normalizeShortcut(petClickThroughShortcut),
+                                  mode: petClickThroughMode,
+                                })
+                                const refreshed = await mutate()
+                                applySnapshot(refreshed ?? configData)
+                                setActionState({ type: "success", message: "快捷键已保存。" })
+                              } else {
+                                setActionState({ type: "error", message: "保存失败: HTTP " + res.status })
+                              }
+                            } catch (err) {
+                              setActionState({ type: "error", message: "保存失败: " + getErrorMessage(err) })
+                            } finally {
+                              setShortcutSaving(false)
+                            }
+                          }}
+                          className={cn("w-full rounded-lg border-0 px-3 py-2 text-xs text-white", shortcutSaving ? "bg-amber-400 cursor-not-allowed" : "bg-amber-600 hover:brightness-105")}
+                          disabled={shortcutSaving}
+                        >
+                          {shortcutSaving ? "保存中..." : "保存快捷键设置"}
+                        </button>
+                        {actionState && (
+                          <p className={cn("mt-2 text-xs", actionState.type === "error" ? "text-red-600" : "text-emerald-600")}>
+                            {actionState.message}
+                          </p>
+                        )}
+                      </div>
                     </div>
-                  )}
-                </div>
-              </article>
+                   )}
+                 </div>
+               </article>
 
               <article className="dashboard-enter dashboard-card rounded-[1.8rem] border border-white/75 bg-[linear-gradient(145deg,rgba(255,252,247,0.94),rgba(255,247,242,0.88))] p-5 shadow-[0_20px_42px_-32px_rgba(116,80,42,0.34)]">
                 <div className="flex items-center gap-2">

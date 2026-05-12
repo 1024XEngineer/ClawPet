@@ -94,7 +94,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
 
   /**
    * 注册桌宠穿透快捷键
-   * @param {{enabled: boolean, keys: string}} data - 快捷键配置
+   * @param {{enabled: boolean, keys: string, mode?: string}} data - 快捷键配置
    */
   registerPetClickThroughShortcut: (data) => ipcRenderer.send('register-pet-click-through-shortcut', data),
 
@@ -246,7 +246,31 @@ contextBridge.exposeInMainWorld('electronAPI', {
    * @param {function} callback - 回调函数
    */
   onVoiceShortcutTriggered: (callback) => {
-    ipcRenderer.on('voice-shortcut-triggered', () => callback());
+    const handler = () => callback();
+    ipcRenderer.on('voice-shortcut-triggered', handler);
+    return () => ipcRenderer.removeListener('voice-shortcut-triggered', handler);
+  },
+
+  /**
+   * 监听语音输入快捷键按住事件（Hold 模式用）
+   * @param {function} callback - 回调函数
+   * @returns {function} cleanup - 移除监听的函数
+   */
+  onVoiceShortcutHeld: (callback) => {
+    const handler = () => callback();
+    ipcRenderer.on('voice-shortcut-held', handler);
+    return () => ipcRenderer.removeListener('voice-shortcut-held', handler);
+  },
+
+  /**
+   * 监听语音输入快捷键释放事件（Hold 模式用）
+   * @param {function} callback - 回调函数
+   * @returns {function} cleanup - 移除监听的函数
+   */
+  onVoiceShortcutReleased: (callback) => {
+    const handler = () => callback();
+    ipcRenderer.on('voice-shortcut-released', handler);
+    return () => ipcRenderer.removeListener('voice-shortcut-released', handler);
   },
 
   /**
@@ -254,6 +278,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
    * @param {object} data - 快捷键配置
    * @param {boolean} data.enabled - 是否启用
    * @param {string} data.keys - 快捷键（如 'CommandOrControl+P'）
+   * @param {string} data.mode - 触发模式（'toggle' | 'hold'）
    */
   registerVoiceShortcut: (data) => {
     ipcRenderer.send('register-voice-shortcut', data);

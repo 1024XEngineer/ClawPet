@@ -598,14 +598,18 @@ type VoiceConfig struct {
 type KeyboardShortcuts struct {
 	Enabled                 bool   `json:"enabled,omitempty"`
 	VoiceInput              string `json:"voice_input,omitempty"`
+	VoiceInputMode          string `json:"voice_input_mode,omitempty"`
 	PetClickThrough         bool   `json:"pet_click_through,omitempty"`
 	PetClickThroughShortcut string `json:"pet_click_through_shortcut,omitempty"`
+	PetClickThroughMode     string `json:"pet_click_through_mode,omitempty"`
 }
 
 func DefaultKeyboardShortcuts() *KeyboardShortcuts {
 	return &KeyboardShortcuts{
-		Enabled:    true,
-		VoiceInput: "CommandOrControl+P",
+		Enabled:             true,
+		VoiceInput:          "CommandOrControl+P",
+		VoiceInputMode:      "toggle",
+		PetClickThroughMode: "toggle",
 	}
 }
 

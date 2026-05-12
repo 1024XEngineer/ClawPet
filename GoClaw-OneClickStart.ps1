@@ -78,7 +78,7 @@ if ($Mode -ne "launcher") {
         "-ExecutionPolicy", "Bypass",
         "-File", $runGoclawDev,
         "-Restart",
-        "-PetclawMode", "dev"
+        "-PetclawMode", "prod"
     )
     if ($NoTerminalWindows) {
         $delegateArgs += "-NoTerminalWindows"

@@ -700,8 +700,10 @@ export interface Config {
   keyboard_shortcuts?: {
     enabled?: boolean
     voice_input?: string
+    voice_input_mode?: string
     pet_click_through?: boolean
     pet_click_through_shortcut?: string
+    pet_click_through_mode?: string
   }
 }
 
@@ -711,6 +713,12 @@ export const configApi = {
   update: (config: Partial<Config>) =>
     request<{ success: boolean }>(API_ENDPOINTS.CONFIG.UPDATE, {
       method: 'PUT',
+      body: JSON.stringify(config),
+    }),
+
+  patch: (config: Partial<Config>) =>
+    request<{ success: boolean }>(API_ENDPOINTS.CONFIG.UPDATE, {
+      method: 'PATCH',
       body: JSON.stringify(config),
     }),
 

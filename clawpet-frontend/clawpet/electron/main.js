@@ -15,6 +15,12 @@
  */
 
 const { app, BrowserWindow, ipcMain, screen, globalShortcut } = require('electron');
+let uIOhook = null;
+try {
+  uIOhook = require('uiohook-napi').uIOhook;
+} catch (e) {
+  logToFile(`[UIOHOOK] failed to load uiohook-napi: ${e.message}`);
+}
 const path = require('path');
 const os = require('os');
 const fs = require('fs');
@@ -43,6 +49,12 @@ let lastBubbleAt = 0;
 
 // 语音输入快捷键
 let voiceInputShortcut = 'CommandOrControl+P';
+let voiceInputShortcutMode = 'toggle';
+
+// uiohook-napi hold 模式支持
+let holdShortcuts = []; // [{type, parsed, onStart, onStop, active, safetyTimer}]
+let pressedKeys = new Set(); // uiohook keycodes currently pressed
+let uiohookStarted = false;
 
 // 后端进程引用
 let gatewayProcess = null;         // Gateway 进程
@@ -637,72 +649,368 @@ function schedulePetTopClamp(delayMs = 80) {
 // 存储当前桌宠穿透快捷键
 let petClickThroughShortcut = 'CommandOrControl+Shift+P';
 
-function registerPetClickThroughShortcut(accelerator, enabled) {
-  // 取消旧快捷键
+function registerPetClickThroughShortcut(accelerator, enabled, mode) {
+  // 取消旧快捷键（两种模式都清理）
   if (petClickThroughShortcut) {
     globalShortcut.unregister(petClickThroughShortcut);
     petClickThroughShortcut = null;
   }
+  unregisterHoldShortcut('pet-click-through');
 
-  // 默认启用快捷键
-  if (enabled === undefined) {
-    enabled = true;
-  }
-
+  // 默认启用
+  if (enabled === undefined) enabled = true;
   if (!enabled) {
-    logToFile(`[PET CLICK THROUGH SHORTCUT] disabled`);
+    logToFile(`[PET CLICK THROUGH] disabled`);
     return;
   }
 
-  petClickThroughShortcut = accelerator || 'CommandOrControl+Shift+P';
+  const accel = accelerator || 'CommandOrControl+Shift+P';
 
-  const registered = globalShortcut.register(petClickThroughShortcut, () => {
-    logToFile(`[PET CLICK THROUGH SHORTCUT] triggered`);
-    setPetWindowClickThrough(!petClickThroughEnabled);
-  });
-
-  if (!registered) {
-    logToFile(`[PET CLICK THROUGH SHORTCUT] failed to register ${petClickThroughShortcut}`);
-    return;
+  if (mode === 'hold') {
+    registerHoldShortcut('pet-click-through', accel,
+      () => setPetWindowClickThrough(true),
+      () => setPetWindowClickThrough(false)
+    );
+  } else {
+    petClickThroughShortcut = accel;
+    const registered = globalShortcut.register(petClickThroughShortcut, () => {
+      logToFile(`[PET CLICK THROUGH] triggered`);
+      setPetWindowClickThrough(!petClickThroughEnabled);
+    });
+    if (!registered) {
+      logToFile(`[PET CLICK THROUGH] failed to register ${petClickThroughShortcut}`);
+      return;
+    }
+    logToFile(`[PET CLICK THROUGH] registered ${petClickThroughShortcut}`);
   }
-  logToFile(`[PET CLICK THROUGH SHORTCUT] registered ${petClickThroughShortcut}`);
 }
 
-function registerVoiceInputShortcut(accelerator, enabled) {
-  // 取消旧快捷键
+function sendVoiceShortcutToAllWindows(eventName) {
+  const windows = [settingsWindow, petWindow, bubbleWindow, onboardingWindow];
+  windows.forEach(win => {
+    if (win && !win.isDestroyed()) {
+      win.webContents.send(eventName);
+    }
+  });
+}
+
+function blockCtrlPDefault(win) {
+  if (win && !win.isDestroyed() && win.webContents) {
+    win.webContents.on('before-input-event', (event, input) => {
+      if (input.control && input.key.toLowerCase() === 'p' && !input.alt && !input.shift) {
+        event.preventDefault();
+      }
+    });
+  }
+}
+
+function registerVoiceInputShortcut(accelerator, enabled, mode) {
+  // 取消旧快捷键（两种模式都清理）
   if (voiceInputShortcut) {
     globalShortcut.unregister(voiceInputShortcut);
     voiceInputShortcut = null;
   }
+  unregisterHoldShortcut('voice');
 
-  // 默认启用快捷键
-  if (enabled === undefined) {
-    enabled = true;
-  }
-
+  // 默认启用
+  if (enabled === undefined) enabled = true;
   if (!enabled) {
     logToFile(`[VOICE SHORTCUT] disabled`);
     return;
   }
 
-  voiceInputShortcut = accelerator || 'CommandOrControl+P';
+  const accel = accelerator || 'CommandOrControl+P';
+  voiceInputShortcutMode = mode || 'toggle';
 
-  const registered = globalShortcut.register(voiceInputShortcut, () => {
-    logToFile(`[VOICE SHORTCUT] triggered`);
-    // 通知所有窗口
-    const windows = [settingsWindow, petWindow, bubbleWindow, onboardingWindow];
-    windows.forEach(win => {
-      if (win && !win.isDestroyed()) {
-        win.webContents.send('voice-shortcut-triggered');
-      }
+  if (mode === 'hold') {
+    registerHoldShortcut('voice', accel,
+      () => sendVoiceShortcutToAllWindows('voice-shortcut-held'),
+      () => sendVoiceShortcutToAllWindows('voice-shortcut-released')
+    );
+    logToFile(`[VOICE SHORTCUT] hold mode registered (uiohook): ${accel}`);
+  } else {
+    voiceInputShortcut = accel;
+    const registered = globalShortcut.register(voiceInputShortcut, () => {
+      logToFile(`[VOICE SHORTCUT] triggered`);
+      sendVoiceShortcutToAllWindows('voice-shortcut-triggered');
     });
-  });
+    if (!registered) {
+      logToFile(`[VOICE SHORTCUT] failed to register ${voiceInputShortcut}`);
+      return;
+    }
+    logToFile(`[VOICE SHORTCUT] registered ${voiceInputShortcut}`);
+  }
+}
 
-  if (!registered) {
-    logToFile(`[VOICE SHORTCUT] failed to register ${voiceInputShortcut}`);
+// ==================== Hold 模式快捷键 (uiohook-napi) ====================
+
+/**
+ * 解析 Electron accelerator 字符串为按键描述对象
+ * "CommandOrControl+Shift+P" → { ctrl: true, shift: true, alt: false, meta: false, key: 'P', keycode: 25 }
+ */
+function parseAccelerator(accel) {
+  const parts = (accel || '').split('+').map(s => s.trim());
+  const result = { ctrl: false, shift: false, alt: false, meta: false, key: '', keycode: 0 };
+
+  const modMap = {
+    'commandorcontrol': { ctrl: true, meta: true },
+    'control': { ctrl: true },
+    'ctrl': { ctrl: true },
+    'shift': { shift: true },
+    'alt': { alt: true },
+    'command': { meta: true },
+    'cmd': { meta: true },
+    'meta': { meta: true },
+    'option': { alt: true },
+  };
+
+  for (const p of parts) {
+    const mod = modMap[p.toLowerCase()];
+    if (mod) {
+      if (mod.ctrl) result.ctrl = true;
+      if (mod.shift) result.shift = true;
+      if (mod.alt) result.alt = true;
+      if (mod.meta) result.meta = true;
+    } else {
+      result.key = p;
+    }
+  }
+
+  // Convert key name to uiohook keycode
+  result.keycode = keyNameToUiohookCode(result.key);
+  return result;
+}
+
+function keyNameToUiohookCode(key) {
+  // uiohook-napi virtual key codes (from Java KeyEvent)
+  const KEYCODES = {
+    '0': 7, '1': 8, '2': 9, '3': 10, '4': 11, '5': 12, '6': 13, '7': 14, '8': 15, '9': 16,
+    'A': 30, 'B': 48, 'C': 46, 'D': 32, 'E': 18, 'F': 33, 'G': 34, 'H': 35, 'I': 23,
+    'J': 36, 'K': 37, 'L': 38, 'M': 50, 'N': 49, 'O': 24, 'P': 25, 'Q': 16, 'R': 19,
+    'S': 31, 'T': 20, 'U': 22, 'V': 47, 'W': 17, 'X': 45, 'Y': 21, 'Z': 44,
+    'F1': 59, 'F2': 60, 'F3': 61, 'F4': 62, 'F5': 63, 'F6': 64, 'F7': 65, 'F8': 66,
+    'F9': 67, 'F10': 68, 'F11': 69, 'F12': 70, 'F13': 71, 'F14': 72, 'F15': 73,
+    'F16': 74, 'F17': 75, 'F18': 76, 'F19': 77, 'F20': 78, 'F21': 79, 'F22': 80, 'F23': 81, 'F24': 82,
+    'SPACE': 57, 'ENTER': 28, 'TAB': 15, 'ESCAPE': 1, 'BACKSPACE': 14,
+    'DELETE': 211, 'INSERT': 210, 'HOME': 199, 'END': 207, 'PAGEUP': 201, 'PAGEDOWN': 209,
+    'UP': 57416, 'DOWN': 57424, 'LEFT': 57419, 'RIGHT': 57421,
+    'CAPSLOCK': 58, 'NUMLOCK': 69, 'SCROLLLOCK': 70,
+    'NUMPAD0': 82, 'NUMPAD1': 79, 'NUMPAD2': 80, 'NUMPAD3': 81, 'NUMPAD4': 75,
+    'NUMPAD5': 76, 'NUMPAD6': 77, 'NUMPAD7': 71, 'NUMPAD8': 72, 'NUMPAD9': 73,
+    'MINUS': 12, 'EQUALS': 13, 'COMMA': 51, 'DOT': 52, 'SLASH': 53, 'SEMICOLON': 39,
+    'QUOTE': 40, 'BACKSLASH': 43, 'BACKQUOTE': 41, 'LEFTBRACKET': 26, 'RIGHTBRACKET': 27,
+  };
+  const upper = (key || '').toUpperCase();
+  return KEYCODES[upper] || 0;
+}
+
+// uiohook modifier masks
+const UIOHOOK_MOD_MASK = {
+  CTRL: 1, SHIFT: 2, ALT: 4, META: 8,
+};
+
+function isModifierKeycode(code) {
+  // Ctrl: 29 (Left), 157 (Right)
+  // Shift: 42 (Left), 54 (Right)
+  // Alt: 56 (Left), 364 (Right)
+  // Meta (Win/Cmd): 367 (Left), 368 (Right)
+  return [29, 157, 42, 54, 56, 364, 367, 368].includes(code);
+}
+
+function getModifierFromKeycode(code) {
+  if (code === 29 || code === 157) return 'ctrl';
+  if (code === 42 || code === 54) return 'shift';
+  if (code === 56 || code === 364) return 'alt';
+  if (code === 367 || code === 368) return 'meta';
+  return null;
+}
+
+function handleUiohookKeyDown(e) {
+  const code = e.keycode;
+
+  // 追踪所有按下的键
+  pressedKeys.add(code);
+
+  const mod = getModifierFromKeycode(code);
+
+  // 更新当前按键状态
+  const state = {
+    code,
+    ctrl: !!e.ctrlKey,
+    shift: !!e.shiftKey,
+    alt: !!e.altKey,
+    meta: !!e.metaKey,
+  };
+
+  // 如果是 modifier 键，记录但不作为主键匹配
+  if (mod) {
+    if (mod === 'ctrl') state.ctrl = true;
+    if (mod === 'shift') state.shift = true;
+    if (mod === 'alt') state.alt = true;
+    if (mod === 'meta') state.meta = true;
     return;
   }
-  logToFile(`[VOICE SHORTCUT] registered ${voiceInputShortcut}`);
+
+  logToFile(`[UIOHOOK] keydown code=${code} ctrl=${state.ctrl} meta=${state.meta} shift=${state.shift} alt=${state.alt} shortcuts=${holdShortcuts.length}`);
+
+  // 检查是否匹配任何 hold 快捷键
+  for (const sh of holdShortcuts) {
+    if (sh.active) {
+      logToFile(`[UIOHOOK] hold keydown for ${sh.type}: skip, already active`);
+      continue;
+    }
+    const p = sh.parsed;
+    // CommandOrControl = ctrl OR meta (either counts)
+    if (p.ctrl && p.meta) {
+      if (!state.ctrl && !state.meta) continue;
+    } else {
+      if (state.ctrl !== p.ctrl) continue;
+      if (state.meta !== p.meta) continue;
+    }
+    if (state.shift !== p.shift) continue;
+    if (state.alt !== p.alt) continue;
+    if (code !== p.keycode) continue;
+
+    logToFile(`[UIOHOOK] hold keydown matched: ${sh.type}`);
+    sh.onStart();
+  }
+}
+
+function handleUiohookKeyUp(e) {
+  const code = e.keycode;
+
+  // 追踪所有释放的键
+  pressedKeys.delete(code);
+
+  const mod = getModifierFromKeycode(code);
+
+  logToFile(`[UIOHOOK] keyup code=${code} mod=${mod} shortcuts=${holdShortcuts.length} pressedKeys=${pressedKeys.size}`);
+
+  // 检查任意活跃 hold 快捷键是否还完整按下，不完整则停止
+  for (const sh of holdShortcuts) {
+    if (!sh.active) continue;
+    if (!isComboStillPressed(sh)) {
+      logToFile(`[UIOHOOK] hold keyup: ${sh.type} combo broken -> sending release`);
+      sh.onStop();
+    }
+  }
+}
+
+function isComboStillPressed(sh) {
+  const p = sh.parsed;
+  const ctrlPressed = pressedKeys.has(29) || pressedKeys.has(157);
+  const metaPressed = pressedKeys.has(367) || pressedKeys.has(368);
+  const shiftPressed = pressedKeys.has(42) || pressedKeys.has(54);
+  const altPressed = pressedKeys.has(56) || pressedKeys.has(364);
+
+  // CommandOrControl: at least one modifier must be pressed
+  if (p.ctrl && p.meta) {
+    if (!ctrlPressed && !metaPressed) return false;
+  } else {
+    if (p.ctrl && !ctrlPressed) return false;
+    if (p.meta && !metaPressed) return false;
+  }
+  if (p.shift && !shiftPressed) return false;
+  if (p.alt && !altPressed) return false;
+  // 主键必须仍然按下
+  if (p.keycode && !pressedKeys.has(p.keycode)) return false;
+  return true;
+}
+
+function startUiohook() {
+  if (uiohookStarted || !uIOhook) return;
+  try {
+    uIOhook.on('keydown', handleUiohookKeyDown);
+    uIOhook.on('keyup', handleUiohookKeyUp);
+    uIOhook.start();
+    uiohookStarted = true;
+    logToFile('[UIOHOOK] started');
+  } catch (e) {
+    logToFile(`[UIOHOOK] start error: ${e.message}`);
+  }
+}
+
+function stopUiohook() {
+  if (!uiohookStarted || !uIOhook) return;
+  try {
+    uIOhook.removeListener('keydown', handleUiohookKeyDown);
+    uIOhook.removeListener('keyup', handleUiohookKeyUp);
+    uIOhook.stop();
+    uiohookStarted = false;
+    logToFile('[UIOHOOK] stopped');
+  } catch (e) {
+    logToFile(`[UIOHOOK] stop error: ${e.message}`);
+  }
+}
+
+function removeStaleComboKeys(parsed) {
+  // 安全地清除快捷键相关按键的 pressedKeys 状态，防止 stale 条目导致下次无法停止
+  if (parsed.ctrl) { pressedKeys.delete(29); pressedKeys.delete(157); }
+  if (parsed.shift) { pressedKeys.delete(42); pressedKeys.delete(54); }
+  if (parsed.alt) { pressedKeys.delete(56); pressedKeys.delete(364); }
+  if (parsed.meta) { pressedKeys.delete(367); pressedKeys.delete(368); }
+  if (parsed.keycode) pressedKeys.delete(parsed.keycode);
+}
+
+function registerHoldShortcut(type, accelerator, onStart, onStop) {
+  // 移除旧的同类型注册
+  unregisterHoldShortcut(type);
+
+  const parsed = parseAccelerator(accelerator);
+  if (!parsed.keycode) {
+    logToFile(`[HOLD] ${type}: cannot parse accelerator ${accelerator}`);
+    return;
+  }
+
+  const entry = { type, parsed, onStart, onStop, active: false, safetyTimer: null };
+
+  // 包装 onStart：标记活跃 + 启动安全超时
+  const originalOnStart = onStart;
+  entry.onStart = () => {
+    if (entry.safetyTimer) clearTimeout(entry.safetyTimer);
+    entry.active = true;
+    entry.safetyTimer = setTimeout(() => {
+      if (entry.active) {
+        logToFile(`[HOLD] ${type}: safety timeout (30s) -> force stop`);
+        entry.active = false;
+        removeStaleComboKeys(parsed);
+        originalOnStop();
+      }
+    }, 30000);
+    originalOnStart();
+  };
+
+  // 包装 onStop：取消活跃 + 清除安全超时 + 清除 pressedKeys 防止 stale
+  const originalOnStop = onStop;
+  entry.onStop = () => {
+    if (entry.safetyTimer) clearTimeout(entry.safetyTimer);
+    entry.active = false;
+    removeStaleComboKeys(parsed);
+    originalOnStop();
+  };
+
+  holdShortcuts.push(entry);
+  logToFile(`[HOLD] registered ${type}: ${accelerator} (keycode=${parsed.keycode})`);
+
+  if (!uiohookStarted) {
+    startUiohook();
+  }
+}
+
+function unregisterHoldShortcut(type) {
+  const removed = holdShortcuts.filter(s => s.type === type);
+  for (const s of removed) {
+    if (s.safetyTimer) clearTimeout(s.safetyTimer);
+    if (s.active) {
+      s.active = false;
+      removeStaleComboKeys(s.parsed);
+      s.onStop();
+    }
+  }
+  holdShortcuts = holdShortcuts.filter(s => s.type !== type);
+  if (holdShortcuts.length === 0 && uiohookStarted) {
+    stopUiohook();
+  }
 }
 
 function updateStartupPercent() {
@@ -911,6 +1219,7 @@ function createBubbleWindow() {
     }
   });
   attachRendererCrashDiagnostics(bubbleWindow, 'BUBBLE WINDOW');
+  blockCtrlPDefault(bubbleWindow);
 
   bubbleWindow.setIgnoreMouseEvents(true, { forward: true });
 
@@ -1008,6 +1317,7 @@ function createPetWindow() {
     }
   });
   attachRendererCrashDiagnostics(petWindow, 'PET WINDOW');
+  blockCtrlPDefault(petWindow);
 
   // Re-apply bottom-right placement to avoid OS window policy override.
   placePetWindowBottomRight(petWindow);
@@ -1241,6 +1551,7 @@ function createSettingsWindow(targetUrl = buildSettingsWindowUrl()) {
     }
   });
   attachRendererCrashDiagnostics(settingsWindow, 'SETTINGS WINDOW');
+  blockCtrlPDefault(settingsWindow);
 
   const settingsUrl = targetUrl || buildDashboardUrl();
   logToFile(`[SETTINGS WINDOW] opening ${settingsUrl}`);
@@ -1340,6 +1651,7 @@ function createOnboardingWindow(targetUrl = buildSettingsWindowUrl({ onboarding:
     }
   });
   attachRendererCrashDiagnostics(onboardingWindow, 'ONBOARDING WINDOW');
+  blockCtrlPDefault(onboardingWindow);
 
   const onboardingUrl = targetUrl || buildSettingsWindowUrl({ onboarding: true });
   logToFile(`[ONBOARDING WINDOW] opening ${onboardingUrl}`);
@@ -1394,6 +1706,7 @@ function createStartupWindow() {
     },
   });
   attachRendererCrashDiagnostics(startupWindow, 'STARTUP WINDOW');
+  blockCtrlPDefault(startupWindow);
 
   const startupHtmlPath = path.join(__dirname, 'startup.html');
   startupWindow.loadFile(startupHtmlPath).catch((err) => {
@@ -1610,15 +1923,15 @@ ipcMain.on('set-pet-click-through', (_event, enabled) => {
 });
 
 ipcMain.on('register-voice-shortcut', (_event, data) => {
-  const { enabled, keys } = data || {};
-  logToFile(`[IPC] register-voice-shortcut enabled=${enabled} keys=${keys}`);
-  registerVoiceInputShortcut(keys, enabled);
+  const { enabled, keys, mode } = data || {};
+  logToFile(`[IPC] register-voice-shortcut enabled=${enabled} keys=${keys} mode=${mode}`);
+  registerVoiceInputShortcut(keys, enabled, mode);
 });
 
 ipcMain.on('register-pet-click-through-shortcut', (_event, data) => {
-  const { enabled, keys } = data || {};
-  logToFile(`[IPC] register-pet-click-through-shortcut enabled=${enabled} keys=${keys}`);
-  registerPetClickThroughShortcut(keys, enabled);
+  const { enabled, keys, mode } = data || {};
+  logToFile(`[IPC] register-pet-click-through-shortcut enabled=${enabled} keys=${keys} mode=${mode}`);
+  registerPetClickThroughShortcut(keys, enabled, mode);
 });
 
 ipcMain.on('show-error-notification', (_event, data) => {
@@ -1772,8 +2085,8 @@ ipcMain.handle('startup-state', async () => startupState);
  * 根据配置决定显示启动窗口还是直接创建桌宠窗口
  */
 app.whenReady().then(async () => {
-  registerPetClickThroughShortcut();
-  registerVoiceInputShortcut();
+  registerPetClickThroughShortcut(undefined, undefined, 'toggle');
+  registerVoiceInputShortcut(undefined, undefined, 'toggle');
   // 自动启动后端服务
   await startBackendServices();
   
@@ -1825,6 +2138,7 @@ app.on('before-quit', () => {
     bubbleWindow.close();
     bubbleWindow = null;
   }
+  stopUiohook();
   globalShortcut.unregisterAll();
   if (startupPollTimer) {
     clearInterval(startupPollTimer);

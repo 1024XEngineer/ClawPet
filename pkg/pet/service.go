@@ -2961,6 +2961,20 @@ func ensureDefaultActions(mgr *action.ActionManager) {
 			EmotionTags: []string{"neutral"},
 			Weight:      0.6,
 		},
+		{
+			Name:        "think",
+			Description: "思考中，适合处理信息、分析问题、回复前的思考停顿",
+			Expression:  "think",
+			EmotionTags: []string{"neutral"},
+			Weight:      0.7,
+		},
+		{
+			Name:        "search",
+			Description: "搜索中，适合查找资料、检索信息、使用工具查询的场景",
+			Expression:  "search",
+			EmotionTags: []string{"neutral"},
+			Weight:      0.7,
+		},
 	}
 	for _, a := range defaults {
 		_ = mgr.Register(a) // 同名已存在时 Register 返回 error，直接忽略

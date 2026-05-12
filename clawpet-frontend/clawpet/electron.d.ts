@@ -34,8 +34,10 @@ declare global {
       onForceStopMedia?: (callback: () => void) => () => void
       ensureSettingsForeground?: () => Promise<{ ok: boolean; reason?: string }>
       onVoiceShortcutTriggered?: (callback: () => void) => void
-      registerVoiceShortcut?: (data: { enabled: boolean; keys: string }) => void
-      registerPetClickThroughShortcut?: (data: { enabled: boolean; keys: string }) => void
+      registerVoiceShortcut?: (data: { enabled: boolean; keys: string; mode?: 'toggle' | 'hold' }) => void
+      registerPetClickThroughShortcut?: (data: { enabled: boolean; keys: string; mode?: 'toggle' | 'hold' }) => void
+      onVoiceShortcutHeld?: (callback: () => void) => void
+      onVoiceShortcutReleased?: (callback: () => void) => void
       showErrorNotification?: (data: { level: string; code: string; message: string }) => void
       onErrorNotification?: (callback: (data: { level: string; code: string; message: string }) => void) => void
     }

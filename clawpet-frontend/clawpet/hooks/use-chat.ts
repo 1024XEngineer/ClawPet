@@ -1144,6 +1144,7 @@ export function useChat(options: UseChatOptions = {}): UseChatResult {
               typeof event.data === "string" ? event.data === "true" : true
             if (typing) {
               beginOrKeepAssistantTurn()
+              window.electronAPI?.showBubble?.({ text: null, animation: "think" })
             } else {
               finalizeStreamingAssistantMessages()
               endAssistantTurn()
@@ -1157,6 +1158,15 @@ export function useChat(options: UseChatOptions = {}): UseChatResult {
           if (status === "busy" || status === "done" || status === "error") {
             beginOrKeepAssistantTurn()
             setToolStatus(status)
+          }
+          if (status === "busy") {
+            window.electronAPI?.showBubble?.({
+              text: null,
+              animation: "search",
+              duration_ms: 30000,
+            })
+          } else if (status === "done" || status === "error") {
+            window.electronAPI?.showBubble?.({ text: null })
           }
           break
         }
@@ -1183,6 +1193,18 @@ export function useChat(options: UseChatOptions = {}): UseChatResult {
         case "emotion_change":
           if (typeof event.data === "string" && event.data.trim()) {
             lastEmotionRef.current = event.data.trim()
+            const emotionAnimMap: Record<string, string> = {
+              joy: "happy",
+              happy: "happy",
+              sadness: "sad",
+              sad: "sad",
+              surprise: "celebrate",
+              fear: "stayOut",
+            }
+            const anim = emotionAnimMap[event.data.trim()]
+            if (anim) {
+              window.electronAPI?.showBubble?.({ text: null, animation: anim })
+            }
           }
           break
 
@@ -1213,6 +1235,11 @@ export function useChat(options: UseChatOptions = {}): UseChatResult {
         case "action_trigger":
           if (typeof event.data === "string" && event.data.trim()) {
             lastActionRef.current = event.data.trim()
+            window.electronAPI?.showBubble?.({
+              text: null,
+              animation: event.data.trim(),
+              duration_ms: 5000,
+            })
           }
           break
 
@@ -1323,6 +1350,7 @@ export function useChat(options: UseChatOptions = {}): UseChatResult {
         setError(null)
 
         wsRef.current.send(outbound, activeSessionIdRef.current)
+        window.electronAPI?.showBubble?.({ text: null, animation: "think" })
       } catch (err) {
         assistantTurnActiveRef.current = false
         setIsTyping(false)
