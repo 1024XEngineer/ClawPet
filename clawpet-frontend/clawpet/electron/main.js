@@ -46,6 +46,7 @@ let petTopCorrectionTimer = null;
 let onboardingLocked = false;
 let lastBubbleFingerprint = '';
 let lastBubbleAt = 0;
+let bubbleWindowReady = false;
 
 // 语音输入快捷键
 let voiceInputShortcut = 'CommandOrControl+P';
@@ -1220,6 +1221,7 @@ function createBubbleWindow() {
   });
   attachRendererCrashDiagnostics(bubbleWindow, 'BUBBLE WINDOW');
   blockCtrlPDefault(bubbleWindow);
+  bubbleWindowReady = false;
 
   bubbleWindow.setIgnoreMouseEvents(true, { forward: true });
 
@@ -1227,7 +1229,23 @@ function createBubbleWindow() {
     logToFile(`[BUBBLE WINDOW] load renderer failed: ${String(err)}`);
   });
 
+  bubbleWindow.webContents.on('did-finish-load', () => {
+    bubbleWindowReady = true;
+    logToFile('[BUBBLE WINDOW] did-finish-load');
+  });
+
+  bubbleWindow.webContents.on('did-fail-load', (_event, code, desc, validatedURL) => {
+    bubbleWindowReady = false;
+    logToFile(`[BUBBLE WINDOW] did-fail-load code=${code} desc=${desc} url=${validatedURL}`);
+  });
+
+  bubbleWindow.webContents.on('render-process-gone', (_event, details) => {
+    bubbleWindowReady = false;
+    logToFile(`[BUBBLE WINDOW] marked unavailable after render-process-gone reason=${details?.reason || 'unknown'} exitCode=${details?.exitCode ?? 'n/a'}`);
+  });
+
   bubbleWindow.on('closed', () => {
+    bubbleWindowReady = false;
     bubbleWindow = null;
   });
 }
@@ -2071,7 +2089,10 @@ ipcMain.on('show-bubble', (_event, data) => {
   const isPetOverlay = data?.persist === true || data?.clearOverlay === true || data?.popOverlay === true;
   const fingerprint = `${audio}|${text}|${emotion}|${animation}|${data?.clearOverlay ? '1' : ''}|${data?.popOverlay ? '1' : ''}`;
   const now = Date.now();
-  const hasDetachedBubbleWindow = bubbleWindow && !bubbleWindow.isDestroyed();
+  const hasDetachedBubbleWindow =
+    bubbleWindow &&
+    !bubbleWindow.isDestroyed() &&
+    bubbleWindowReady;
 
   // Pet overlay signals (persist/clearOverlay) always pass through — don't dedup them
   if (!isPetOverlay && fingerprint && fingerprint === lastBubbleFingerprint && now - lastBubbleAt < 2500) {

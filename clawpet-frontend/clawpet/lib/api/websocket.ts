@@ -189,6 +189,7 @@ export class PicoClawWebSocket {
   private activeAssistantContent = ""
   private activeAssistantTimestamp = 0
   private activeAssistantLastChatId: number | null = null
+  private activeAudioStreamId: string | null = null
   private openHandlers: {
     settle: () => void
     fail: (err: Error) => void
@@ -257,6 +258,7 @@ export class PicoClawWebSocket {
     this.activeAssistantContent = ""
     this.activeAssistantTimestamp = 0
     this.activeAssistantLastChatId = null
+    this.activeAudioStreamId = null
   }
 
   private async resolveTokenAndPath(): Promise<{
@@ -701,6 +703,24 @@ export class PicoClawWebSocket {
     }
 
     const payload = { ...((data || {}) as Record<string, unknown>) }
+    const parsedSeq = Number(payload.seq)
+    const seq = Number.isFinite(parsedSeq) ? parsedSeq : null
+    const incomingStreamId =
+      typeof payload.stream_id === "string" && payload.stream_id.trim()
+        ? payload.stream_id.trim()
+        : null
+
+    if (
+      (seq === 1 && this.activeAssistantMessageId) ||
+      (incomingStreamId &&
+        this.activeAudioStreamId &&
+        incomingStreamId !== this.activeAudioStreamId)
+    ) {
+      this.resetAssistantState()
+    }
+    if (incomingStreamId) {
+      this.activeAudioStreamId = incomingStreamId
+    }
 
     if (payload.type === "error" && typeof payload.text === "string") {
       this.emit({
