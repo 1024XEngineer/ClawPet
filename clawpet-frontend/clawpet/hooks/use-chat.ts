@@ -473,6 +473,7 @@ export function useChat(options: UseChatOptions = {}): UseChatResult {
     storedSessions?.sessions || [createSessionState(initialSessionIdRef.current)],
   )
   const activeSessionIdRef = useRef(activeSessionId)
+  const asrEventSeqRef = useRef(0)
   const audioQueueRef = useRef<AudioSegmentItem[]>([])
   const audioExpectedSeqRef = useRef<number | null>(null)
   const audioArrivalSeqRef = useRef(0)
@@ -754,6 +755,7 @@ export function useChat(options: UseChatOptions = {}): UseChatResult {
       bubbleText?: string | null,
       audioMimeHint?: string,
       seq?: number,
+      streamId?: string | null,
       durationMs?: number,
       onSettled?: () => void,
     ) => {
@@ -829,7 +831,7 @@ export function useChat(options: UseChatOptions = {}): UseChatResult {
         if (!settled) {
           settled = true
           if (typeof seq === "number" && Number.isFinite(seq)) {
-            wsRef.current.sendAudioDone(seq, nextSegment.streamId)
+            wsRef.current.sendAudioDone(seq, streamId)
           }
           onSettled?.()
         }
@@ -947,6 +949,7 @@ export function useChat(options: UseChatOptions = {}): UseChatResult {
       nextSegment.text || null,
       nextSegment.audioMime,
       nextSegment.seq,
+      nextSegment.streamId,
       nextSegment.durationMs,
       () => {
         audioIsPlayingRef.current = false
@@ -1091,6 +1094,41 @@ export function useChat(options: UseChatOptions = {}): UseChatResult {
           }
           break
 
+        case "asr": {
+          if (typeof event.data === "object" && event.data) {
+            const data = event.data as { text?: string; chat_id?: string | number }
+            const content = data.text?.trim() || ""
+            if (!content) {
+              break
+            }
+
+            finalizeStreamingAssistantMessages()
+            endAssistantTurn()
+            wsRef.current.resetAssistantStreamState()
+
+            const timestamp = Date.now()
+            const rawChatId = data.chat_id
+            const asrSeq = ++asrEventSeqRef.current
+            const messageId =
+              rawChatId !== undefined && rawChatId !== null
+                ? `asr-user-${String(rawChatId)}-${asrSeq}`
+                : `asr-user-${timestamp}-${asrSeq}`
+            const message: ChatMessage = {
+              id: messageId,
+              role: "user",
+              content,
+              timestamp,
+            }
+
+            updateSessionMessages(activeSessionIdRef.current, (prev) => [
+              ...prev,
+              message,
+            ])
+            optionsRef.current.onMessage?.(message)
+          }
+          break
+        }
+
         case "audio": {
           const data = event.data as AudioPushData | undefined
           if (!data) {
@@ -1190,6 +1228,7 @@ export function useChat(options: UseChatOptions = {}): UseChatResult {
           if (data.is_final) {
             finalizeStreamingAssistantMessages()
             endAssistantTurn()
+            wsRef.current.resetAssistantStreamState()
           }
 
           break

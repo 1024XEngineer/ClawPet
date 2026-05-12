@@ -1442,6 +1442,17 @@ func (al *AgentLoop) processMessage(ctx context.Context, msg bus.InboundMessage)
 			})
 	}
 
+	if len(opts.ForcedSkills) == 0 {
+		if inferred := inferImplicitSkills(agent, opts.UserMessage); len(inferred) > 0 {
+			opts.ForcedSkills = append(opts.ForcedSkills, inferred...)
+			logger.InfoCF("agent", "Applying implicit skill hint",
+				map[string]any{
+					"session_key": opts.SessionKey,
+					"skills":      strings.Join(inferred, ","),
+				})
+		}
+	}
+
 	return al.runAgentLoop(ctx, agent, opts)
 }
 
@@ -3239,6 +3250,66 @@ func activeSkillNames(agent *AgentInstance, opts processOptions) []string {
 	}
 
 	return resolved
+}
+
+func inferImplicitSkills(agent *AgentInstance, userMessage string) []string {
+	if agent == nil || agent.ContextBuilder == nil {
+		return nil
+	}
+
+	text := strings.ToLower(strings.TrimSpace(userMessage))
+	if text == "" {
+		return nil
+	}
+
+	var inferred []string
+	if hasPPTSkillIntent(text) {
+		if skillName, ok := agent.ContextBuilder.ResolveSkillName("pptx"); ok {
+			inferred = append(inferred, skillName)
+		}
+	}
+
+	if len(inferred) == 0 {
+		return nil
+	}
+
+	seen := make(map[string]struct{}, len(inferred))
+	result := make([]string, 0, len(inferred))
+	for _, name := range inferred {
+		key := strings.ToLower(strings.TrimSpace(name))
+		if key == "" {
+			continue
+		}
+		if _, ok := seen[key]; ok {
+			continue
+		}
+		seen[key] = struct{}{}
+		result = append(result, name)
+	}
+	return result
+}
+
+func hasPPTSkillIntent(text string) bool {
+	if text == "" {
+		return false
+	}
+
+	triggers := []string{
+		"ppt",
+		"pptx",
+		"powerpoint",
+		"presentation",
+		"幻灯片",
+		"演示文稿",
+		"演示稿",
+		"做课件",
+	}
+	for _, trigger := range triggers {
+		if strings.Contains(text, trigger) {
+			return true
+		}
+	}
+	return false
 }
 
 func initPPTExecutionState(agent *AgentInstance, opts processOptions) pptExecutionState {

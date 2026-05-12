@@ -1044,6 +1044,10 @@ export class PicoClawWebSocket {
     this.reconnectAttempts = 0
   }
 
+  resetAssistantStreamState(): void {
+    this.resetAssistantState()
+  }
+
   send(content: string, sessionKey?: string): void {
     this.resetAssistantState()
     const resolvedSessionKey = sessionKey?.trim() || this.generateSessionId()

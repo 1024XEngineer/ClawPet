@@ -101,7 +101,6 @@ export function ChatArea({ chat, layoutMode = "full" }: ChatAreaProps) {
   } = useVoiceInput({
     canRecord: isConnected,
     sessionKey: activeSessionId,
-    onResult: sendMessage,
     onError: (voiceInputError) => {
       console.warn("[petclaw] voice input error", voiceInputError)
     },

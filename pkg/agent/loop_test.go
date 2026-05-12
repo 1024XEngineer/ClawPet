@@ -407,6 +407,32 @@ func TestApplyExplicitSkillCommand_InlineMessageMutatesOptions(t *testing.T) {
 	}
 }
 
+func TestInferImplicitSkills_PPTMessageActivatesPPTXSkill(t *testing.T) {
+	al, cfg, _, _, cleanup := newTestAgentLoop(t)
+	defer cleanup()
+
+	if err := os.MkdirAll(filepath.Join(cfg.Agents.Defaults.Workspace, "skills", "pptx"), 0o755); err != nil {
+		t.Fatalf("MkdirAll(skill) error = %v", err)
+	}
+	if err := os.WriteFile(
+		filepath.Join(cfg.Agents.Defaults.Workspace, "skills", "pptx", "SKILL.md"),
+		[]byte("# PPTX\n\nUse this skill for PowerPoint work.\n"),
+		0o644,
+	); err != nil {
+		t.Fatalf("WriteFile(SKILL.md) error = %v", err)
+	}
+
+	agent := al.GetRegistry().GetDefaultAgent()
+	if agent == nil {
+		t.Fatal("expected default agent")
+	}
+
+	got := inferImplicitSkills(agent, "帮我做个PPT吧")
+	if len(got) != 1 || got[0] != "PPTX" {
+		t.Fatalf("inferImplicitSkills() = %#v, want [PPTX]", got)
+	}
+}
+
 func TestRecordLastChannel(t *testing.T) {
 	al, cfg, msgBus, provider, cleanup := newTestAgentLoop(t)
 	defer cleanup()
