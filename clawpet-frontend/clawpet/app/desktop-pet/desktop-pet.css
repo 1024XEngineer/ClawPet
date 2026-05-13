@@ -113,6 +113,25 @@
   pointer-events: auto;
   width: fit-content;
   height: fit-content;
+  outline: 2px solid transparent;
+  outline-offset: 4px;
+  border-radius: 12px;
+}
+
+.desktop-pet-area--drag-over {
+  outline: 3px dashed #667eea;
+  outline-offset: 12px;
+  animation: drop-pulse 0.8s ease-in-out infinite alternate;
+}
+
+.desktop-pet-area--drag-over .desktop-pet-image {
+  filter: brightness(0.85);
+  transition: filter 0.15s ease;
+}
+
+@keyframes drop-pulse {
+  from { outline-color: rgba(102, 126, 234, 0.3); }
+  to   { outline-color: rgba(102, 126, 234, 0.9); }
 }
 
 .desktop-pet-area:active {
@@ -144,4 +163,56 @@
 
 .desktop-pet-state {
   display: none;
+}
+
+.desktop-pet-btn--active {
+  background: rgba(102, 126, 234, 0.9);
+  color: #fff;
+}
+
+.desktop-pet-btn--active:hover {
+  background: rgba(102, 126, 234, 1);
+  transform: scale(1.1);
+}
+
+.desktop-pet-dropzone {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  width: 200px;
+  min-height: 80px;
+  border: 2px dashed #667eea;
+  border-radius: 12px;
+  background: rgba(102, 126, 234, 0.06);
+  cursor: pointer;
+  padding: 12px 16px;
+  transition: all 0.15s ease;
+  pointer-events: auto;
+  -webkit-app-region: no-drag;
+}
+
+.desktop-pet-dropzone:hover {
+  background: rgba(102, 126, 234, 0.12);
+  border-color: #5a6fd6;
+}
+
+.desktop-pet-dropzone--drag-over {
+  background: rgba(102, 126, 234, 0.18);
+  border-color: #4a5fc6;
+  border-style: solid;
+  animation: drop-pulse 0.8s ease-in-out infinite alternate;
+}
+
+.desktop-pet-dropzone-icon {
+  color: #667eea;
+  opacity: 0.7;
+}
+
+.desktop-pet-dropzone-text {
+  font-size: 11px;
+  color: #667eea;
+  text-align: center;
+  line-height: 1.4;
 }

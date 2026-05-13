@@ -1,19 +1,27 @@
 package pet
 
 import (
+	"archive/zip"
+	"bytes"
 	"context"
 	"encoding/base64"
 	"encoding/json"
+	"encoding/xml"
 	"errors"
 	"fmt"
+	"io"
+	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 	"time"
 
+	"github.com/ledongthuc/pdf"
 	"github.com/sipeed/picoclaw/pkg/bus"
 	"github.com/sipeed/picoclaw/pkg/config"
 	"github.com/sipeed/picoclaw/pkg/cron"
 	"github.com/sipeed/picoclaw/pkg/logger"
+	"github.com/sipeed/picoclaw/pkg/media"
 	"github.com/sipeed/picoclaw/pkg/pet/action"
 	"github.com/sipeed/picoclaw/pkg/pet/activity"
 	"github.com/sipeed/picoclaw/pkg/pet/asr"
@@ -53,6 +61,7 @@ type PetService struct {
 	skillsMgr          *skills.Manager
 	activityStore      *activity.Store
 	proactiveManager   *proactive.Manager
+	mediaStore         media.MediaStore
 
 	connSessions        map[string]string
 	activeSessionID     string
@@ -70,6 +79,7 @@ type PetServiceConfig struct {
 	WorkspacePath string
 	Config        *config.Config
 	ConfigPath    string
+	MediaStore    media.MediaStore
 }
 
 func NewPetService(msgBus *bus.MessageBus, cfg PetServiceConfig) (*PetService, error) {
@@ -81,6 +91,7 @@ func NewPetService(msgBus *bus.MessageBus, cfg PetServiceConfig) (*PetService, e
 		connSessions: make(map[string]string),
 		ctx:          ctx,
 		cancel:       cancel,
+		mediaStore:   cfg.MediaStore,
 	}
 	workspacePath := cfg.WorkspacePath
 	if workspacePath != "" {
@@ -742,6 +753,8 @@ func (s *PetService) HandleRequest(connID string, req Request) error {
 		return s.handleSkillRemove(sessionID, req)
 	case ActionSkillGet:
 		return s.handleSkillGet(sessionID, req)
+	case ActionFileChat:
+		return s.handleFileChat(sessionID, req)
 	case ActionAudioFrame:
 		return s.handleAudioFrame(sessionID, req)
 	case ActionVoiceConfigGet:
@@ -824,6 +837,215 @@ func (s *PetService) handleChat(sessionID string, req Request) error {
 	})
 
 	return s.sendResponse(sessionID, req.Action, map[string]string{"session_key": chatReq.SessionKey})
+}
+
+func (s *PetService) handleFileChat(sessionID string, req Request) error {
+	var fileReq FileChatRequest
+	if err := json.Unmarshal(req.Data, &fileReq); err != nil {
+		logger.Errorf("pet: handleFileChat invalid data: %v", err)
+		return s.sendError(sessionID, req.Action, "invalid file chat data")
+	}
+
+	if fileReq.FileName == "" {
+		return s.sendError(sessionID, req.Action, "file name is required")
+	}
+
+	if !fileReq.FileIsImage && fileReq.FileContent == "" {
+		return s.sendError(sessionID, req.Action, "file content is empty")
+	}
+
+	char := s.charManager.GetCurrent()
+	if char == nil {
+		return s.sendError(sessionID, req.Action, "no active character")
+	}
+
+	if fileReq.Prompt == "" {
+		fileReq.Prompt = "请分析这个文件"
+	}
+
+	s.recordUserActivity(sessionID, fileReq.FileName)
+	if s.proactiveManager != nil {
+		s.proactiveManager.Trigger("user_message")
+	}
+
+	logger.Warnf("pet: handleFileChat file=%s mime=%s isImage=%v prompt=%s",
+		fileReq.FileName, fileReq.FileMime, fileReq.FileIsImage, fileReq.Prompt)
+
+	var content string
+	var mediaRefs []string
+	const maxContentLen = 50000
+
+	if fileReq.FileIsImage {
+		// 图片：尝试通过 MediaStore 存储，用 media:// 引用
+		rawData, err := base64.StdEncoding.DecodeString(fileReq.FileContent)
+		if err != nil {
+			logger.Warnf("pet: handleFileChat base64 decode failed: %v", err)
+		}
+
+		if err == nil && s.mediaStore != nil {
+			scope := fmt.Sprintf("file_chat:%s:%s", char.ID, sessionID)
+			// 写临时文件再存到 MediaStore
+			tmpDir := filepath.Join(os.TempDir(), "picoclaw-media")
+			if mkErr := os.MkdirAll(tmpDir, 0755); mkErr == nil {
+				tmpPath := filepath.Join(tmpDir, fmt.Sprintf("fc_%s_%s", sessionID, fileReq.FileName))
+				if writeErr := os.WriteFile(tmpPath, rawData, 0644); writeErr == nil {
+					ref, storeErr := s.mediaStore.Store(tmpPath, media.MediaMeta{
+						ContentType:   fileReq.FileMime,
+						Filename:      fileReq.FileName,
+						Source:        "file_chat",
+						CleanupPolicy: media.CleanupPolicyDeleteOnCleanup,
+					}, scope)
+					if storeErr == nil {
+						mediaRefs = append(mediaRefs, fmt.Sprintf("media://%s", ref))
+						// 同时写入工作区，方便 LLM 用 load_image 访问
+						wsPath := ""
+						if s.config.WorkspacePath != "" {
+							wsDir := filepath.Join(s.config.WorkspacePath, ".uploads")
+							if mkErr2 := os.MkdirAll(wsDir, 0755); mkErr2 == nil {
+								wsP := filepath.Join(wsDir, fileReq.FileName)
+								if wsErr := os.WriteFile(wsP, rawData, 0644); wsErr == nil {
+									wsPath = wsP
+								}
+							}
+						}
+						if wsPath != "" {
+							content = fmt.Sprintf(
+								"用户上传了图片「%s」，并说：%s\n请使用 understand_image 工具分析这张图片，参数 image_source 设为文件路径。\n文件路径: %s",
+								fileReq.FileName, fileReq.Prompt, wsPath,
+							)
+						} else {
+							content = fmt.Sprintf(
+								"用户上传了图片「%s」，并说：%s\n[image: media://%s]",
+								fileReq.FileName, fileReq.Prompt, ref,
+							)
+						}
+					} else {
+						logger.Warnf("pet: handleFileChat Store failed: %v", storeErr)
+						_ = os.Remove(tmpPath)
+					}
+				}
+			}
+		}
+
+		// 降级：如果 MediaStore 不可用或保存失败，写入工作区
+		if content == "" {
+			workspace := s.config.WorkspacePath
+			if workspace != "" {
+				tmpDir := filepath.Join(workspace, ".uploads")
+				if mkErr := os.MkdirAll(tmpDir, 0755); mkErr == nil {
+					tmpPath := filepath.Join(tmpDir, fileReq.FileName)
+					if len(rawData) > 0 {
+						if writeErr := os.WriteFile(tmpPath, rawData, 0644); writeErr == nil {
+							content = fmt.Sprintf(
+								"用户上传了图片「%s」，并说：%s\n请使用 understand_image 工具分析这张图片，参数 image_source 设为文件路径。\n文件路径: %s",
+								fileReq.FileName, fileReq.Prompt, tmpPath,
+							)
+						}
+					}
+				}
+			}
+		}
+
+		// 最终降级：仅通知文件名
+		if content == "" {
+			content = fmt.Sprintf(
+				"用户上传了图片「%s」，并说：%s\n（图片数据未加载，类型：%s）",
+				fileReq.FileName, fileReq.Prompt, fileReq.FileMime,
+			)
+		}
+	} else if fileReq.FileIsBinary {
+		// 二进制文件（PDF、Word 等）：尝试提取纯文本
+		rawData, err := base64.StdEncoding.DecodeString(fileReq.FileContent)
+		if err != nil {
+			logger.Warnf("pet: handleFileChat base64 decode failed for binary: %v", err)
+		}
+
+		// 写入工作区
+		wsPath := ""
+		if s.config.WorkspacePath != "" {
+			wsDir := filepath.Join(s.config.WorkspacePath, ".uploads")
+			if mkErr := os.MkdirAll(wsDir, 0755); mkErr == nil {
+				wsP := filepath.Join(wsDir, fileReq.FileName)
+				if len(rawData) > 0 {
+					if writeErr := os.WriteFile(wsP, rawData, 0644); writeErr == nil {
+						wsPath = wsP
+					}
+				}
+			}
+		}
+
+		// 尝试提取文本
+		extracted := ""
+		ext := strings.ToLower(filepath.Ext(fileReq.FileName))
+		switch ext {
+		case ".docx":
+			extracted = extractDocxText(rawData)
+		case ".pdf":
+			if wsPath != "" {
+				extracted = extractPdfText(wsPath)
+			}
+		}
+
+		if extracted != "" {
+			truncated := ""
+			if len(extracted) > maxContentLen {
+				extracted = extracted[:maxContentLen]
+				truncated = " (文件较大，已截取前50000字符)"
+			}
+			content = fmt.Sprintf(
+				"用户上传了文件「%s」%s，内容如下：\n---文件内容---\n%s\n---\n用户说：%s",
+				fileReq.FileName, truncated, extracted, fileReq.Prompt,
+			)
+		} else if wsPath != "" {
+			content = fmt.Sprintf(
+				"用户上传了文件「%s」，并说：%s\n文件已保存到路径: %s\n可以使用 read_file 工具读取原始内容。",
+				fileReq.FileName, fileReq.Prompt, wsPath,
+			)
+		} else {
+			content = fmt.Sprintf(
+				"用户上传了文件「%s」，并说：%s\n（无法读取文件）",
+				fileReq.FileName, fileReq.Prompt,
+			)
+		}
+	} else {
+		// 纯文本文件：直接嵌入内容
+		fileContent := fileReq.FileContent
+		truncated := ""
+		if len(fileContent) > maxContentLen {
+			fileContent = fileContent[:maxContentLen]
+			truncated = " (文件较大，已截取前50000字符)"
+		}
+		content = fmt.Sprintf(
+			"用户上传了文件「%s」%s，内容如下：\n---文件内容---\n%s\n---\n用户说：%s",
+			fileReq.FileName, truncated, fileContent, fileReq.Prompt,
+		)
+	}
+
+	inbound := bus.InboundMessage{
+		Channel:    "pet",
+		ChatID:     sessionID,
+		SessionKey: fileReq.SessionKey,
+		Peer: bus.Peer{
+			Kind: char.ID,
+			ID:   fileReq.SessionKey,
+		},
+		Content:  content,
+		Media:    mediaRefs,
+		Metadata: map[string]string{"type": "file_chat", "conn_id": req.RequestID, "file_name": fileReq.FileName},
+	}
+
+	if err := s.msgBus.PublishInbound(context.Background(), inbound); err != nil {
+		logger.Errorf("pet: handleFileChat PublishInbound failed: %v", err)
+		return s.sendError(sessionID, req.Action, err.Error())
+	}
+
+	logger.Warnf("pet: handleFileChat published session_key=%s chat_id=%s content_len=%d",
+		fileReq.SessionKey, sessionID, len(content))
+
+	return s.sendResponse(sessionID, req.Action, map[string]string{
+		"session_key": fileReq.SessionKey,
+		"file_name":   fileReq.FileName,
+	})
 }
 
 func (s *PetService) handleOnboardingConfig(sessionID string, req Request) error {
@@ -3021,4 +3243,85 @@ func ensureDefaultActions(mgr *action.ActionManager) {
 	for _, a := range defaults {
 		_ = mgr.Register(a) // 同名已存在时 Register 返回 error，直接忽略
 	}
+}
+
+// docx 内部结构（不含 w: 命名空间，解析前先替换）
+type docxFlatDocument struct {
+	Body docxFlatBody `xml:"body"`
+}
+
+type docxFlatBody struct {
+	Paragraphs []docxFlatParagraph `xml:"p"`
+}
+
+type docxFlatParagraph struct {
+	Runs []docxFlatRun `xml:"r"`
+}
+
+type docxFlatRun struct {
+	Text string `xml:"t"`
+}
+
+// extractDocxText 从 .docx 文件的原始字节中提取纯文本
+func extractDocxText(rawData []byte) string {
+	r, err := zip.NewReader(bytes.NewReader(rawData), int64(len(rawData)))
+	if err != nil {
+		return ""
+	}
+	for _, f := range r.File {
+		if f.Name == "word/document.xml" {
+			rc, openErr := f.Open()
+			if openErr != nil {
+				return ""
+			}
+			data, readErr := io.ReadAll(rc)
+			rc.Close()
+			if readErr != nil {
+				return ""
+			}
+			// 剥离 w: 命名空间前缀
+			data = bytes.ReplaceAll(data, []byte("<w:"), []byte("<"))
+			data = bytes.ReplaceAll(data, []byte("</w:"), []byte("</"))
+
+			var flat docxFlatDocument
+			if xml.Unmarshal(data, &flat) != nil {
+				return ""
+			}
+			var textParts []string
+			for _, p := range flat.Body.Paragraphs {
+				var line string
+				for _, r := range p.Runs {
+					line += r.Text
+				}
+				if strings.TrimSpace(line) != "" {
+					textParts = append(textParts, strings.TrimSpace(line))
+				}
+			}
+			return strings.Join(textParts, "\n")
+		}
+	}
+	return ""
+}
+
+// extractPdfText 从 PDF 文件中提取纯文本
+func extractPdfText(filePath string) string {
+	info, err := os.Stat(filePath)
+	if err != nil || info.Size() == 0 {
+		return ""
+	}
+	f, r, err := pdf.Open(filePath)
+	if err != nil {
+		return ""
+	}
+	defer f.Close()
+	reader, err := r.GetPlainText()
+	if err != nil {
+		return ""
+	}
+	var buf bytes.Buffer
+	_, err = buf.ReadFrom(reader)
+	if err != nil {
+		return ""
+	}
+	return buf.String()
 }

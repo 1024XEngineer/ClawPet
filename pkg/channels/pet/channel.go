@@ -174,6 +174,7 @@ func NewPetChannel(cfg config.PetConfig, msgBus *bus.MessageBus, workspacePath s
 		WorkspacePath: workspacePath,
 		Config:        systemConfig,
 		ConfigPath:    configPath,
+		MediaStore:    pc.GetMediaStore(),
 	})
 	if err != nil {
 		logger.Errorf("pet: failed to create PetService: %v", err)

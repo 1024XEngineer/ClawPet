@@ -9,6 +9,7 @@ package agent
 import (
 	"context"
 	"fmt"
+	"path/filepath"
 	"sync"
 
 	"github.com/sipeed/picoclaw/pkg/config"
@@ -81,13 +82,15 @@ func (al *AgentLoop) ensureMCPInitialized(ctx context.Context) error {
 	}
 
 	al.mcp.initOnce.Do(func() {
-		mcpManager := mcp.NewManager()
-
+		// binDir: workspace/../bin/ (e.g. .goclaw-runtime/bin/)
 		defaultAgent := al.registry.GetDefaultAgent()
 		workspacePath := al.cfg.WorkspacePath()
 		if defaultAgent != nil && defaultAgent.Workspace != "" {
 			workspacePath = defaultAgent.Workspace
 		}
+		binDir := filepath.Join(filepath.Dir(workspacePath), "bin")
+
+		mcpManager := mcp.NewManagerWithBinDir(binDir)
 
 		if err := mcpManager.LoadFromMCPConfig(ctx, al.cfg.Tools.MCP, workspacePath); err != nil {
 			logger.WarnCF("agent", "Failed to load MCP servers, MCP tools will not be available",

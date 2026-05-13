@@ -1,7 +1,8 @@
 "use client"
 
-import { MessageCircle, X } from "lucide-react"
+import { MessageCircle, X, Paperclip } from "lucide-react"
 import { useCallback, useEffect, useRef, useState, type MouseEvent } from "react"
+import { extractPetText } from "@/lib/utils"
 
 import "./desktop-pet.css"
 
@@ -212,6 +213,9 @@ export default function DesktopPetPage() {
   const [runtimeHint, setRuntimeHint] = useState("")
   const [showControls, setShowControls] = useState(false)
   const [voicePhase, setVoicePhase] = useState<"idle" | "recording" | "recognizing" | "error">("idle")
+  const [isDragOver, setIsDragOver] = useState(false)
+  const [showDropZone, setShowDropZone] = useState(false)
+  const dropZoneActiveRef = useRef(false)
   const stackRef = useRef<HTMLDivElement | null>(null)
   const controlsVisibleRef = useRef(false)
   const currentImageRef = useRef(currentImage)
@@ -369,7 +373,7 @@ export default function DesktopPetPage() {
       }
 
       if (data.text !== null) {
-        setBubble(data.text || "")
+        setBubble(extractPetText(data.text || ""))
       }
 
       const resolvedState = resolvePetState(data)
@@ -719,6 +723,96 @@ export default function DesktopPetPage() {
     window.close()
   }
 
+  const allowedExtensions = [
+    ".txt", ".md", ".json", ".xml", ".yaml", ".yml", ".csv",
+    ".js", ".ts", ".jsx", ".tsx", ".py", ".go", ".rs", ".java", ".c", ".cpp", ".h",
+    ".css", ".scss", ".html", ".htm", ".sh", ".bash", ".zsh", ".ps1", ".bat", ".cmd",
+    ".sql", ".rb", ".php", ".swift", ".kt", ".scala", ".dart",
+    ".png", ".jpg", ".jpeg", ".gif", ".bmp", ".webp", ".svg", ".ico",
+  ]
+
+  const handleDragEnter = (e: React.DragEvent) => {
+    e.preventDefault()
+    setIsDragOver(true)
+  }
+
+  const handleDragOver = (e: React.DragEvent) => {
+    e.preventDefault()
+    e.dataTransfer.dropEffect = "copy"
+  }
+
+  const handleDragLeave = (e: React.DragEvent) => {
+    e.preventDefault()
+    setIsDragOver(false)
+  }
+
+  const handleDrop = (e: React.DragEvent) => {
+    e.preventDefault()
+    e.stopPropagation()
+    setIsDragOver(false)
+    closeDropZone()
+    const files = e.dataTransfer?.files
+    if (files && files.length > 0) {
+      for (let i = 0; i < files.length; i++) {
+        const f = files[i]
+        if ((f as any).path) {
+          window.electronAPI?.sendFileDropped?.((f as any).path, f.name)
+        }
+      }
+    }
+    transitionTo("think")
+  }
+
+  const handleDropZoneDrop = (e: React.DragEvent) => {
+    e.preventDefault()
+    e.stopPropagation()
+    setIsDragOver(false)
+    closeDropZone()
+    const files = e.dataTransfer?.files
+    if (files && files.length > 0) {
+      for (let i = 0; i < files.length; i++) {
+        const f = files[i]
+        if ((f as any).path) {
+          window.electronAPI?.sendFileDropped?.((f as any).path, f.name)
+        }
+      }
+    }
+    transitionTo("think")
+  }
+
+  const handleDropZoneClick = () => {
+    window.electronAPI?.openFileDialog?.()
+    closeDropZone()
+  }
+
+  const openDropZone = useCallback(() => {
+    setShowDropZone(true)
+    dropZoneActiveRef.current = true
+    window.electronAPI?.toggleDropZone?.(true)
+  }, [])
+
+  const closeDropZone = useCallback(() => {
+    setShowDropZone(false)
+    setIsDragOver(false)
+    dropZoneActiveRef.current = false
+    window.electronAPI?.toggleDropZone?.(false)
+  }, [])
+
+  const handleFileDialogClick = () => {
+    window.electronAPI?.openFileDialog?.()
+    closeDropZone()
+  }
+
+  // 文件拖放后可开始处理后自动关闭拖放区
+  useEffect(() => {
+    const unlisten = window.electronAPI?.onDropZoneAutoClose?.(() => {
+      if (dropZoneActiveRef.current) {
+        closeDropZone()
+      }
+    })
+    return () => unlisten?.()
+  }, [closeDropZone])
+
   const handleOpenSettingsMouseDown = (event: MouseEvent<HTMLButtonElement>) => {
     event.preventDefault()
     event.stopPropagation()
@@ -734,7 +828,10 @@ export default function DesktopPetPage() {
   return (
     <div className="desktop-pet-app">
       <div className="desktop-pet-container">
-        <div ref={stackRef} className="desktop-pet-stack">
+        <div
+          ref={stackRef}
+          className="desktop-pet-stack"
+        >
           <div
             className={`desktop-pet-controls ${showControls ? "desktop-pet-controls--visible" : ""}`}
             data-electron-no-drag="true"
@@ -750,6 +847,15 @@ export default function DesktopPetPage() {
             </button>
             <button
               type="button"
+              className={`desktop-pet-btn${showDropZone ? " desktop-pet-btn--active" : ""}`}
+              onMouseDown={(e) => { e.preventDefault(); e.stopPropagation(); showDropZone ? closeDropZone() : openDropZone() }}
+              title="Send file"
+              aria-label="Send file"
+            >
+              <Paperclip className="desktop-pet-btn-icon" />
+            </button>
+            <button
+              type="button"
               className="desktop-pet-btn desktop-pet-btn-close"
               onMouseDown={handleCloseWindowMouseDown}
               title="Exit desktop pet"
@@ -759,12 +865,33 @@ export default function DesktopPetPage() {
             </button>
           </div>
           <div
-            className="desktop-pet-area"
+            className={`desktop-pet-area${isDragOver ? " desktop-pet-area--drag-over" : ""}`}
             data-electron-drag-region="true"
+            onDragEnter={handleDragEnter}
+            onDragOver={handleDragOver}
+            onDragLeave={handleDragLeave}
+            onDrop={handleDrop}
           >
             <img className="desktop-pet-image" src={currentImage} alt="Pet" />
             <span className="desktop-pet-state">{petState}</span>
           </div>
+          {showDropZone && (
+            <div
+              className={`desktop-pet-dropzone${isDragOver ? " desktop-pet-dropzone--drag-over" : ""}`}
+              onDragEnter={handleDragEnter}
+              onDragOver={handleDragOver}
+              onDragLeave={handleDragLeave}
+              onDrop={handleDropZoneDrop}
+              onClick={handleDropZoneClick}
+            >
+              <span className="desktop-pet-dropzone-icon">
+                <Paperclip size={20} />
+              </span>
+              <span className="desktop-pet-dropzone-text">
+                {isDragOver ? "释放文件" : "拖入文件 / 点击浏览"}
+              </span>
+            </div>
+          )}
           {(bubble || runtimeHint) ? (
           <div
             ref={bubbleRef}

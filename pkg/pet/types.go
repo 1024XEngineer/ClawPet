@@ -66,6 +66,7 @@ const (
 	ActionVoiceConfigGet       = "voice_config_get"        // 获取 voice 配置（model_name）
 	ActionVoiceConfigUpdate    = "voice_config_update"     // 更新 voice 配置（model_name）
 	ActionAudioDone            = "audio_done"              // 音频播放完成确认
+	ActionFileChat            = "file_chat"               // 文件聊天
 	PushTypeWeeklyReport  = "weekly_report_ready"
 	PushTypeProgressNudge = "progress_nudge"
 )
@@ -133,6 +134,17 @@ type Push struct {
 type ChatRequest struct {
 	Text       string `json:"text"`        // 用户输入的文本内容
 	SessionKey string `json:"session_key"` // 会话标识符
+}
+
+// FileChatRequest 文件聊天请求数据
+type FileChatRequest struct {
+	SessionKey   string `json:"session_key"`
+	Prompt       string `json:"prompt"`
+	FileName     string `json:"file_name"`
+	FileMime     string `json:"file_mime"`
+	FileContent  string `json:"file_content"`
+	FileIsImage  bool   `json:"file_is_image"`
+	FileIsBinary bool   `json:"file_is_binary"`
 }
 
 // OnboardingConfigRequest 初始化配置请求数据

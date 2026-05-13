@@ -17,6 +17,21 @@
 
 const { contextBridge, ipcRenderer } = require('electron');
 
+// ====== 文件拖放（document 级，绕开 drag-region 拦截) ======
+document.addEventListener('dragover', (e) => {
+  e.preventDefault();
+});
+
+document.addEventListener('drop', (e) => {
+  e.preventDefault();
+  const files = e.dataTransfer?.files;
+  if (files && files.length > 0) {
+    const file = files[0];
+    ipcRenderer.send('show-bubble', { text: null, animation: 'think' });
+    ipcRenderer.send('file-dropped', { filePath: file.path, fileName: file.name });
+  }
+});
+
 /**
  * 暴露 electronAPI 到全局 window 对象
  * 渲染进程（网页）可以通过 window.electronAPI 调用这些方法
@@ -313,6 +328,58 @@ contextBridge.exposeInMainWorld('electronAPI', {
    */
   showErrorNotification: (data) => {
     ipcRenderer.send('show-error-notification', data);
+  },
+
+  // ==================== 文件拖放区 ====================
+
+  /**
+   * 展开/收起桌宠拖放区（调整窗口大小）
+   * @param {boolean} enabled - true 展开，false 收起
+   */
+  toggleDropZone: (enabled) => {
+    ipcRenderer.send('toggle-drop-zone', Boolean(enabled));
+  },
+
+  /**
+   * 打开原生文件选择器对话框
+   */
+  openFileDialog: () => {
+    ipcRenderer.send('open-file-dialog');
+  },
+
+  /**
+   * 监听拖放区自动关闭事件（文件开始处理后）
+   * @param {function} callback
+   */
+  onDropZoneAutoClose: (callback) => {
+    ipcRenderer.on('drop-zone-auto-close', () => callback());
+  },
+
+  // ==================== 文件拖放 ====================
+
+  /**
+   * 桌宠收到文件拖放后发送到主进程
+   * @param {string} filePath - 完整文件路径
+   * @param {string} fileName - 文件名
+   */
+  sendFileDropped: (filePath, fileName) => {
+    ipcRenderer.send('file-dropped', { filePath, fileName });
+  },
+
+  /**
+   * 监听文件消息（主进程 → 对话窗口）
+   * @param {function} callback - (data) => void
+   */
+  onIncomingFileMessage: (callback) => {
+    ipcRenderer.on('incoming-file-message', (_event, data) => callback(data));
+  },
+
+  /**
+   * 监听文件拖放取消
+   * @param {function} callback
+   */
+  onFileDropCancel: (callback) => {
+    ipcRenderer.on('file-drop-cancel', () => callback());
   },
 
   /**
