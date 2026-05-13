@@ -180,29 +180,11 @@ export function ChatArea({ chat, layoutMode = "full" }: ChatAreaProps) {
                       }
                     }
 
-                    const splitBubbles = (text: string): string[] => {
-                      const s = text.replace(/\r\n/g, "\n")
-                      const byDn = s.split(/\n\n+/).filter(Boolean)
-                      if (byDn.length > 1) return byDn
-                      const bySn = s.split(/\n+/).filter(Boolean)
-                      if (bySn.length > 1) return bySn
-                      const sentences = s.split(/(?<=[。！？.!?])/).map(x => x.trim()).filter(Boolean)
-                      if (sentences.length <= 1) return [s]
-                      const groups: string[] = []
-                      for (let i = 0; i < sentences.length; i += 3) {
-                        groups.push(sentences.slice(i, i + 3).join(""))
-                      }
-                      return groups
-                    }
-
                     return messages.flatMap((msg, index) => {
                       const isLastAssistant =
                         msg.role === "assistant" && lastAssistantIndex === index
 
-                      const bubbles =
-                        msg.role === "assistant"
-                          ? splitBubbles(msg.content)
-                          : [msg.content]
+                      const bubbles = [msg.content]
 
                       return bubbles.map((part, i) => {
                         const partId = bubbles.length > 1 ? `${msg.id}-${i}` : msg.id

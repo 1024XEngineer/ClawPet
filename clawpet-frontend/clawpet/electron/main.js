@@ -15,17 +15,18 @@
  */
 
 const { app, BrowserWindow, ipcMain, screen, globalShortcut } = require('electron');
+const path = require('path');
+const os = require('os');
+const fs = require('fs');
+const net = require('net');
+const { spawn } = require('child_process');
+let logStream = null;
 let uIOhook = null;
 try {
   uIOhook = require('uiohook-napi').uIOhook;
 } catch (e) {
   logToFile(`[UIOHOOK] failed to load uiohook-napi: ${e.message}`);
 }
-const path = require('path');
-const os = require('os');
-const fs = require('fs');
-const net = require('net');
-const { spawn } = require('child_process');
 
 // 全局窗口引用
 let petWindow = null;              // 桌宠窗口
@@ -220,7 +221,7 @@ async function buildChildProcessEnv(extraEnv = {}) {
  * 所有日志输出到 ~/.picoclaw/logs.txt
  */
 const logFilePath = path.join(userDataPath, 'logs.txt');
-const logStream = fs.createWriteStream(logFilePath, { flags: 'a' });
+logStream = fs.createWriteStream(logFilePath, { flags: 'a' });
 
 function loadOnboardingState() {
   try {
@@ -328,7 +329,9 @@ function leaveOnboardingMode({ completed } = { completed: false }) {
 function logToFile(message) {
   const timestamp = new Date().toISOString();
   const logLine = `[${timestamp}] ${message}\n`;
-  logStream.write(logLine);
+  if (logStream) {
+    logStream.write(logLine);
+  }
   console.log(logLine);
 }
 
@@ -2087,6 +2090,7 @@ ipcMain.on('show-bubble', (_event, data) => {
   const emotion = typeof data?.emotion === 'string' ? data.emotion.trim() : '';
   const animation = typeof data?.animation === 'string' ? data.animation.trim() : '';
   const isPetOverlay = data?.persist === true || data?.clearOverlay === true || data?.popOverlay === true;
+  const hasBubbleContent = Boolean(text || audio);
   const fingerprint = `${audio}|${text}|${emotion}|${animation}|${data?.clearOverlay ? '1' : ''}|${data?.popOverlay ? '1' : ''}`;
   const now = Date.now();
   const hasDetachedBubbleWindow =
@@ -2094,7 +2098,7 @@ ipcMain.on('show-bubble', (_event, data) => {
     !bubbleWindow.isDestroyed() &&
     bubbleWindowReady;
 
-  // Pet overlay signals (persist/clearOverlay) always pass through — don't dedup them
+  // Pet overlay signals (persist/clearOverlay) always pass through ? don't dedup them
   if (!isPetOverlay && fingerprint && fingerprint === lastBubbleFingerprint && now - lastBubbleAt < 2500) {
     logToFile('[IPC] show-bubble dropped duplicated payload');
     return;
@@ -2113,16 +2117,19 @@ ipcMain.on('show-bubble', (_event, data) => {
   }
 
   if (hasDetachedBubbleWindow) {
-    syncBubbleWindowToPet({ show: true });
-    bubbleWindow.webContents.send('bubble-show', data);
-    // 同时通知宠物窗口更新动画，text 置 null 表示只更新动画不显示气泡文字
+    if (hasBubbleContent) {
+      syncBubbleWindowToPet({ show: true });
+      bubbleWindow.webContents.send('bubble-show', data);
+    }
     if (petWindow && !petWindow.isDestroyed()) {
-      petWindow.webContents.send('bubble-show', Object.assign({}, data, { text: null }));
+      const petPayload = hasBubbleContent
+        ? Object.assign({}, data, { text: null })
+        : data;
+      petWindow.webContents.send('bubble-show', petPayload);
     }
   }
 });
 
-// 连接活跃状态
 ipcMain.on('connection-alive', () => {
   if (petWindow && !petWindow.isDestroyed()) {
     petWindow.webContents.send('connection-alive');

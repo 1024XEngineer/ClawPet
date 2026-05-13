@@ -498,6 +498,8 @@ export function useChat(options: UseChatOptions = {}): UseChatResult {
     value: "",
     at: 0,
   })
+  const audioBubbleSyncRef = useRef(false)
+  const spokenBubbleTextRef = useRef("")
   const lastBubbleTextRef = useRef<{ text: string; at: number }>({
     text: "",
     at: 0,
@@ -650,12 +652,12 @@ export function useChat(options: UseChatOptions = {}): UseChatResult {
         const now = Date.now()
         if (
           lastBubbleTextRef.current.text !== bubbleText ||
-          now - lastBubbleTextRef.current.at > 1800
+          now - lastBubbleTextRef.current.at > 400
         ) {
           showBubble(bubbleText)
         }
         pendingBubbleTimerRef.current = null
-      }, 1200)
+      }, 180)
     },
     [clearPendingBubbleTimer, showBubble],
   )
@@ -686,28 +688,19 @@ export function useChat(options: UseChatOptions = {}): UseChatResult {
         return
       }
       streamingEndedRef.current = true
-
-      // 把未匹配标点的尾句入队（最后一句通常无句号）
-      const remaining = finalText.slice(lastStreamingBubblePosRef.current).trim()
-      if (remaining.length > 0) {
-        sentenceQueueRef.current.push(remaining)
-        hasEnqueuedRef.current = true
+      if (audioBubbleSyncRef.current) {
         lastStreamingBubblePosRef.current = finalText.length
-        if (!displayTimerRef.current) {
-          advanceSentenceDisplay()
+        if (!spokenBubbleTextRef.current) {
+          showBubble(finalText.trim())
         }
         return
       }
-
-      // 队列中有句子 → 等自然排空，最后一句保持不动
-      if (hasEnqueuedRef.current || displayTimerRef.current) {
-        return
-      }
-
-      // 队列从未用过（voice-OFF 流式无完整句子）→ 直接显示全文
-      showBubble(finalText)
+      clearPendingBubbleTimer()
+      clearSentenceDisplay()
+      lastStreamingBubblePosRef.current = finalText.length
+      showBubble(finalText.trim())
     },
-    [showBubble, advanceSentenceDisplay],
+    [clearPendingBubbleTimer, clearSentenceDisplay, showBubble],
   )
 
   const scheduleStreamingBubble = useCallback(
@@ -722,31 +715,18 @@ export function useChat(options: UseChatOptions = {}): UseChatResult {
         clearSentenceDisplay()
       }
 
-      const newPart = content.slice(lastStreamingBubblePosRef.current)
-      if (!newPart) {
+      const normalized = content.trim()
+      if (!normalized) {
         return
       }
 
-      const sepMatch = newPart.match(/[^。！？.!?]*[。！？.!?]+/g)
-      if (!sepMatch) {
+      lastStreamingBubblePosRef.current = content.length
+      if (audioBubbleSyncRef.current) {
         return
       }
-
-      const matched = sepMatch.join("")
-      const endPos = lastStreamingBubblePosRef.current + matched.length
-      lastStreamingBubblePosRef.current = endPos
-
-      clearPendingBubbleTimer()
-      if (matched.trim().length > 1) {
-        sentenceQueueRef.current.push(matched)
-        hasEnqueuedRef.current = true
-      }
-
-      if (!displayTimerRef.current) {
-        advanceSentenceDisplay()
-      }
+      scheduleAssistantBubble(normalized)
     },
-    [clearPendingBubbleTimer, showBubble, advanceSentenceDisplay, clearSentenceDisplay],
+    [clearSentenceDisplay, scheduleAssistantBubble],
   )
 
   const playAudioBase64 = useCallback(
@@ -778,12 +758,6 @@ export function useChat(options: UseChatOptions = {}): UseChatResult {
       }
 
       clearPendingBubbleTimer()
-
-      if (window.electronAPI?.showBubble) {
-        // Keep bubble text sync, but always play audio via HTMLAudio to ensure
-        // deterministic ordered playback in chat runtime.
-        showBubble(bubbleText ?? (lastAssistantTextRef.current || null), undefined, durationMs)
-      }
 
       const decoded = decodeBase64Chunk(audioBase64)
       const mimeType = normalizeAudioMimeType(audioMimeHint) || inferAudioMimeType(decoded)
@@ -826,10 +800,21 @@ export function useChat(options: UseChatOptions = {}): UseChatResult {
         currentAudioRef.current.pause()
       }
 
+      const joinSpokenText = (previous: string, next: string): string => {
+        if (!previous) return next
+        if (!next) return previous
+        if (/[A-Za-z0-9]$/.test(previous) && /^[A-Za-z0-9]/.test(next)) {
+          return `${previous} ${next}`
+        }
+        return `${previous}${next}`
+      }
+
       let settled = false
       const settleOnce = () => {
         if (!settled) {
           settled = true
+          audioBubbleSyncRef.current = false
+          spokenBubbleTextRef.current = ""
           if (typeof seq === "number" && Number.isFinite(seq)) {
             wsRef.current.sendAudioDone(seq, streamId)
           }
@@ -857,6 +842,17 @@ export function useChat(options: UseChatOptions = {}): UseChatResult {
         currentAudioUrlRef.current = audioUrl
         const audio = new Audio(audioUrl)
         currentAudioRef.current = audio
+
+        const segmentText = (bubbleText || "").trim()
+        if (segmentText) {
+          audioBubbleSyncRef.current = true
+          spokenBubbleTextRef.current = joinSpokenText(spokenBubbleTextRef.current, segmentText)
+          showBubble(
+            spokenBubbleTextRef.current,
+            undefined,
+            typeof durationMs === "number" && durationMs > 0 ? durationMs : undefined,
+          )
+        }
 
         audio.onended = () => {
           if (currentAudioUrlRef.current) {
@@ -915,6 +911,8 @@ export function useChat(options: UseChatOptions = {}): UseChatResult {
     audioSeenSeqRef.current = new Set()
     audioIsPlayingRef.current = false
     lastQueuedSegmentRef.current = { chatId: null, seq: null }
+    audioBubbleSyncRef.current = false
+    spokenBubbleTextRef.current = ""
   }, [clearAudioAdvanceTimer])
 
   const drainAudioQueue = useCallback(() => {
@@ -956,9 +954,6 @@ export function useChat(options: UseChatOptions = {}): UseChatResult {
         audioExpectedSeqRef.current = nextSegment.seq + 1
 
         // 通知后端此段音频已播完，允许立即推送下一段
-        const ws = wsRef.current
-        ws.sendPetRequest("audio_done", { seq: nextSegment.seq })
-
         drainAudioQueue()
       },
     )
@@ -1044,6 +1039,17 @@ export function useChat(options: UseChatOptions = {}): UseChatResult {
       window.electronAPI?.showBubble?.({ text: null, emotion: '', ...data } as BubblePayload)
     }
 
+    const reportPetRuntimeState = (payload: {
+      state: "idle" | "listening" | "recognizing" | "thinking" | "tool_running" | "speaking" | "done" | "error" | "stalled"
+      text?: string
+      sticky_ms?: number
+    }) => {
+      window.electronAPI?.reportPetRuntimeState?.({
+        source: "chat",
+        ...payload,
+      })
+    }
+
     const endAssistantTurn = () => {
       assistantTurnActiveRef.current = false
       isToolBusyRef.current = false
@@ -1051,6 +1057,7 @@ export function useChat(options: UseChatOptions = {}): UseChatResult {
       setIsTurnActive(false)
       setToolStatus("idle")
       sendPetOverlay({ clearOverlay: true })
+      reportPetRuntimeState({ state: "idle" })
     }
 
     const beginOrKeepAssistantTurn = () => {
@@ -1243,6 +1250,11 @@ export function useChat(options: UseChatOptions = {}): UseChatResult {
               if (!isToolBusyRef.current) {
                 sendPetOverlay({ animation: "think", persist: true })
               }
+              reportPetRuntimeState({
+                state: "thinking",
+                text: "小猫正在思考，请耐心等待...",
+                sticky_ms: 2600,
+              })
             } else {
               finalizeStreamingAssistantMessages()
               endAssistantTurn()
@@ -1258,21 +1270,25 @@ export function useChat(options: UseChatOptions = {}): UseChatResult {
             sendPetOverlay({ animation: "search", persist: true })
             beginOrKeepAssistantTurn()
             setToolStatus(status)
+            reportPetRuntimeState({
+              state: "tool_running",
+              text: data.text?.trim() || "正在调用工具...",
+              sticky_ms: 2600,
+            })
           } else if (status === "done" || status === "error") {
             isToolBusyRef.current = false
             // Tool finished; LLM is still processing — revert to think
             sendPetOverlay({ animation: "think", persist: true })
             beginOrKeepAssistantTurn()
             setToolStatus(status)
-          }
-          if (status === "busy") {
-            window.electronAPI?.showBubble?.({
-              text: null,
-              animation: "search",
-              duration_ms: 30000,
+            reportPetRuntimeState({
+              state: status === "error" ? "error" : "thinking",
+              text:
+                status === "error"
+                  ? "工具调用失败，正在尝试恢复..."
+                  : "工具完成，正在整理结果...",
+              sticky_ms: status === "error" ? 2600 : 1800,
             })
-          } else if (status === "done" || status === "error") {
-            window.electronAPI?.showBubble?.({ text: null })
           }
           break
         }
@@ -1309,7 +1325,7 @@ export function useChat(options: UseChatOptions = {}): UseChatResult {
             }
             const anim = emotionAnimMap[event.data.trim()]
             if (anim) {
-              window.electronAPI?.showBubble?.({ text: null, animation: anim })
+              window.electronAPI?.showBubble?.({ text: null, emotion: '', animation: anim } as BubblePayload)
             }
           }
           break
@@ -1341,11 +1357,7 @@ export function useChat(options: UseChatOptions = {}): UseChatResult {
         case "action_trigger":
           if (typeof event.data === "string" && event.data.trim()) {
             lastActionRef.current = event.data.trim()
-            window.electronAPI?.showBubble?.({
-              text: null,
-              animation: event.data.trim(),
-              duration_ms: 5000,
-            })
+            window.electronAPI?.showBubble?.({ text: null, emotion: '', animation: event.data.trim() } as BubblePayload)
           }
           break
 
@@ -1459,7 +1471,6 @@ export function useChat(options: UseChatOptions = {}): UseChatResult {
         window.electronAPI?.showBubble?.({ text: null, emotion: '', animation: 'think', persist: true } as BubblePayload)
 
         wsRef.current.send(outbound, activeSessionIdRef.current)
-        window.electronAPI?.showBubble?.({ text: null, animation: "think" })
       } catch (err) {
         window.electronAPI?.showBubble?.({ text: null, emotion: '', clearOverlay: true } as BubblePayload)
         assistantTurnActiveRef.current = false

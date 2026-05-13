@@ -219,6 +219,7 @@ export default function DesktopPetPage() {
   const audioObjectUrlRef = useRef<string | null>(null)
   const bubbleTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   const runtimeHintTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+  const transientStateTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   const bubbleRef = useRef<HTMLDivElement | null>(null)
   const currentAudioIdRef = useRef<number>(0)
   const baseStateRef = useRef<PetState>("standby")
@@ -229,6 +230,9 @@ export default function DesktopPetPage() {
   const sleepTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
 
   currentImageRef.current = currentImage
+  const displayedBubbleText = runtimeHint
+    ? (bubble ? `${bubble}\n\n${runtimeHint}` : runtimeHint)
+    : bubble
 
   const transitionTo = useCallback((newState: PetState) => {
     const prevImage = currentImageRef.current
@@ -243,6 +247,27 @@ export default function DesktopPetPage() {
     setPetState(target)
     setCurrentImage(getPetImage(target, prevImage))
   }, [])
+
+  const clearTransientStateTimer = useCallback(() => {
+    if (transientStateTimerRef.current) {
+      clearTimeout(transientStateTimerRef.current)
+      transientStateTimerRef.current = null
+    }
+  }, [])
+
+  const flashState = useCallback(
+    (state: PetState, durationMs: number) => {
+      clearTransientStateTimer()
+      transitionTo(state)
+      if (durationMs > 0) {
+        transientStateTimerRef.current = setTimeout(() => {
+          applyCurrentState()
+          transientStateTimerRef.current = null
+        }, durationMs)
+      }
+    },
+    [applyCurrentState, clearTransientStateTimer, transitionTo],
+  )
 
   // Set the base state (lowest layer; shown when no overlay is active)
   const setBaseState = useCallback((state: PetState) => {
@@ -513,6 +538,7 @@ export default function DesktopPetPage() {
       if (bubbleTimerRef.current) {
         clearTimeout(bubbleTimerRef.current)
       }
+      clearTransientStateTimer()
       if (audioRef.current) {
         audioRef.current.pause()
       }
@@ -566,49 +592,58 @@ export default function DesktopPetPage() {
         runtimeHintTimerRef.current = null
       }
 
-      if (hint && bubble) {
+      if (hint) {
         setRuntimeHint(hint)
         if (stickyMs > 0) {
           runtimeHintTimerRef.current = setTimeout(() => {
             setRuntimeHint("")
           }, stickyMs)
         }
-      } else if (nextState === "idle" || !bubble) {
+      } else if (nextState === "idle") {
         setRuntimeHint("")
       }
 
       if (nextState === "listening" || nextState === "recognizing") {
+        clearTransientStateTimer()
         setPetState("listen")
         setCurrentImage("/pets/listening.gif")
         return
       }
 
-      if (nextState === "thinking" || nextState === "tool_running") {
-        transitionTo("standby")
+      if (nextState === "thinking") {
+        clearTransientStateTimer()
+        setOverlayState("think", Math.max(stickyMs, 500))
+        return
+      }
+
+      if (nextState === "tool_running") {
+        clearTransientStateTimer()
+        setOverlayState("search", Math.max(stickyMs, 800))
         return
       }
 
       if (nextState === "speaking") {
-        transitionTo("happy")
+        flashState("happy", stickyMs || 1600)
         return
       }
 
       if (nextState === "error") {
-        transitionTo("shakeHead", stickyMs || 2200)
+        flashState("shakeHead", stickyMs || 2200)
         return
       }
 
       if (nextState === "stalled") {
-        transitionTo("stayOut", stickyMs || 2600)
+        flashState("stayOut", stickyMs || 2600)
         return
       }
 
       if (nextState === "done") {
-        transitionTo("happy", stickyMs || 1600)
+        flashState("happy", stickyMs || 1600)
         return
       }
 
       if (!bubble) {
+        clearTransientStateTimer()
         setPetState("standby")
         setCurrentImage(getPetImage("standby", currentImageRef.current))
       }
@@ -622,7 +657,7 @@ export default function DesktopPetPage() {
         clearTimeout(runtimeHintTimerRef.current)
       }
     }
-  }, [bubble, transitionTo])
+  }, [bubble, clearTransientStateTimer, flashState, setOverlayState])
 
   useEffect(() => {
     const handlePointerMove = (event: globalThis.MouseEvent) => {
@@ -730,12 +765,12 @@ export default function DesktopPetPage() {
             <img className="desktop-pet-image" src={currentImage} alt="Pet" />
             <span className="desktop-pet-state">{petState}</span>
           </div>
-          {bubble ? (
+          {(bubble || runtimeHint) ? (
           <div
             ref={bubbleRef}
             className={runtimeHint ? "desktop-pet-bubble desktop-pet-bubble--voice" : "desktop-pet-bubble"}
           >
-            <span>{runtimeHint || bubble}</span>
+            <span>{displayedBubbleText}</span>
           </div>
         ) : null}
         </div>

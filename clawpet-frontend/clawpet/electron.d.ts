@@ -1,6 +1,22 @@
 export {}
 
 declare global {
+  interface PetRuntimeStatePayload {
+    state:
+      | "idle"
+      | "listening"
+      | "recognizing"
+      | "thinking"
+      | "tool_running"
+      | "speaking"
+      | "done"
+      | "error"
+      | "stalled"
+    text?: string
+    source?: "voice" | "chat"
+    sticky_ms?: number
+  }
+
   interface BubblePayload {
     text: string | null
     emotion: string
@@ -41,8 +57,16 @@ declare global {
       registerPetClickThroughShortcut?: (data: { enabled: boolean; keys: string; mode?: 'toggle' | 'hold' }) => void
       onVoiceShortcutHeld?: (callback: () => void) => void
       onVoiceShortcutReleased?: (callback: () => void) => void
+      onVoiceInputStateChanged?: (
+        callback: (payload: { phase?: string; isListening?: boolean }) => void,
+      ) => (() => void) | void
+      onPetRuntimeStateChanged?: (
+        callback: (payload: PetRuntimeStatePayload) => void,
+      ) => (() => void) | void
       showErrorNotification?: (data: { level: string; code: string; message: string }) => void
       onErrorNotification?: (callback: (data: { level: string; code: string; message: string }) => void) => void
+      reportVoiceInputState?: (data: { phase?: string; isListening?: boolean }) => void
+      reportPetRuntimeState?: (data: PetRuntimeStatePayload) => void
     }
   }
 }

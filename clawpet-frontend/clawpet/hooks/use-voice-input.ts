@@ -9,9 +9,33 @@ interface UseVoiceInputOptions {
   onError?: (error: string) => void
   canRecord?: boolean
   sessionKey?: string
+  onRecognizingText?: (text: string) => void
 }
 
 type VoicePhase = "idle" | "recording" | "recognizing" | "error"
+
+type PetRuntimeState =
+  | "idle"
+  | "listening"
+  | "recognizing"
+  | "thinking"
+  | "tool_running"
+  | "speaking"
+  | "done"
+  | "error"
+  | "stalled"
+
+interface PetRuntimeStatePayload {
+  state: PetRuntimeState
+  text?: string
+  source?: "voice" | "chat"
+  sticky_ms?: number
+}
+
+interface VoiceBubbleOptions {
+  animation?: string
+  durationMs?: number
+}
 
 const TARGET_SAMPLE_RATE = 16000
 const FRAME_SIZE = 2048
@@ -103,7 +127,13 @@ function downsampleTo16k(input: Float32Array, sourceSampleRate: number): Float32
 }
 
 export function useVoiceInput(options: UseVoiceInputOptions = {}) {
-  const { onResult, onError, canRecord = true, sessionKey = "" } = options
+  const {
+    onResult,
+    onError,
+    onRecognizingText,
+    canRecord = true,
+    sessionKey = "",
+  } = options
   const [isListening, _setIsListening] = useState(false)
   const isListeningRef = useRef(false)
   const setIsListening = useCallback((v: boolean) => {
@@ -167,6 +197,27 @@ export function useVoiceInput(options: UseVoiceInputOptions = {}) {
   const stoppingRef = useRef(false)
   const holdStartedAtRef = useRef(0)
   const holdActiveRef = useRef(false)
+
+  const reportPetRuntimeState = useCallback((payload: PetRuntimeStatePayload) => {
+    window.electronAPI?.reportPetRuntimeState?.({
+      source: "voice",
+      ...payload,
+    })
+  }, [])
+
+  const showVoiceBubble = useCallback((text: string, options: VoiceBubbleOptions = {}) => {
+    const normalized = text.trim()
+    if (!normalized || !window.electronAPI?.showBubble) {
+      return
+    }
+
+    window.electronAPI.showBubble({
+      text: normalized,
+      emotion: "neutral",
+      animation: options.animation,
+      duration_ms: options.durationMs,
+    })
+  }, [])
 
   const debugLog = useCallback((message: string, data?: Record<string, unknown>) => {
     if (!DEBUG_VOICE) {
@@ -884,14 +935,6 @@ export function useVoiceInput(options: UseVoiceInputOptions = {}) {
       return
     }
 
-    if (window.electronAPI?.ensureSettingsForeground) {
-      const focused = await window.electronAPI.ensureSettingsForeground()
-      if (!focused?.ok) {
-        failStart("无法激活主设置窗口，请切回主窗口后重试。")
-        return
-      }
-    }
-
     // 移除失焦保护，允许后台录音
     // if (document.visibilityState !== "visible") {
     //   failStart("当前窗口不可见，无法开始语音输入，请切回主设置窗口。")
@@ -1363,6 +1406,57 @@ export function useVoiceInput(options: UseVoiceInputOptions = {}) {
   useEffect(() => {
     startListeningRef.current = startListening
   }, [startListening])
+
+  useEffect(() => {
+    isListeningRef.current = isListening
+  }, [isListening])
+
+  useEffect(() => {
+    window.electronAPI?.reportVoiceInputState?.({
+      phase,
+      isListening,
+    })
+  }, [isListening, phase])
+
+  useEffect(() => {
+    if (phase === "recording") {
+      showVoiceBubble("正在录音，再按一次结束", {
+        animation: "listen",
+        durationMs: 30000,
+      })
+      reportPetRuntimeState({
+        state: "listening",
+        text: "正在录音，再按一次结束",
+      })
+      return
+    }
+    if (phase === "recognizing") {
+      showVoiceBubble("正在识别语音，请稍候...", {
+        animation: "listen",
+        durationMs: 20000,
+      })
+      reportPetRuntimeState({
+        state: "recognizing",
+        text: "正在识别语音，请稍候...",
+      })
+      return
+    }
+    if (phase === "error" && error) {
+      showVoiceBubble(error, {
+        animation: "shake-head",
+        durationMs: 2800,
+      })
+      reportPetRuntimeState({
+        state: "error",
+        text: error,
+        sticky_ms: 2800,
+      })
+      return
+    }
+    if (phase === "idle") {
+      reportPetRuntimeState({ state: "idle" })
+    }
+  }, [error, phase, reportPetRuntimeState, showVoiceBubble])
 
   const toggleListening = useCallback(() => {
     try {
