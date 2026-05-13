@@ -112,12 +112,22 @@ type Manager struct {
 	mu      sync.RWMutex
 	closed  atomic.Bool    // changed from bool to atomic.Bool to avoid TOCTOU race
 	wg      sync.WaitGroup // tracks in-flight CallTool calls
+	binDir  string         // directory for auto-downloaded binaries (e.g. uvx)
 }
 
 // NewManager creates a new MCP manager
 func NewManager() *Manager {
 	return &Manager{
 		servers: make(map[string]*ServerConnection),
+	}
+}
+
+// NewManagerWithBinDir creates a new MCP manager with a binary download directory.
+// binDir is used to auto-download tools like uvx when they are not found in PATH.
+func NewManagerWithBinDir(binDir string) *Manager {
+	return &Manager{
+		servers: make(map[string]*ServerConnection),
+		binDir:  binDir,
 	}
 }
 
@@ -237,6 +247,24 @@ func (m *Manager) LoadFromMCPConfig(
 	return nil
 }
 
+// resolveCommand 解析命令路径，自动下载缺失的工具（如 uvx）
+func (m *Manager) resolveCommand(command string) string {
+	if strings.Contains(command, string(os.PathSeparator)) {
+		return command // 已有完整路径，直接用
+	}
+	if p, err := exec.LookPath(command); err == nil {
+		return p // PATH 中找到
+	}
+	if (command == "uvx" || command == "uv") && m.binDir != "" {
+		p, dlErr := ensureUVX(m.binDir)
+		if dlErr == nil {
+			return p
+		}
+		logger.WarnCF("mcp", "Failed to auto-download uvx", map[string]any{"error": dlErr.Error()})
+	}
+	return command // 回退原始值
+}
+
 // ConnectServer connects to a single MCP server
 func (m *Manager) ConnectServer(
 	ctx context.Context,
@@ -324,8 +352,10 @@ func (m *Manager) ConnectServer(
 				"server":  name,
 				"command": cfg.Command,
 			})
+		// 解析命令（自动下载 uvx 等工具）
+		resolvedCmd := m.resolveCommand(cfg.Command)
 		// Create command with context
-		cmd := exec.CommandContext(ctx, cfg.Command, cfg.Args...)
+		cmd := exec.CommandContext(ctx, resolvedCmd, cfg.Args...)
 		processutil.PrepareBackgroundCommand(cmd)
 
 		// Build environment variables with proper override semantics

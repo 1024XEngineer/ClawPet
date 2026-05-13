@@ -35,13 +35,25 @@ const (
 	defaultRequestTimeout = 120 * time.Second
 )
 
+type Option func(*Provider)
+
+// WithDisableImages configures whether image data in msg.Media is sent to the API.
+// Set to true for providers (like MiniMax) whose Anthropic-compatible API
+// does not support image content blocks.
+func WithDisableImages(disable bool) Option {
+	return func(p *Provider) {
+		p.disableImages = disable
+	}
+}
+
 // Provider implements Anthropic Messages API via HTTP (without SDK).
 // It supports custom endpoints that use Anthropic's native message format.
 type Provider struct {
-	apiKey     string
-	apiBase    string
-	httpClient *http.Client
-	userAgent  string
+	apiKey        string
+	apiBase       string
+	httpClient    *http.Client
+	userAgent     string
+	disableImages bool
 }
 
 // NewProvider creates a new Anthropic Messages API provider.
@@ -50,14 +62,14 @@ func NewProvider(apiKey, apiBase, userAgent string) *Provider {
 }
 
 // NewProviderWithTimeout creates a provider with custom request timeout.
-func NewProviderWithTimeout(apiKey, apiBase, userAgent string, timeoutSeconds int) *Provider {
+func NewProviderWithTimeout(apiKey, apiBase, userAgent string, timeoutSeconds int, opts ...Option) *Provider {
 	baseURL := normalizeBaseURL(apiBase)
 	timeout := defaultRequestTimeout
 	if timeoutSeconds > 0 {
 		timeout = time.Duration(timeoutSeconds) * time.Second
 	}
 
-	return &Provider{
+	p := &Provider{
 		apiKey:    apiKey,
 		apiBase:   baseURL,
 		userAgent: userAgent,
@@ -65,6 +77,14 @@ func NewProviderWithTimeout(apiKey, apiBase, userAgent string, timeoutSeconds in
 			Timeout: timeout,
 		},
 	}
+
+	for _, opt := range opts {
+		if opt != nil {
+			opt(p)
+		}
+	}
+
+	return p
 }
 
 // Chat sends messages to the Anthropic Messages API and returns the response.
@@ -77,6 +97,16 @@ func (p *Provider) Chat(
 ) (*LLMResponse, error) {
 	if p.apiKey == "" {
 		return nil, fmt.Errorf("API key not configured")
+	}
+
+	// Strip image media when the API doesn't support it (e.g. MiniMax)
+	if p.disableImages {
+		cleaned := make([]Message, len(messages))
+		for i, m := range messages {
+			m.Media = nil
+			cleaned[i] = m
+		}
+		messages = cleaned
 	}
 
 	// Build request body
@@ -199,17 +229,22 @@ func buildRequestBody(
 					"tool_use_id": msg.ToolCallID,
 					"content":     msg.Content,
 				}
+				merged := false
 				if len(apiMessages) > 0 {
 					if prev, ok := apiMessages[len(apiMessages)-1].(map[string]any); ok && prev["role"] == "user" {
 						if content, ok := prev["content"].([]map[string]any); ok {
 							prev["content"] = append(content, toolResultBlock)
-							continue
+							merged = true
 						}
 					}
 				}
+				if merged {
+					continue
+				}
+				// Orphaned tool_result — fall back to plain text
 				apiMessages = append(apiMessages, map[string]any{
 					"role":    "user",
-					"content": []map[string]any{toolResultBlock},
+					"content": msg.Content,
 				})
 			} else {
 				// Regular user message
@@ -251,10 +286,13 @@ func buildRequestBody(
 				content = append(content, toolUse)
 			}
 
-			apiMessages = append(apiMessages, map[string]any{
-				"role":    "assistant",
-				"content": content,
-			})
+			// Skip assistant messages with neither text nor tool calls
+			if len(content) > 0 {
+				apiMessages = append(apiMessages, map[string]any{
+					"role":    "assistant",
+					"content": content,
+				})
+			}
 
 		case "tool":
 			// Tool result (alternative format) — merge into previous user message if it contains tool_results
@@ -263,17 +301,22 @@ func buildRequestBody(
 				"tool_use_id": msg.ToolCallID,
 				"content":     msg.Content,
 			}
+			merged := false
 			if len(apiMessages) > 0 {
 				if prev, ok := apiMessages[len(apiMessages)-1].(map[string]any); ok && prev["role"] == "user" {
 					if content, ok := prev["content"].([]map[string]any); ok {
 						prev["content"] = append(content, toolResultBlock)
-						continue
+						merged = true
 					}
 				}
 			}
+			if merged {
+				continue
+			}
+			// Orphaned tool_result — fall back to plain text
 			apiMessages = append(apiMessages, map[string]any{
 				"role":    "user",
-				"content": []map[string]any{toolResultBlock},
+				"content": msg.Content,
 			})
 		}
 	}

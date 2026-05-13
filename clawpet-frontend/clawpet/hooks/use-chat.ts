@@ -13,6 +13,7 @@ import {
   deleteSession as deleteSessionOnServer,
   getSessionHistory,
 } from "@/lib/api/sessions"
+import { extractPetText } from "@/lib/utils"
 
 const SESSIONS_STORAGE_KEY = "petclaw_sessions"
 const ACTIVE_SESSION_KEY = "petclaw_active_session"
@@ -1084,6 +1085,7 @@ export function useChat(options: UseChatOptions = {}): UseChatResult {
         case "message":
           if (typeof event.data === "object" && event.data) {
             const message = event.data as ChatMessage
+            message.content = extractPetText(message.content || "")
             updateSessionMessages(activeSessionIdRef.current, (prev) =>
               mergeMessage(prev, message),
             )
@@ -1675,6 +1677,51 @@ export function useChat(options: UseChatOptions = {}): UseChatResult {
   }, [clearPendingBubbleTimer, connectWithBootstrap, resetAudioQueue])
 
   useEffect(() => {
+    const unlistenFile = window.electronAPI?.onIncomingFileMessage?.((data: {
+      fileName: string
+      mimeType: string
+      textContent?: string
+      base64Content?: string
+      isImage: boolean
+      isBinary?: boolean
+      prompt: string
+    }) => {
+      const sessionKey = activeSessionIdRef.current
+      if (!sessionKey || !wsRef.current?.isConnected) {
+        window.electronAPI?.showErrorNotification?.({
+          level: "warn",
+          code: "no_connection",
+          message: "当前没有可用连接，无法发送文件",
+        })
+        return
+      }
+
+      const label = data.isImage ? "图片" : "文件"
+      const userContent = data.prompt
+        ? `[${label} ${data.fileName}] ${data.prompt}`
+        : `[${label} ${data.fileName}] 请分析这个文件`
+
+      wsRef.current.sendAction("file_chat", {
+        session_key: sessionKey,
+        prompt: data.prompt,
+        file_name: data.fileName,
+        file_mime: data.mimeType,
+        file_content: (data.textContent || data.base64Content || ""),
+        file_is_image: data.isImage,
+        file_is_binary: data.isBinary || false,
+      })
+
+      updateSessionMessages(sessionKey, (prev) => [
+        ...prev,
+        {
+          id: `user-file-${Date.now()}`,
+          role: "user",
+          content: userContent,
+          timestamp: Date.now(),
+        } as ChatMessage,
+      ])
+    })
+
     const unlisten = window.electronAPI?.onForceStopMedia?.(() => {
       if (currentAudioRef.current) {
         currentAudioRef.current.pause()
@@ -1697,9 +1744,10 @@ export function useChat(options: UseChatOptions = {}): UseChatResult {
     })
 
     return () => {
+      unlistenFile?.()
       unlisten?.()
     }
-  }, [resetAudioQueue])
+  }, [resetAudioQueue, updateSessionMessages])
 
   const activeSession =
     sessionsState.find((session) => session.id === activeSessionId) ??

@@ -1,6 +1,7 @@
 "use client"
 
 import { useEffect, useMemo, useRef, useState } from "react"
+import { extractPetText } from "@/lib/utils"
 
 import "./bubble.css"
 
@@ -72,7 +73,8 @@ export default function DesktopPetBubblePage() {
 
   useEffect(() => {
     const handleBubbleShow = (payload: BubbleData) => {
-      const nextText = typeof payload?.text === "string" ? payload.text.trim() : ""
+      const rawText = typeof payload?.text === "string" ? payload.text.trim() : ""
+      const nextText = extractPetText(rawText)
       if (!nextText) {
         clearHideTimer()
         setVisible(false)

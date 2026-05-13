@@ -14,7 +14,7 @@
  * - 前端面板：通过环境变量 GOCLAW_DASHBOARD_URL 连接（默认 3000）
  */
 
-const { app, BrowserWindow, ipcMain, screen, globalShortcut } = require('electron');
+const { app, BrowserWindow, ipcMain, screen, globalShortcut, dialog } = require('electron');
 const path = require('path');
 const os = require('os');
 const fs = require('fs');
@@ -47,6 +47,10 @@ let petTopCorrectionTimer = null;
 let onboardingLocked = false;
 let lastBubbleFingerprint = '';
 let lastBubbleAt = 0;
+
+// 文件拖放
+let filePromptWindow = null;
+let pendingFileInfo = null;
 let bubbleWindowReady = false;
 
 // 语音输入快捷键
@@ -68,6 +72,8 @@ const PET_HEIGHT = 180;
 const PET_WINDOW_MARGIN = 16;
 const PET_RENDERER_RETRY_DELAY_MS = 1200;
 const PET_RENDERER_MAX_RETRIES = 60;
+const PET_EXPANDED_WIDTH = 250;
+const PET_EXPANDED_HEIGHT = 290;
 const BUBBLE_WINDOW_DEFAULT_WIDTH = 320;
 const BUBBLE_WINDOW_DEFAULT_HEIGHT = 140;
 const BUBBLE_WINDOW_MIN_WIDTH = 140;
@@ -1340,6 +1346,20 @@ function createPetWindow() {
   attachRendererCrashDiagnostics(petWindow, 'PET WINDOW');
   blockCtrlPDefault(petWindow);
 
+  // 防止文件拖放时自动导航到 file://，改为触发文件处理
+  petWindow.webContents.on('will-navigate', (event, url) => {
+    if (url && url.startsWith('file://')) {
+      event.preventDefault();
+      let filePath = decodeURIComponent(url.replace(/^file:\/\//, ''));
+      if (process.platform === 'win32') {
+        filePath = filePath.replace(/^\//, '');
+      }
+      const fileName = path.basename(filePath);
+      logToFile(`[pet] will-navigate intercepted file drop: ${fileName}`);
+      handleFileDropEvent(filePath, fileName);
+    }
+  });
+
   // Re-apply bottom-right placement to avoid OS window policy override.
   placePetWindowBottomRight(petWindow);
   createBubbleWindow();
@@ -1885,6 +1905,92 @@ function startStartupFlow() {
 }
 
 /**
+ * 创建文件提示输入弹窗
+ */
+function createFilePromptWindow(fileName, mimeType, isImage) {
+  if (filePromptWindow && !filePromptWindow.isDestroyed()) {
+    filePromptWindow.focus();
+    return;
+  }
+
+  const typeLabel = isImage ? '📷 图片' : '📄 文件';
+
+  filePromptWindow = new BrowserWindow({
+    width: 420,
+    height: 280,
+    resizable: false,
+    frame: true,
+    title: '发送文件给 AI',
+    webPreferences: {
+      preload: path.join(__dirname, 'file-prompt-preload.js'),
+      contextIsolation: true,
+      nodeIntegration: false,
+    },
+  });
+
+  const escapedName = fileName.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+  const escapedMime = mimeType.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+
+  const html = `<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<style>
+  body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; margin: 16px; }
+  .header { font-size: 14px; color: #333; margin-bottom: 12px; }
+  .file-info { font-size: 12px; color: #666; background: #f5f5f5; padding: 8px; border-radius: 6px; margin-bottom: 12px; }
+  .file-info strong { color: #333; }
+  textarea { width: 100%; height: 80px; border: 1px solid #ddd; border-radius: 6px; padding: 8px; font-size: 13px; resize: none; box-sizing: border-box; }
+  textarea:focus { outline: none; border-color: #007aff; }
+  .actions { display: flex; gap: 8px; justify-content: flex-end; margin-top: 12px; }
+  button { padding: 8px 20px; border-radius: 6px; font-size: 13px; cursor: pointer; border: none; }
+  .btn-send { background: #007aff; color: white; }
+  .btn-send:hover { background: #0062cc; }
+  .btn-cancel { background: #e0e0e0; color: #333; }
+  .btn-cancel:hover { background: #ccc; }
+</style>
+</head>
+<body>
+  <div class="header">\u270f\ufe0f 输入提示语（可选）</div>
+  <div class="file-info">
+    <strong>${typeLabel}</strong> ${escapedName}<br>
+    <span style="font-size:11px;color:#999">${escapedMime}</span>
+  </div>
+  <textarea id="prompt" placeholder="例如：分析这个文件的内容..."></textarea>
+  <div class="actions">
+    <button class="btn-cancel" onclick="cancel()">取消</button>
+    <button class="btn-send" onclick="submit()">发送</button>
+  </div>
+  <script>
+    function submit() {
+      window.electronAPI.submitPrompt(document.getElementById('prompt').value);
+    }
+    function cancel() {
+      window.electronAPI.cancelPrompt();
+    }
+    document.getElementById('prompt').addEventListener('keydown', function(e) {
+      if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) submit();
+      if (e.key === 'Escape') cancel();
+    });
+    document.getElementById('prompt').focus();
+  </script>
+</body>
+</html>`;
+
+  filePromptWindow.loadURL('data:text/html;charset=utf-8,' + encodeURIComponent(html));
+
+  filePromptWindow.on('closed', () => {
+    filePromptWindow = null;
+    if (pendingFileInfo) {
+      pendingFileInfo = null;
+      if (petWindow && !petWindow.isDestroyed()) {
+        petWindow.webContents.send('bubble-show', { text: null, animation: 'standby' });
+      }
+    }
+  });
+}
+
+/**
  * IPC 通信处理器
  * 处理渲染进程发来的各种请求
  */
@@ -2083,6 +2189,59 @@ ipcMain.on('chat-history', (_event, history) => {
   }
 });
 
+// ==================== 拖放区展开/收起 ====================
+
+ipcMain.on('toggle-drop-zone', (_event, enabled) => {
+  if (petWindow && !petWindow.isDestroyed()) {
+    const display = screen.getPrimaryDisplay();
+    const area = display.workArea;
+    const w = enabled ? PET_EXPANDED_WIDTH : PET_WIDTH;
+    const h = enabled ? PET_EXPANDED_HEIGHT : PET_HEIGHT;
+    const x = Math.max(area.x, area.x + area.width - w - PET_WINDOW_MARGIN);
+    const y = Math.max(area.y, area.y + area.height - h - PET_WINDOW_MARGIN);
+    logToFile(`[drop-zone] ${enabled ? 'expand' : 'collapse'} to ${w}x${h} @ (${x},${y})`);
+    petWindow.setBounds({ width: w, height: h, x, y });
+  }
+});
+
+// 打开原生文件选择器
+ipcMain.on('open-file-dialog', async () => {
+  logToFile('[drop-zone] opening file dialog');
+  try {
+    const result = await dialog.showOpenDialog({
+      properties: ['openFile'],
+      filters: [
+        {
+          name: 'Supported files',
+          extensions: [
+            'txt', 'md', 'json', 'xml', 'yaml', 'yml', 'csv',
+            'js', 'ts', 'jsx', 'tsx', 'py', 'go', 'rs', 'java', 'c', 'cpp', 'h',
+            'css', 'scss', 'html', 'htm', 'sh', 'bash', 'zsh', 'ps1', 'bat', 'cmd',
+            'sql', 'rb', 'php', 'swift', 'kt', 'scala', 'dart',
+            'png', 'jpg', 'jpeg', 'gif', 'bmp', 'webp', 'svg', 'ico',
+          ],
+        },
+      ],
+    });
+
+    if (!result.canceled && result.filePaths.length > 0) {
+      const filePath = result.filePaths[0];
+      const fileName = path.basename(filePath);
+      logToFile(`[drop-zone] file selected: ${fileName}`);
+      handleFileDropEvent(filePath, fileName);
+    }
+  } catch (err) {
+    logToFile(`[drop-zone] dialog failed: ${err.message}`);
+  }
+});
+
+// 当文件开始处理后通过此 IPC 通知桌宠关闭拖放区
+ipcMain.on('file-processing-start', () => {
+  if (petWindow && !petWindow.isDestroyed()) {
+    petWindow.webContents.send('drop-zone-auto-close');
+  }
+});
+
 // 显示气泡消息（桌宠说话）
 ipcMain.on('show-bubble', (_event, data) => {
   const audio = typeof data?.audio === 'string' ? data.audio.trim() : '';
@@ -2133,6 +2292,151 @@ ipcMain.on('show-bubble', (_event, data) => {
 ipcMain.on('connection-alive', () => {
   if (petWindow && !petWindow.isDestroyed()) {
     petWindow.webContents.send('connection-alive');
+  }
+});
+
+// ==================== 文件拖放 ====================
+
+// 去重缓存：同一文件 3 秒内不处理第二次（preload + will-navigate 双触发保护）
+const recentFileDrops = new Map();
+
+/**
+ * 将文件消息转发给 settings window（WebSocket 发送），
+ * 如果 settings window 不存在则自动重建并等待加载后发送
+ */
+function forwardFileToSettings(info, prompt) {
+  function sendPayload() {
+    if (!settingsWindow || settingsWindow.isDestroyed()) {
+      logToFile('[file-drop] settings window still unavailable after recreate');
+      return;
+    }
+    settingsWindow.webContents.send('incoming-file-message', {
+      fileName: info.fileName,
+      mimeType: info.mimeType,
+      textContent: info.textContent || '',
+      base64Content: info.base64Content || '',
+      isImage: info.isImage,
+      isBinary: info.isBinary || false,
+      prompt: prompt,
+    });
+  }
+
+  if (settingsWindow && !settingsWindow.isDestroyed()) {
+    sendPayload();
+  } else {
+    logToFile('[file-drop] settings window not found, recreating...');
+    // 主窗口 URL（不带 onboarding）
+    const url = buildSettingsWindowUrl({ onboarding: false });
+    createSettingsWindow(url);
+    // 等页面加载完成后再发送
+    if (settingsWindow && !settingsWindow.isDestroyed()) {
+      settingsWindow.webContents.once('did-finish-load', sendPayload);
+      // 兜底：5秒后如果还没触发，也尝试发送
+      setTimeout(() => {
+        if (settingsWindow && !settingsWindow.isDestroyed()) {
+          sendPayload();
+        }
+      }, 5000);
+    }
+  }
+}
+
+/**
+ * 处理文件拖放（读文件 + 弹窗输入）
+ * 同时被 file-dropped IPC 和 will-navigate 防护调用
+ */
+function handleFileDropEvent(filePath, fileName) {
+  logToFile(`[file-drop] handling: ${fileName} path=${filePath}`);
+
+  // 去重：同一文件 3 秒内不处理第二次
+  const now = Date.now();
+  const lastDrop = recentFileDrops.get(filePath);
+  if (lastDrop && now - lastDrop < 3000) {
+    logToFile(`[file-drop] skipped duplicate: ${fileName}`);
+    return;
+  }
+  recentFileDrops.set(filePath, now);
+
+  try {
+    if (!filePath || !fileName) {
+      logToFile('[file-drop] invalid filePath or fileName');
+      return;
+    }
+
+    const ext = path.extname(fileName).toLowerCase();
+    const imageExts = ['.png', '.jpg', '.jpeg', '.gif', '.bmp', '.webp', '.svg', '.ico'];
+    const binaryExts = ['.pdf', '.docx', '.doc', '.xlsx', '.xls', '.pptx', '.ppt', '.zip', '.rar', '.7z', '.tar', '.gz'];
+    const isImage = imageExts.includes(ext);
+    const isBinary = !isImage && binaryExts.includes(ext);
+
+    let textContent = '';
+    let base64Content = '';
+
+    if (isImage) {
+      const buffer = fs.readFileSync(filePath);
+      base64Content = buffer.toString('base64');
+    } else if (isBinary) {
+      const buffer = fs.readFileSync(filePath);
+      base64Content = buffer.toString('base64');
+    } else {
+      textContent = fs.readFileSync(filePath, 'utf-8');
+    }
+
+    const mimeType = isImage ? 'image/' + ext.replace('.', '') : 'text/plain';
+    pendingFileInfo = { fileName, mimeType, textContent, base64Content, isImage, isBinary };
+
+    // 通知桌宠关闭拖放区
+    if (petWindow && !petWindow.isDestroyed()) {
+      petWindow.webContents.send('drop-zone-auto-close');
+    }
+
+    createFilePromptWindow(fileName, mimeType, isImage);
+  } catch (err) {
+    logToFile(`[file-drop] FAILED: ${err.message}`);
+    if (petWindow && !petWindow.isDestroyed()) {
+      petWindow.webContents.send('error-notification', {
+        level: 'error',
+        code: 'file_read_error',
+        message: '无法读取文件: ' + err.message,
+      });
+    }
+  }
+}
+
+// 文件拖放 — 从桌宠 IPC 触发
+ipcMain.on('file-dropped', (_event, { filePath, fileName }) => {
+  logToFile(`[file-drop] IPC received: ${fileName}`);
+  handleFileDropEvent(filePath, fileName);
+});
+
+// 文件弹窗提交
+ipcMain.on('file-prompt-submit', (_event, prompt) => {
+  logToFile(`[file-drop] prompt submitted: "${prompt ? prompt.slice(0, 50) : ''}"`);
+
+  const info = pendingFileInfo;
+  pendingFileInfo = null;
+
+  if (filePromptWindow && !filePromptWindow.isDestroyed()) {
+    filePromptWindow.close();
+  }
+
+  if (!info) {
+    logToFile('[file-drop] no pending file info');
+    return;
+  }
+
+  forwardFileToSettings(info, prompt || '');
+});
+
+// 文件弹窗取消
+ipcMain.on('file-prompt-cancel', () => {
+  logToFile('[file-drop] cancelled');
+  pendingFileInfo = null;
+  if (filePromptWindow && !filePromptWindow.isDestroyed()) {
+    filePromptWindow.close();
+  }
+  if (petWindow && !petWindow.isDestroyed()) {
+    petWindow.webContents.send('bubble-show', { text: null, animation: 'standby' });
   }
 });
 

@@ -15,6 +15,7 @@ import (
 	anthropicmessages "github.com/sipeed/picoclaw/pkg/providers/anthropic_messages"
 	"github.com/sipeed/picoclaw/pkg/providers/azure"
 	"github.com/sipeed/picoclaw/pkg/providers/bedrock"
+	"github.com/sipeed/picoclaw/pkg/providers/openai_compat"
 )
 
 type protocolMeta struct {
@@ -241,7 +242,6 @@ func CreateProviderFromConfig(cfg *config.ModelConfig) (LLMProvider, string, err
 		), modelID, nil
 
 	case "minimax":
-		// Minimax requires reasoning_split: true in the request body
 		if cfg.APIKey() == "" && cfg.APIBase == "" {
 			return nil, "", fmt.Errorf("api_key or api_base is required for HTTP-based protocol %q", protocol)
 		}
@@ -249,22 +249,19 @@ func CreateProviderFromConfig(cfg *config.ModelConfig) (LLMProvider, string, err
 		if apiBase == "" {
 			apiBase = getDefaultAPIBase(protocol)
 		}
-		extraBody := cfg.ExtraBody
-		if extraBody == nil {
-			extraBody = make(map[string]any)
-		}
-		if _, ok := extraBody["reasoning_split"]; !ok {
-			extraBody["reasoning_split"] = true
-		}
-		return NewHTTPProviderWithMaxTokensFieldAndRequestTimeout(
-			cfg.APIKey(),
-			apiBase,
-			cfg.Proxy,
-			cfg.MaxTokensField,
-			userAgent,
-			cfg.RequestTimeout,
-			extraBody,
-		), modelID, nil
+		return &HTTPProvider{
+			delegate: openai_compat.NewProvider(
+				cfg.APIKey(),
+				apiBase,
+				cfg.Proxy,
+				openai_compat.WithMaxTokensField(cfg.MaxTokensField),
+				openai_compat.WithRequestTimeout(time.Duration(cfg.RequestTimeout)*time.Second),
+				openai_compat.WithExtraBody(cfg.ExtraBody),
+				openai_compat.WithUserAgent(userAgent),
+				openai_compat.WithSkipTools(true),
+				openai_compat.WithMergeSystemMessages(true),
+			),
+		}, modelID, nil
 
 	case "anthropic":
 		if cfg.AuthMethod == "oauth" || cfg.AuthMethod == "token" {
@@ -307,6 +304,23 @@ func CreateProviderFromConfig(cfg *config.ModelConfig) (LLMProvider, string, err
 			apiBase,
 			userAgent,
 			cfg.RequestTimeout,
+		), modelID, nil
+
+	case "minimax-anthropic":
+		// MiniMax via Anthropic-compatible API (supports tools/function calling)
+		apiBase := cfg.APIBase
+		if apiBase == "" {
+			apiBase = "https://api.minimaxi.com/anthropic"
+		}
+		if cfg.APIKey() == "" {
+			return nil, "", fmt.Errorf("api_key is required for minimax-anthropic protocol (model: %s)", cfg.Model)
+		}
+		return anthropicmessages.NewProviderWithTimeout(
+			cfg.APIKey(),
+			apiBase,
+			userAgent,
+			cfg.RequestTimeout,
+			anthropicmessages.WithDisableImages(true),
 		), modelID, nil
 
 	case "coding-plan-anthropic", "alibaba-coding-anthropic":

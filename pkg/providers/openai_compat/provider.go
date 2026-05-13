@@ -31,12 +31,14 @@ type (
 )
 
 type Provider struct {
-	apiKey         string
-	apiBase        string
-	maxTokensField string // Field name for max tokens (e.g., "max_completion_tokens" for o1/glm models)
-	httpClient     *http.Client
-	extraBody      map[string]any // Additional fields to inject into request body
-	userAgent      string
+	apiKey              string
+	apiBase             string
+	maxTokensField      string // Field name for max tokens (e.g., "max_completion_tokens" for o1/glm models)
+	httpClient          *http.Client
+	extraBody           map[string]any // Additional fields to inject into request body
+	userAgent           string
+	skipTools           bool // When true, tools/tool_choice are omitted from the request body
+	mergeSystemMessages bool // When true, multiple system messages are merged into one
 }
 
 type Option func(*Provider)
@@ -87,6 +89,18 @@ func WithExtraBody(extraBody map[string]any) Option {
 	}
 }
 
+func WithSkipTools(skip bool) Option {
+	return func(p *Provider) {
+		p.skipTools = skip
+	}
+}
+
+func WithMergeSystemMessages(merge bool) Option {
+	return func(p *Provider) {
+		p.mergeSystemMessages = merge
+	}
+}
+
 func NewProvider(apiKey, apiBase, proxy string, opts ...Option) *Provider {
 	p := &Provider{
 		apiKey:     apiKey,
@@ -126,6 +140,10 @@ func (p *Provider) buildRequestBody(
 ) map[string]any {
 	model = normalizeModel(model, p.apiBase)
 
+	if p.mergeSystemMessages {
+		messages = mergeSystemMessages(messages)
+	}
+
 	requestBody := map[string]any{
 		"model":    model,
 		"messages": common.SerializeMessages(messages),
@@ -135,8 +153,10 @@ func (p *Provider) buildRequestBody(
 	nativeSearch, _ := options["native_search"].(bool)
 	nativeSearch = nativeSearch && isNativeSearchHost(p.apiBase)
 	if len(tools) > 0 || nativeSearch {
-		requestBody["tools"] = buildToolsList(tools, nativeSearch)
-		requestBody["tool_choice"] = "auto"
+		if !p.skipTools {
+			requestBody["tools"] = buildToolsList(tools, nativeSearch)
+			requestBody["tool_choice"] = "auto"
+		}
 	}
 
 	if maxTokens, ok := common.AsInt(options["max_tokens"]); ok {
@@ -470,4 +490,26 @@ func supportsPromptCacheKey(apiBase string) bool {
 	}
 	host := u.Hostname()
 	return host == "api.openai.com" || strings.HasSuffix(host, ".openai.azure.com")
+}
+
+// mergeSystemMessages consolidates consecutive system messages into one.
+// Some providers (e.g. MiniMax) reject multiple system messages.
+func mergeSystemMessages(messages []Message) []Message {
+	var merged []Message
+	var parts []string
+	for _, msg := range messages {
+		if msg.Role == "system" {
+			parts = append(parts, msg.Content)
+		} else {
+			if len(parts) > 0 {
+				merged = append(merged, Message{Role: "system", Content: strings.Join(parts, "\n\n")})
+				parts = nil
+			}
+			merged = append(merged, msg)
+		}
+	}
+	if len(parts) > 0 {
+		merged = append(merged, Message{Role: "system", Content: strings.Join(parts, "\n\n")})
+	}
+	return merged
 }
